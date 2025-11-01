@@ -1,0 +1,12 @@
+{
+  "name": "home-cams",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node bin/proxy.js",
+    "start": "npm run dev"
+  },
+	"devDependencies": {
+		"anyproxy": "^4.1.3"
+	}
+}
