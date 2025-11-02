@@ -115,29 +115,12 @@ function App() {
 
       // Save to config.json via API
       setLoading(true);
-      try {
-        const response = await fetch('/api/config', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(updatedConfig)
-        });
-
-        if (response.ok) {
-          showToast('配置保存成功!', 'success');
-        } else {
-          const errorData = await response.json();
-          showToast('保存配置失败: ' + errorData.error, 'error');
-        }
-      } catch (error) {
-        showToast('网络错误: ' + error.message, 'error');
-      }
+      await saveConfig(updatedConfig);
       setLoading(false);
     }
   };
 
-  const handleRemoveHost = (hostToRemove) => {
+  const handleRemoveHost = async (hostToRemove) => {
     // 添加确认框
     const confirmed = window.confirm(`确定要删除主机 "${hostToRemove}" 吗？`);
     if (confirmed) {
@@ -146,11 +129,18 @@ function App() {
         block_hosts: config.block_hosts.filter(host => host !== hostToRemove)
       };
       setConfig(updatedConfig);
+      await saveConfig(updatedConfig);
     }
   };
 
   const handleSaveConfig = async () => {
     setLoading(true);
+    // 先保存配置
+    let saveResult = await saveConfig(config);
+    setLoading(false);
+  };
+
+  const saveConfig = async (config) => {
     try {
       const response = await fetch('/api/config', {
         method: 'POST',
@@ -162,39 +152,22 @@ function App() {
       
       if (response.ok) {
         showToast('配置保存成功!', 'success');
+        return true;
       } else {
-        const errorData = await response.json();
-        showToast('保存配置失败: ' + errorData.error, 'error');
+        showToast('保存失败', 'error');
+        return false;
       }
     } catch (error) {
       showToast('网络错误: ' + error.message, 'error');
+      return false;
     }
-    setLoading(false);
   };
 
   const handleRestartProxy = async () => {
     setLoading(true);
 
     // 先保存配置
-    try {
-      const response = await fetch('/api/config', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(config)
-      });
-      
-      if (response.ok) {
-        showToast('配置同步完成，正在重启中!', 'info');
-      } else {
-        const errorData = await response.json();
-        showToast('保存配置失败: ' + errorData.error, 'error');
-        setLoading(false);
-        return;
-      }
-    } catch (error) {
-      showToast('网络错误: ' + error.message, 'error');
+    if (!await saveConfig(config)) {
       setLoading(false);
       return;
     }
@@ -253,7 +226,7 @@ function App() {
                     <li key={index} className="ip-item">
                       <span className="interface-name">{ip.interface}:</span>
                       <span className="ip-address">{ip.address}</span>
-                      <span className="docker-info">{isDocker ? ' (Docker环境)' : ' (本地环境)'}</span>
+                      <span className="docker-info">{isDocker ? ' (Docker环境)' : ' (非Dorker环境)'}</span>
                     </li>
                   ))}
                 </ul>
