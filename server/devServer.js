@@ -299,16 +299,19 @@ module.exports = {
       });
     };
 
-    // 在服务器启动完成后再启动LocalProxy
-    const originalAfterSetupMiddleware = devServerConfig.onAfterSetupMiddleware;
-    devServerConfig.onAfterSetupMiddleware = (devServer) => {
-      // 调用原始的onAfterSetupMiddleware（如果存在）
-      if (originalAfterSetupMiddleware) {
-        originalAfterSetupMiddleware(devServer);
+    // 保存原始的onListening回调（如果存在）
+    const originalOnListening = devServerConfig.onListening;
+    
+    // 在服务监听完成后启动LocalProxy
+    devServerConfig.onListening = (devServer) => {
+      // 调用原始的onListening（如果存在）
+      if (originalOnListening) {
+        originalOnListening(devServer);
       }
       
-      // 启动LocalProxy
-      LocalProxy.start(() => {});
+      // 确保服务已启动后再启动LocalProxy
+      console.log('Dev server is listening, starting LocalProxy...');
+      LocalProxy.start();
     };
 
     return devServerConfig;
