@@ -24,11 +24,35 @@ function App() {
   const [newHost, setNewHost] = useState('');
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState({ message: '', type: '' });
+  const [serverIPs, setServerIPs] = useState([]);
+  const [toastTimer, setToastTimer] = useState(null); // 用于存储当前的定时器
 
-  // 组件加载时获取当前配置
+  // 组件加载时获取当前配置和服务器IP
   useEffect(() => {
     fetchConfig();
+    fetchServerIPs();
+    
+    // 清理定时器
+    return () => {
+      if (toastTimer) {
+        clearTimeout(toastTimer);
+      }
+    };
   }, []);
+
+  const fetchServerIPs = async () => {
+    try {
+      const response = await fetch('/api/server-ip');
+      if (response.ok) {
+        const data = await response.json();
+        setServerIPs(data.ips);
+      } else {
+        showToast('获取服务器IP失败', 'error');
+      }
+    } catch (error) {
+      showToast('网络错误: ' + error.message, 'error');
+    }
+  };
 
   const fetchConfig = async () => {
     try {
@@ -45,13 +69,30 @@ function App() {
   };
 
   const showToast = (message, type) => {
+    // 清除之前的定时器
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+    }
+    
+    // 设置新的toast
     setToast({ message, type });
-    setTimeout(() => {
+    
+    // 设置新的定时器并保存引用
+    const newTimer = setTimeout(() => {
       setToast({ message: '', type: '' });
+      setToastTimer(null);
     }, 3000);
+    
+    // 保存定时器引用
+    setToastTimer(newTimer);
   };
 
   const closeToast = () => {
+    // 清除定时器
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      setToastTimer(null);
+    }
     setToast({ message: '', type: '' });
   };
 
@@ -103,6 +144,31 @@ function App() {
 
   const handleRestartProxy = async () => {
     setLoading(true);
+
+    // 先保存配置
+    try {
+      const response = await fetch('/api/config', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(config)
+      });
+      
+      if (response.ok) {
+        showToast('配置同步完成，正在重启中!', 'info');
+      } else {
+        const errorData = await response.json();
+        showToast('保存配置失败: ' + errorData.error, 'error');
+        setLoading(false);
+        return;
+      }
+    } catch (error) {
+      showToast('网络错误: ' + error.message, 'error');
+      setLoading(false);
+      return;
+    }
+
     try {
       const response = await fetch('/api/restart', {
         method: 'POST'
@@ -120,6 +186,20 @@ function App() {
     setLoading(false);
   };
 
+  function getIpAddress() {
+    let addr = '';
+    if (serverIPs.length == 0) {
+      return '0.0.0.0';
+    } else {
+      serverIPs.map((ip, index) => {
+        if(index == 0) {
+          addr = ip.address;
+        }
+      });
+    }
+    return addr;
+  }
+
   return (
     <div className="App">
       <div className="config-container">
@@ -131,6 +211,27 @@ function App() {
           type={toast.type} 
           onClose={closeToast} 
         />
+        
+        {/* 服务器IP信息 */}
+        <div className="config-section">
+          <div className="server-info">
+            {serverIPs.length > 0 ? (
+              <div>
+                <p><strong>服务器IP地址:</strong></p>
+                <ul className="ip-list">
+                  {serverIPs.map((ip, index) => (
+                    <li key={index} className="ip-item">
+                      <span className="interface-name">{ip.interface}:</span>
+                      <span className="ip-address">{ip.address}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p>正在获取服务器IP地址...</p>
+            )}
+          </div>
+        </div>
         
         <div className="config-section">
           <h2>拦截主机列表</h2>
@@ -197,6 +298,22 @@ function App() {
           >
             {loading ? '重启中...' : '重启代理'}
           </button>
+        </div>
+        <div className="config-section">
+          <h2>代理设置</h2>
+          <p>
+            <b>服务器：</b>
+            {serverIPs.length > 0 ? (
+              <span>
+                {getIpAddress()}
+              </span>
+            ) : (
+              <span>正在获取服务器IP地址...</span>
+            )}
+          </p>
+          <p>
+            <b>端口：</b><span>{config.proxy_port}</span>
+          </p>
         </div>
       </div>
     </div>

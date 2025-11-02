@@ -4,6 +4,7 @@ const https = require('https');
 const { URL } = require('url');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const LocalProxy = require('../proxy/proxy');
 
 module.exports = {
@@ -25,6 +26,37 @@ module.exports = {
           return url;
         }
       }
+
+      // 获取服务器IP地址接口
+      devServer.app.get('/api/server-ip', async (req, res) => {
+        try {
+          const interfaces = os.networkInterfaces();
+          const ipAddresses = [];
+          
+          // 遍历所有网络接口
+          for (const interfaceName in interfaces) {
+            const interface = interfaces[interfaceName];
+            for (const iface of interface) {
+              // 过滤掉内部地址和IPv6地址
+              if (!iface.internal && iface.family === 'IPv4') {
+                ipAddresses.push({
+                  interface: interfaceName,
+                  address: iface.address,
+                  family: iface.family,
+                  mac: iface.mac
+                });
+              }
+            }
+          }
+          
+          res.status(200).json({
+            ips: ipAddresses,
+            primary: ipAddresses.length > 0 ? ipAddresses[0].address : null
+          });
+        } catch (error) {
+          res.status(500).json({ error: 'Failed to get server IP addresses: ' + error.message });
+        }
+      });
 
       // 获取配置接口
       devServer.app.get('/api/config', async (req, res) => {
@@ -138,5 +170,4 @@ module.exports = {
 
     return devServerConfig;
   },
-
 };
