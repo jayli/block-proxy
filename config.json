@@ -1,9 +1,7 @@
 {
   "block_hosts": [
     "baidu.com",
-    "bilibili.com",
-    "aaa.com",
-    "bbb.com"
+    "bilibili.com"
   ],
   "proxy_port": 8001,
   "web_interface_port": 8002
