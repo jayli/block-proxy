@@ -309,9 +309,11 @@ module.exports = {
         originalOnListening(devServer);
       }
       
-      // 确保服务已启动后再启动LocalProxy
-      console.log('Dev server is listening, starting LocalProxy...');
-      LocalProxy.start();
+      // 延迟启动LocalProxy，确保端口完全准备好
+      setTimeout(() => {
+        console.log('Dev server started, starting LocalProxy...');
+        LocalProxy.start();
+      }, 1000);
     };
 
     return devServerConfig;
