@@ -313,7 +313,7 @@ module.exports = {
       setTimeout(() => {
         console.log('Dev server started, starting LocalProxy...');
         LocalProxy.start();
-      }, 1000);
+      }, 100);
     };
 
     return devServerConfig;

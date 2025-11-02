@@ -3,6 +3,7 @@
 const AnyProxy = require('anyproxy');
 const fs = require('fs');
 const path = require('path');
+const { start } = require('repl');
 
 // 全局变量存储关键配置参数
 let blockHosts = ["baidu.com", "bilibili.com"];
@@ -75,6 +76,7 @@ function startProxyServer() {
       if (!error) {
         console.log('Root CA generated successfully, please install the certificate');
         console.log('Certificate path:', keyPath);
+        startProxyServer();
       } else {
         console.error('Failed to generate root CA:', error);
       }
