@@ -102,14 +102,38 @@ function App() {
     setToast({ message: '', type: '' });
   };
 
-  const handleAddHost = () => {
+  const handleAddHost = async () => {
     if (newHost.trim() && !config.block_hosts.includes(newHost.trim())) {
       const updatedConfig = {
         ...config,
         block_hosts: [...config.block_hosts, newHost.trim()]
       };
+
+      // Update local state first
       setConfig(updatedConfig);
       setNewHost('');
+
+      // Save to config.json via API
+      setLoading(true);
+      try {
+        const response = await fetch('/api/config', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(updatedConfig)
+        });
+
+        if (response.ok) {
+          showToast('配置保存成功!', 'success');
+        } else {
+          const errorData = await response.json();
+          showToast('保存配置失败: ' + errorData.error, 'error');
+        }
+      } catch (error) {
+        showToast('网络错误: ' + error.message, 'error');
+      }
+      setLoading(false);
     }
   };
 
