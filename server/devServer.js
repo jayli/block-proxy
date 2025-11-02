@@ -138,8 +138,6 @@ function hexToIP(hex) {
 
 module.exports = {
   devServer: (devServerConfig, { env, paths, proxy, allowedHost }) => {
-    // recorderManager.updateAll();
-    LocalProxy.start();
 
     // 添加自定义代理中间件，模拟Rust中的实现
     devServerConfig.onBeforeSetupMiddleware = (devServer) => {
@@ -245,11 +243,6 @@ module.exports = {
         }
       });
 
-      devServer.app.use('/hello', async (req, res) => {
-        LocalProxy.start();
-        res.status(200).json({ ok: 'hello' });
-      });
-
       // post /proxy/https://www.baidu.com/...
       devServer.app.use('/proxy/*', async (req, res) => {
         try {
@@ -304,6 +297,18 @@ module.exports = {
           res.status(502).json({ error: `代理错误: ${error.message}` });
         }
       });
+    };
+
+    // 在服务器启动完成后再启动LocalProxy
+    const originalAfterSetupMiddleware = devServerConfig.onAfterSetupMiddleware;
+    devServerConfig.onAfterSetupMiddleware = (devServer) => {
+      // 调用原始的onAfterSetupMiddleware（如果存在）
+      if (originalAfterSetupMiddleware) {
+        originalAfterSetupMiddleware(devServer);
+      }
+      
+      // 启动LocalProxy
+      LocalProxy.start(() => {});
     };
 
     return devServerConfig;

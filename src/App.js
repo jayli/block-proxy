@@ -220,13 +220,12 @@ function App() {
           <div className="server-info">
             {serverIPs.length > 0 ? (
               <div>
-                <p><strong>服务器IP地址:</strong></p>
+                <p><strong>服务器IP地址:</strong><span className="docker-info">{isDocker ? ' (Docker环境)' : ' (非Dorker环境)'}</span></p>
                 <ul className="ip-list">
                   {serverIPs.map((ip, index) => (
                     <li key={index} className="ip-item">
                       <span className="interface-name">{ip.interface}:</span>
                       <span className="ip-address">{ip.address}</span>
-                      <span className="docker-info">{isDocker ? ' (Docker环境)' : ' (非Dorker环境)'}</span>
                     </li>
                   ))}
                 </ul>
@@ -332,7 +331,7 @@ function App() {
               <span>正在获取服务器IP地址...</span>
             )}
             {isDocker && (
-              <span>当前是docker环境，请填写宿主机IP</span>
+              <span> （当前是docker环境，请填写宿主机IP）</span>
             )}
           </p>
           <p>
