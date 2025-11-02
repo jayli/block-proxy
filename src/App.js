@@ -24,8 +24,9 @@ function App() {
   const [newHost, setNewHost] = useState('');
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState({ message: '', type: '' });
+  const [toastTimer, setToastTimer] = useState(null);
   const [serverIPs, setServerIPs] = useState([]);
-  const [toastTimer, setToastTimer] = useState(null); // 用于存储当前的定时器
+  const [isDocker, setIsDocker] = useState(false);
 
   // 组件加载时获取当前配置和服务器IP
   useEffect(() => {
@@ -46,6 +47,7 @@ function App() {
       if (response.ok) {
         const data = await response.json();
         setServerIPs(data.ips);
+        setIsDocker(data.docker); // 设置 Docker 环境信息
       } else {
         showToast('获取服务器IP失败', 'error');
       }
@@ -223,6 +225,7 @@ function App() {
                     <li key={index} className="ip-item">
                       <span className="interface-name">{ip.interface}:</span>
                       <span className="ip-address">{ip.address}</span>
+                      <span clsssName="ip-address">{isDocker ? 'docker环境' : '非docker环境'}</span>
                     </li>
                   ))}
                 </ul>
@@ -268,6 +271,7 @@ function App() {
             <input
               type="number"
               value={config.proxy_port}
+              disabled={isDocker}
               onChange={(e) => setConfig({...config, proxy_port: parseInt(e.target.value) || 8001})}
             />
           </div>
@@ -276,6 +280,7 @@ function App() {
             <label>Web界面端口:</label>
             <input
               type="number"
+              disabled={isDocker}
               value={config.web_interface_port}
               onChange={(e) => setConfig({...config, web_interface_port: parseInt(e.target.value) || 8002})}
             />
@@ -313,6 +318,18 @@ function App() {
           </p>
           <p>
             <b>端口：</b><span>{config.proxy_port}</span>
+          </p>
+          <p>
+            <b>监控地址：</b>
+            {serverIPs.length > 0 ? (
+              <span>
+                <a href={`http://${getIpAddress()}:${config.web_interface_port}`} target="_blank" rel="noopener noreferrer">
+                  监控地址
+                </a>
+              </span>
+            ) : (
+              <span>正在获取服务器IP地址...</span>
+            )}
           </p>
         </div>
       </div>

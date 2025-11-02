@@ -7,6 +7,44 @@ const path = require('path');
 const os = require('os');
 const LocalProxy = require('../proxy/proxy');
 
+// 检测是否在 Docker 环境中运行
+function isRunningInDocker() {
+  // 方法1: 检查 /.dockerenv 文件是否存在
+  try {
+    fs.accessSync('/.dockerenv', fs.constants.F_OK);
+    return true;
+  } catch (err) {
+    // 文件不存在，继续检查其他方法
+  }
+
+  // 方法2: 检查 /proc/1/cgroup 文件中是否包含 docker 相关信息
+  try {
+    const cgroup = fs.readFileSync('/proc/1/cgroup', 'utf8');
+    if (cgroup.includes('docker') || cgroup.includes('containerd')) {
+      return true;
+    }
+  } catch (err) {
+    // 文件不存在或无法读取
+  }
+
+  // 方法3: 检查环境变量
+  if (process.env.DOCKER === 'true' || process.env.CONTAINER === 'docker') {
+    return true;
+  }
+
+  // 方法4: 检查挂载信息
+  try {
+    const mounts = fs.readFileSync('/proc/mounts', 'utf8');
+    if (mounts.includes('docker')) {
+      return true;
+    }
+  } catch (err) {
+    // 文件不存在或无法读取
+  }
+
+  return false;
+}
+
 module.exports = {
   devServer: (devServerConfig, { env, paths, proxy, allowedHost }) => {
     // recorderManager.updateAll();
@@ -51,7 +89,8 @@ module.exports = {
           
           res.status(200).json({
             ips: ipAddresses,
-            primary: ipAddresses.length > 0 ? ipAddresses[0].address : null
+            primary: ipAddresses.length > 0 ? ipAddresses[0].address : null,
+            docker: isRunningInDocker() // 添加 Docker 环境信息
           });
         } catch (error) {
           res.status(500).json({ error: 'Failed to get server IP addresses: ' + error.message });
