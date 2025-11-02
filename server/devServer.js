@@ -45,6 +45,97 @@ function isRunningInDocker() {
   return false;
 }
 
+// 获取Docker宿主机IP地址
+function getDockerHostIP() {
+  const methods = [];
+  
+  // 方法1: 检查默认网关 (通常是宿主机在容器网络中的IP)
+  try {
+    const gateway = getDefaultGateway();
+    if (gateway) {
+      methods.push({ method: 'default_gateway', ip: gateway });
+    }
+  } catch (err) {
+    // 忽略错误
+  }
+
+  // 方法2: 检查 docker0 网桥接口
+  try {
+    const interfaces = os.networkInterfaces();
+    for (const interfaceName in interfaces) {
+      if (interfaceName.startsWith('eth') || interfaceName.startsWith('en')) {
+        const interface = interfaces[interfaceName];
+        for (const iface of interface) {
+          if (!iface.internal && iface.family === 'IPv4') {
+            // 检查是否是常见的Docker网络IP范围
+            if (iface.address.startsWith('172.17.') || 
+                iface.address.startsWith('172.18.') ||
+                iface.address.startsWith('172.19.') ||
+                iface.address.startsWith('172.20.')) {
+              methods.push({ method: 'docker_bridge', ip: iface.address });
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    // 忽略错误
+  }
+
+  // 方法3: 通过环境变量获取
+  if (process.env.DOCKER_HOST_IP) {
+    methods.push({ method: 'environment_variable', ip: process.env.DOCKER_HOST_IP });
+  }
+
+  // 方法4: 通过特殊DNS名称获取 (Docker for Mac/Windows)
+  try {
+    const hostDockerInternal = require('dns').lookupSync('host.docker.internal');
+    if (hostDockerInternal) {
+      methods.push({ method: 'host_docker_internal', ip: hostDockerInternal.address });
+    }
+  } catch (err) {
+    // 忽略错误
+  }
+
+  return methods;
+}
+
+// 获取默认网关IP
+function getDefaultGateway() {
+  try {
+    // 读取路由表信息
+    const routes = fs.readFileSync('/proc/net/route', 'utf8');
+    const lines = routes.split('\n');
+    
+    for (let i = 1; i < lines.length; i++) {
+      const fields = lines[i].trim().split(/\s+/);
+      if (fields.length >= 3) {
+        const destination = fields[1];
+        const gateway = fields[2];
+        
+        // 检查默认路由 (目标为00000000)
+        if (destination === '00000000' && gateway !== '00000000') {
+          // 将十六进制网关地址转换为点分十进制
+          const gatewayIP = hexToIP(gateway);
+          return gatewayIP;
+        }
+      }
+    }
+  } catch (err) {
+    // 文件不存在或无法读取
+  }
+  return null;
+}
+
+// 将十六进制IP地址转换为点分十进制格式
+function hexToIP(hex) {
+  const ip = [];
+  for (let i = 0; i < 4; i++) {
+    ip.push(parseInt(hex.substr(i * 2, 2), 16));
+  }
+  return ip.reverse().join('.');
+}
+
 module.exports = {
   devServer: (devServerConfig, { env, paths, proxy, allowedHost }) => {
     // recorderManager.updateAll();
@@ -87,11 +178,19 @@ module.exports = {
             }
           }
           
-          res.status(200).json({
+          const isDocker = isRunningInDocker();
+          const response = {
             ips: ipAddresses,
             primary: ipAddresses.length > 0 ? ipAddresses[0].address : null,
-            docker: isRunningInDocker() // 添加 Docker 环境信息
-          });
+            docker: isDocker
+          };
+          
+          // 如果在Docker环境中，尝试获取宿主机IP
+          if (isDocker) {
+            response.hostIPs = getDockerHostIP();
+          }
+          
+          res.status(200).json(response);
         } catch (error) {
           res.status(500).json({ error: 'Failed to get server IP addresses: ' + error.message });
         }

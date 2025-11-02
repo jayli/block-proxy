@@ -27,6 +27,7 @@ function App() {
   const [toastTimer, setToastTimer] = useState(null);
   const [serverIPs, setServerIPs] = useState([]);
   const [isDocker, setIsDocker] = useState(false);
+  const [hostIPs, setHostIPs] = useState([]); // 存储宿主机IP信息
 
   // 组件加载时获取当前配置和服务器IP
   useEffect(() => {
@@ -47,7 +48,10 @@ function App() {
       if (response.ok) {
         const data = await response.json();
         setServerIPs(data.ips);
-        setIsDocker(data.docker); // 设置 Docker 环境信息
+        setIsDocker(data.docker);
+        if (data.hostIPs) {
+          setHostIPs(data.hostIPs); // 设置宿主机IP信息
+        }
       } else {
         showToast('获取服务器IP失败', 'error');
       }
@@ -225,10 +229,25 @@ function App() {
                     <li key={index} className="ip-item">
                       <span className="interface-name">{ip.interface}:</span>
                       <span className="ip-address">{ip.address}</span>
-                      <span clsssName="ip-address">{isDocker ? 'docker环境' : '非docker环境'}</span>
+                      <span className="docker-info">{isDocker ? ' (Docker环境)' : ' (本地环境)'}</span>
                     </li>
                   ))}
                 </ul>
+                
+                {/* 显示宿主机IP信息 */}
+                {isDocker && hostIPs.length > 0 && (
+                  <div className="host-ip-info">
+                    <p><strong>宿主机IP地址:</strong></p>
+                    <ul className="host-ip-list">
+                      {hostIPs.map((hostIP, index) => (
+                        <li key={index} className="host-ip-item">
+                          <span className="method-name">{hostIP.method}:</span>
+                          <span className="host-ip-address">{hostIP.ip}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             ) : (
               <p>正在获取服务器IP地址...</p>
@@ -314,6 +333,9 @@ function App() {
               </span>
             ) : (
               <span>正在获取服务器IP地址...</span>
+            )}
+            {isDocker && (
+              <span>当前是docker环境，请填写宿主机IP</span>
             )}
           </p>
           <p>
