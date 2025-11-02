@@ -158,7 +158,7 @@ function getAnyProxyOptions() {
 }
 
 module.exports = {
-  start: function() { 
+  start: function(callback) { 
     // 每次启动时都重新加载配置
     const config = loadConfig();
     
@@ -168,24 +168,30 @@ module.exports = {
       setTimeout(() => {
         console.log('重新启动代理服务器');
         startProxyServer();
+        if (typeof callback === 'function') {
+          callback();
+        }
       }, 1000);
     } else {
       startProxyServer();
+      if (typeof callback === 'function') {
+        callback();
+      }
     }
     
   },
-  restart: function() { 
+  restart: function(callback) { 
     // 实现重启功能
     if (proxyServerInstance) {
       console.log('Restarting proxy server...');
       proxyServerInstance.close();
       setTimeout(() => {
         console.log('重新启动代理服务器');
-        this.start();
+        this.start(callback);
       }, 1000); 
     } else {
       // 如果没有运行中的实例，直接启动
-      this.start();
+      this.start(callback);
     }
   }
 };

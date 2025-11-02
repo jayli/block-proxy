@@ -1,5 +1,8 @@
 {
-  "block_hosts": ["baidu.com", "bilibili.com"],
+  "block_hosts": [
+    "baidu.com",
+    "bilibili.com"
+  ],
   "proxy_port": 8001,
   "web_interface_port": 8002
 }

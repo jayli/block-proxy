@@ -9,6 +9,7 @@ const LocalProxy = require('../proxy/proxy');
 module.exports = {
   devServer: (devServerConfig, { env, paths, proxy, allowedHost }) => {
     // recorderManager.updateAll();
+    LocalProxy.start();
 
     // 添加自定义代理中间件，模拟Rust中的实现
     devServerConfig.onBeforeSetupMiddleware = (devServer) => {
@@ -25,35 +26,59 @@ module.exports = {
         }
       }
 
-      // post
-      // {name:xx, url:xx}
-      devServer.app.use('/start_recorder', async (req, res) => {
-        // 获取POST请求体中的数据
-        let body = '';
-        req.on('data', chunk => {
-          body += chunk.toString();
-        });
-        req.on('end', () => {
-          try {
-            // 解析请求体中的JSON数据
-            const data = JSON.parse(body);
-            const name = data.name;
-            const url = data.url;
-            recorderManager.startRecorder(name, url);
-            res.status(200).json({ ok: '摄像头开始录制' });
-          } catch (err) {
-            console.log(err);
-            res.status(400).json({ error: err.message });
+      // 获取配置接口
+      devServer.app.get('/api/config', async (req, res) => {
+        try {
+          const configPath = path.join(__dirname, '../config.json');
+          if (fs.existsSync(configPath)) {
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+            res.status(200).json(config);
+          } else {
+            res.status(404).json({ error: 'Config file not found' });
           }
-        });
+        } catch (error) {
+          res.status(500).json({ error: 'Failed to read config file' });
+        }
+      });
+
+      // 更新配置接口
+      devServer.app.post('/api/config', async (req, res) => {
+        try {
+          let body = '';
+          req.on('data', chunk => {
+            body += chunk.toString();
+          });
+          req.on('end', () => {
+            try {
+              const newConfig = JSON.parse(body);
+              const configPath = path.join(__dirname, '../config.json');
+              fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
+              res.status(200).json({ message: 'Config updated successfully' });
+            } catch (err) {
+              res.status(400).json({ error: 'Invalid JSON or write error: ' + err.message });
+            }
+          });
+        } catch (error) {
+          res.status(500).json({ error: 'Failed to update config' });
+        }
+      });
+
+      // 重启代理接口
+      devServer.app.post('/api/restart', async (req, res) => {
+        try {
+          // 调用本地代理的重启方法
+          LocalProxy.restart(function() {
+            res.status(200).json({ message: 'Proxy restarted successfully' });
+          });
+        } catch (error) {
+          res.status(500).json({ error: 'Failed to restart proxy: ' + error.message });
+        }
       });
 
       devServer.app.use('/hello', async (req, res) => {
         LocalProxy.start();
         res.status(200).json({ ok: 'hello' });
       });
-
- 
 
       // post /proxy/https://www.baidu.com/...
       devServer.app.use('/proxy/*', async (req, res) => {
