@@ -2,6 +2,18 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
 
+// Toast组件
+const Toast = ({ message, type, onClose }) => {
+  if (!message) return null;
+
+  return (
+    <div className={`toast ${type}`}>
+      <span>{message}</span>
+      <button className="toast-close" onClick={onClose}>×</button>
+    </div>
+  );
+};
+
 function App() {
   const [config, setConfig] = useState({
     block_hosts: [],
@@ -11,8 +23,7 @@ function App() {
   
   const [newHost, setNewHost] = useState('');
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState('');
-  const [messageType, setMessageType] = useState(''); // success, error, info
+  const [toast, setToast] = useState({ message: '', type: '' });
 
   // 组件加载时获取当前配置
   useEffect(() => {
@@ -26,20 +37,22 @@ function App() {
         const data = await response.json();
         setConfig(data);
       } else {
-        showMessage('获取配置失败', 'error');
+        showToast('获取配置失败', 'error');
       }
     } catch (error) {
-      showMessage('网络错误: ' + error.message, 'error');
+      showToast('网络错误: ' + error.message, 'error');
     }
   };
 
-  const showMessage = (text, type) => {
-    setMessage(text);
-    setMessageType(type);
+  const showToast = (message, type) => {
+    setToast({ message, type });
     setTimeout(() => {
-      setMessage('');
-      setMessageType('');
+      setToast({ message: '', type: '' });
     }, 3000);
+  };
+
+  const closeToast = () => {
+    setToast({ message: '', type: '' });
   };
 
   const handleAddHost = () => {
@@ -77,13 +90,13 @@ function App() {
       });
       
       if (response.ok) {
-        showMessage('配置保存成功!', 'success');
+        showToast('配置保存成功!', 'success');
       } else {
         const errorData = await response.json();
-        showMessage('保存配置失败: ' + errorData.error, 'error');
+        showToast('保存配置失败: ' + errorData.error, 'error');
       }
     } catch (error) {
-      showMessage('网络错误: ' + error.message, 'error');
+      showToast('网络错误: ' + error.message, 'error');
     }
     setLoading(false);
   };
@@ -96,13 +109,13 @@ function App() {
       });
       
       if (response.ok) {
-        showMessage('代理服务器重启成功!', 'success');
+        showToast('代理服务器重启成功!', 'success');
       } else {
         const errorData = await response.json();
-        showMessage('重启失败: ' + errorData.error, 'error');
+        showToast('重启失败: ' + errorData.error, 'error');
       }
     } catch (error) {
-      showMessage('网络错误: ' + error.message, 'error');
+      showToast('网络错误: ' + error.message, 'error');
     }
     setLoading(false);
   };
@@ -112,11 +125,12 @@ function App() {
       <div className="config-container">
         <h1>代理服务器配置</h1>
         
-        {message && (
-          <div className={`message ${messageType}`}>
-            {message}
-          </div>
-        )}
+        {/* Toast提示组件 */}
+        <Toast 
+          message={toast.message} 
+          type={toast.type} 
+          onClose={closeToast} 
+        />
         
         <div className="config-section">
           <h2>拦截主机列表</h2>

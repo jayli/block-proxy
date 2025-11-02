@@ -1,4 +1,67 @@
-/* src/App.css */
+/* Toast 样式 */
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 16px 20px;
+  border-radius: 4px;
+  color: white;
+  font-weight: 500;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  animation: toastSlideIn 0.3s ease-out;
+  min-width: 250px;
+}
+
+@keyframes toastSlideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.toast.success {
+  background-color: #28a745;
+  border-left: 4px solid #1e7e34;
+}
+
+.toast.error {
+  background-color: #dc3545;
+  border-left: 4px solid #bd2130;
+}
+
+.toast.info {
+  background-color: #17a2b8;
+  border-left: 4px solid #117a8b;
+}
+
+.toast-close {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 20px;
+  font-weight: bold;
+  margin-left: 15px;
+  cursor: pointer;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.toast-close:hover {
+  opacity: 0.7;
+}
+
+/* 其他原有样式保持不变 */
 .App {
   text-align: center;
   padding: 20px;
@@ -17,6 +80,7 @@
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
   padding: 30px;
   text-align: left;
+  position: relative;
 }
 
 .config-container h1 {
@@ -161,32 +225,6 @@
 .save-btn:disabled, .restart-btn:disabled {
   background-color: #6c757d;
   cursor: not-allowed;
-}
-
-.message {
-  padding: 12px;
-  margin-bottom: 20px;
-  border-radius: 4px;
-  text-align: center;
-  font-weight: 500;
-}
-
-.message.success {
-  background-color: #d4edda;
-  color: #155724;
-  border: 1px solid #c3e6cb;
-}
-
-.message.error {
-  background-color: #f8d7da;
-  color: #721c24;
-  border: 1px solid #f5c6cb;
-}
-
-.message.info {
-  background-color: #d1ecf1;
-  color: #0c5460;
-  border: 1px solid #bee5eb;
 }
 
 button {
