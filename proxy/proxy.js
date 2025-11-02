@@ -68,114 +68,121 @@ function shouldBlockHost(host) {
 // 保存代理服务器实例的变量
 let proxyServerInstance = null;
 
+function startProxyServer() {
+  // Check if root CA is needed
+  if (!AnyProxy.utils.certMgr.ifRootCAFileExists()) {
+    AnyProxy.utils.certMgr.generateRootCA((error, keyPath) => {
+      if (!error) {
+        console.log('Root CA generated successfully, please install the certificate');
+        console.log('Certificate path:', keyPath);
+      } else {
+        console.error('Failed to generate root CA:', error);
+      }
+    });
+  } else {
+    // Start proxy server
+    let options = getAnyProxyOptions();
+    proxyServerInstance = new AnyProxy.ProxyServer(options);
+
+    proxyServerInstance.on('ready', () => {
+      console.log(`Proxy server started on port ${proxyPort}`);
+      console.log(`Web interface available on port ${webInterfacePort}`);
+      console.log('Intercepting requests to hosts:', blockHosts.join(', '));
+      console.log('All other requests will be passed through without HTTPS interception');
+    });
+
+    proxyServerInstance.on('error', (e) => {
+      console.error('Proxy server error:', e);
+    });
+
+    // 添加服务器关闭事件监听
+    proxyServerInstance.on('close', () => {
+      console.log('代理服务器已关闭');
+      setTimeout(() => {
+        // 需要判断是主动关闭还是意外关闭
+        // proxyServerInstance.start();
+      }, 3000);
+    });
+
+    proxyServerInstance.start();
+
+    return proxyServerInstance;
+  }
+}
+
+function getAnyProxyOptions() {
+  return {
+    port: proxyPort,
+    rule: {
+      // 只对特定域名启用 HTTPS 拦截
+      async beforeDealHttpsRequest(requestDetail) {
+        const host = requestDetail.host;
+        // 只对配置中的域名进行 HTTPS 拦截
+        if (shouldBlockHost(host)) {
+          return true; // 允许 HTTPS 拦截
+        }
+        return false; // 不拦截 HTTPS
+      },
+      
+      // 拦截 HTTP 请求
+      async beforeSendRequest(requestDetail) {
+        const host = requestDetail.requestOptions.hostname;
+        
+        // 检查请求是否发往配置中的域名
+        if (shouldBlockHost(host)) {
+          console.log(`拦截到请求: ${host}${requestDetail.requestOptions.path}`);
+          
+          // 为被拦截的域名返回自定义响应
+          return {
+            response: {
+              statusCode: 200,
+              header: { 'Content-Type': 'text/plain; charset=utf-8' },
+              body: `AnyProxy: request to ${host} is blocked!`
+            }
+          };
+        }
+        
+        // 允许其他请求通过
+        return null;
+      }
+    },
+    webInterface: {
+      enable: true,
+      webPort: webInterfacePort
+    },
+    throttle: 10000,
+    forceProxyHttps: false, // 关闭全局 HTTPS 拦截
+    wsIntercept: false,
+    silent: false
+  };
+}
+
 module.exports = {
   start: function() { 
     // 每次启动时都重新加载配置
     const config = loadConfig();
     
-    // 更新options配置
-    const options = {
-      port: proxyPort,
-      rule: {
-        // 只对特定域名启用 HTTPS 拦截
-        async beforeDealHttpsRequest(requestDetail) {
-          const host = requestDetail.host;
-          // 只对配置中的域名进行 HTTPS 拦截
-          if (shouldBlockHost(host)) {
-            return true; // 允许 HTTPS 拦截
-          }
-          return false; // 不拦截 HTTPS
-        },
-        
-        // 拦截 HTTP 请求
-        async beforeSendRequest(requestDetail) {
-          const host = requestDetail.requestOptions.hostname;
-          
-          // 检查请求是否发往配置中的域名
-          if (shouldBlockHost(host)) {
-            console.log(`拦截到请求: ${host}${requestDetail.requestOptions.path}`);
-            
-            // 为被拦截的域名返回自定义响应
-            return {
-              response: {
-                statusCode: 200,
-                header: { 'Content-Type': 'text/html' },
-                body: `<html><body><h1>request from ${host} is blocked!</h1><p>blocked..</p></body></html>`
-              }
-            };
-          }
-          
-          // 允许其他请求通过
-          return null;
-        },
-        
-        // 可选：记录所有请求
-        async beforeSendResponse(requestDetail, responseDetail) {
-          const host = requestDetail.requestOptions.hostname;
-          console.log(`请求完成: ${host}${requestDetail.requestOptions.path} - 状态码: ${responseDetail.response.statusCode}`);
-          return null;
-        }
-      },
-      webInterface: {
-        enable: true,
-        webPort: webInterfacePort
-      },
-      throttle: 10000,
-      forceProxyHttps: false, // 关闭全局 HTTPS 拦截
-      wsIntercept: false,
-      silent: false
-    };
-    
     // 如果代理服务器已在运行，先停止它
     if (proxyServerInstance && proxyServerInstance.httpProxyServer && proxyServerInstance.httpProxyServer.listening) {
-      console.log('Stopping existing proxy server...');
-      proxyServerInstance.close(() => {
-        console.log('Previous proxy server stopped.');
+      proxyServerInstance.close();
+      setTimeout(() => {
+        console.log('重新启动代理服务器');
         startProxyServer();
-      });
+      }, 1000);
     } else {
       startProxyServer();
     }
     
-    function startProxyServer() {
-      // Check if root CA is needed
-      if (!AnyProxy.utils.certMgr.ifRootCAFileExists()) {
-        AnyProxy.utils.certMgr.generateRootCA((error, keyPath) => {
-          if (!error) {
-            console.log('Root CA generated successfully, please install the certificate');
-            console.log('Certificate path:', keyPath);
-          } else {
-            console.error('Failed to generate root CA:', error);
-          }
-        });
-      } else {
-        // Start proxy server
-        proxyServerInstance = new AnyProxy.ProxyServer(options);
-
-        proxyServerInstance.on('ready', () => {
-          console.log(`Proxy server started on port ${proxyPort}`);
-          console.log(`Web interface available on port ${webInterfacePort}`);
-          console.log('Intercepting requests to hosts:', blockHosts.join(', '));
-          console.log('All other requests will be passed through without HTTPS interception');
-        });
-
-        proxyServerInstance.on('error', (e) => {
-          console.error('Proxy server error:', e);
-        });
-
-        proxyServerInstance.start();
-      }
-    }
   },
   restart: function() { 
     // 实现重启功能
     if (proxyServerInstance) {
       console.log('Restarting proxy server...');
-      proxyServerInstance.close(() => {
-        console.log('Previous proxy server stopped. Starting new one...');
-        // 直接调用start方法，它会自动重新加载配置
+      proxyServerInstance.close();
+      setTimeout(() => {
+        console.log('重新启动代理服务器');
         this.start();
-      });
+      }, 1000); 
     } else {
       // 如果没有运行中的实例，直接启动
       this.start();
