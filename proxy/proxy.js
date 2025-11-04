@@ -67,6 +67,19 @@ function shouldBlockHost(host) {
   );
 }
 
+function getContentLength(body) {
+  let contentLength = 0;
+  if (Buffer.isBuffer(body)) {
+    contentLength = body.length;
+  } else if (typeof body === 'string') {
+    // 如果是字符串，按 utf-8 编码转换为字节
+    let encoder = new TextEncoder();
+    let uint8Array = encoder.encode(body);
+    contentLength = uint8Array.byteLength;
+  }
+  return contentLength;
+}
+
 // 保存代理服务器实例的变量
 let proxyServerInstance = null;
 
@@ -154,11 +167,15 @@ function getAnyProxyOptions() {
           // 如果是列表中的域名则拦截
           console.log(`拦截到请求: ${host}${requestDetail.requestOptions.path}`);
           // 为被拦截的域名返回自定义响应
+          let customBody = `AnyProxy: request to ${host} is blocked!`;
           return {
             response: {
               statusCode: 200,
-              header: { 'Content-Type': 'text/plain; charset=utf-8' },
-              body: `AnyProxy: request to ${host} is blocked!`
+              header: {
+                'Content-Type': 'text/plain; charset=utf-8',
+                'Content-Length': getContentLength(customBody)
+              },
+              body: customBody
             }
           };
         }
