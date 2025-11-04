@@ -4,6 +4,7 @@ const AnyProxy = require('anyproxy');
 const fs = require('fs');
 const path = require('path');
 const { start } = require('repl');
+const net = require('net');
 
 // 全局变量存储关键配置参数
 let blockHosts = ["baidu.com", "bilibili.com"];
@@ -129,11 +130,12 @@ function getAnyProxyOptions() {
       // 拦截 HTTP 请求
       async beforeSendRequest(requestDetail) {
         const host = requestDetail.requestOptions.hostname;
-        
-        // 检查请求是否发往配置中的域名
-        if (shouldBlockHost(host)) {
+        // 如果是裸IP请求则直接放行
+        if (net.isIPv4(host) || net.isIPv6(host)) {
+          return null;
+        } else if (shouldBlockHost(host)) {
+          // 如果是列表中的域名则拦截
           console.log(`拦截到请求: ${host}${requestDetail.requestOptions.path}`);
-          
           // 为被拦截的域名返回自定义响应
           return {
             response: {
