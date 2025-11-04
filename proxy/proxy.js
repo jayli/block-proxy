@@ -126,6 +126,23 @@ function getAnyProxyOptions() {
         }
         return false; // 不拦截 HTTPS
       },
+
+      async onError(requestDetail, error) {
+        // 资源不可达
+        if (error.code == "ENETUNREACH") {
+          return {
+            response: {
+              statusCode: 404,
+              header: { 'Content-Type': 'text/plain; charset=utf-8' },
+              body: `AnyProxy Error: ${error.code}`
+            }
+          };
+        }
+      },
+
+      async onConnectError(requestDetail, error) {
+        return null;
+      },
       
       // 拦截 HTTP 请求
       async beforeSendRequest(requestDetail) {
@@ -145,10 +162,14 @@ function getAnyProxyOptions() {
             }
           };
         }
-        
-        // 允许其他请求通过
+
         return null;
-      }
+      },
+
+      async beforeSendResponse(requestDetail, responseDetail) {
+        return null;
+      },
+
     },
     webInterface: {
       enable: true,
@@ -157,7 +178,7 @@ function getAnyProxyOptions() {
     throttle: 10000,
     forceProxyHttps: false, // 关闭全局 HTTPS 拦截
     wsIntercept: false,
-    silent: false
+    silent: true
   };
 }
 
