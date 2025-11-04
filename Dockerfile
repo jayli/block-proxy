@@ -22,6 +22,8 @@ EXPOSE 3000
 EXPOSE 8001
 EXPOSE 8002
 
+COPY ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/
+
 CMD ["npm", "run", "dev"]
 
 #RUN mkdir /app/videos
