@@ -3,11 +3,12 @@
 
 
 
-FROM node:14-alpine
+FROM node:18-alpine
 
 WORKDIR /app
 
-COPY package.json ./
+# 复制依赖文件
+COPY package.json pnpm-lock.yaml ./
 
 CMD ["npm", "run", "clear"]
 
@@ -15,8 +16,9 @@ COPY . ./
 
 ENV PATH=/usr/local/bin:$PATH
 
-RUN npm install --registry=https://registry.npmmirror.com
-#RUN corepack enable && pnpm i --frozen-lockfile --registry=https://registry.npmmirror.com
+RUN npm install -g pnpm --registry=https://registry.npmmirror.com
+RUN pnpm install --force --registry=https://registry.npmmirror.com
+# RUN corepack enable && pnpm i --frozen-lockfile --registry=https://registry.npmmirror.com
 
 EXPOSE 3000
 EXPOSE 8001
