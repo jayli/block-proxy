@@ -22,12 +22,14 @@ function App() {
   });
   
   const [newHost, setNewHost] = useState('');
+  const [newStartTime, setNewStartTime] = useState('09:00');
+  const [newEndTime, setNewEndTime] = useState('18:00');
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState({ message: '', type: '' });
   const [toastTimer, setToastTimer] = useState(null);
   const [serverIPs, setServerIPs] = useState([]);
   const [isDocker, setIsDocker] = useState(false);
-  const [hostIPs, setHostIPs] = useState([]); // 存储宿主机IP信息
+  const [hostIPs, setHostIPs] = useState([]);
 
   // 组件加载时获取当前配置和服务器IP
   useEffect(() => {
@@ -50,7 +52,7 @@ function App() {
         setServerIPs(data.ips);
         setIsDocker(data.docker);
         if (data.hostIPs) {
-          setHostIPs(data.hostIPs); // 设置宿主机IP信息
+          setHostIPs(data.hostIPs);
         }
       } else {
         showToast('获取服务器IP失败', 'error');
@@ -103,30 +105,49 @@ function App() {
   };
 
   const handleAddHost = async () => {
-    if (newHost.trim() && !config.block_hosts.includes(newHost.trim())) {
-      const updatedConfig = {
-        ...config,
-        block_hosts: [...config.block_hosts, newHost.trim()]
-      };
+    if (newHost.trim()) {
+      // 检查是否已存在相同的主机
+      const exists = config.block_hosts.some(item => 
+        typeof item === 'string' ? item === newHost.trim() : item.filter_host === newHost.trim()
+      );
+      
+      if (!exists) {
+        const newFilterItem = {
+          filter_host: newHost.trim(),
+          filter_start_time: newStartTime,
+          filter_end_time: newEndTime
+        };
 
-      // Update local state first
-      setConfig(updatedConfig);
-      setNewHost('');
+        const updatedConfig = {
+          ...config,
+          block_hosts: [...config.block_hosts, newFilterItem]
+        };
 
-      // Save to config.json via API
-      setLoading(true);
-      await saveConfig(updatedConfig);
-      setLoading(false);
+        // Update local state first
+        setConfig(updatedConfig);
+        setNewHost('');
+
+        // Save to config.json via API
+        setLoading(true);
+        await saveConfig(updatedConfig);
+        setLoading(false);
+      }
     }
   };
 
   const handleRemoveHost = async (hostToRemove) => {
     // 添加确认框
-    const confirmed = window.confirm(`确定要删除主机 "${hostToRemove}" 吗？`);
+    const confirmed = window.confirm(`确定要删除主机 "${typeof hostToRemove === 'string' ? hostToRemove : hostToRemove.filter_host}" 吗？`);
     if (confirmed) {
       const updatedConfig = {
         ...config,
-        block_hosts: config.block_hosts.filter(host => host !== hostToRemove)
+        block_hosts: config.block_hosts.filter(host => {
+          if (typeof host === 'string') {
+            return host !== hostToRemove;
+          } else {
+            return host !== hostToRemove && host.filter_host !== hostToRemove;
+          }
+        })
       };
       setConfig(updatedConfig);
       await saveConfig(updatedConfig);
@@ -189,6 +210,34 @@ function App() {
     setLoading(false);
   };
 
+  // 更新拦截项的时间段
+  const updateFilterTime = async (index, startTime, endTime) => {
+    const updatedBlockHosts = [...config.block_hosts];
+    
+    // 兼容旧格式转换为新格式
+    if (typeof updatedBlockHosts[index] === 'string') {
+      updatedBlockHosts[index] = {
+        filter_host: updatedBlockHosts[index],
+        filter_start_time: startTime,
+        filter_end_time: endTime
+      };
+    } else {
+      updatedBlockHosts[index] = {
+        ...updatedBlockHosts[index],
+        filter_start_time: startTime,
+        filter_end_time: endTime
+      };
+    }
+    
+    const updatedConfig = {
+      ...config,
+      block_hosts: updatedBlockHosts
+    };
+    
+    setConfig(updatedConfig);
+    await saveConfig(updatedConfig);
+  };
+
   function getIpAddress() {
     let addr = '';
     if (serverIPs.length == 0) {
@@ -202,6 +251,22 @@ function App() {
     }
     return addr;
   }
+
+  // 获取拦截项的显示名称
+  const getFilterHostDisplay = (filterItem) => {
+    return typeof filterItem === 'string' ? filterItem : filterItem.filter_host;
+  };
+
+  // 获取拦截项的时间段
+  const getFilterTimes = (filterItem) => {
+    if (typeof filterItem === 'string') {
+      return { start: '00:00', end: '23:59' };
+    }
+    return {
+      start: filterItem.filter_start_time || '00:00',
+      end: filterItem.filter_end_time || '23:59'
+    };
+  };
 
   return (
     <div className="App">
@@ -220,7 +285,7 @@ function App() {
           <div className="server-info">
             {serverIPs.length > 0 ? (
               <div>
-                <p><strong>服务器IP地址:</strong><span className="docker-info">{isDocker ? ' (Docker环境)' : ' (非Dorker环境)'}</span></p>
+                <p><strong>服务器IP地址:</strong><span className="docker-info">{isDocker ? ' (Docker环境)' : ' (非Docker环境)'}</span></p>
                 <ul className="ip-list">
                   {serverIPs.map((ip, index) => (
                     <li key={index} className="ip-item">
@@ -261,13 +326,50 @@ function App() {
               placeholder="输入要拦截的主机 (例如: example.com)"
               onKeyPress={(e) => e.key === 'Enter' && handleAddHost()}
             />
-            <button onClick={handleAddHost}>添加</button>
+            <div className="time-inputs">
+              <label><span>开始时间：</span>
+                <input
+                  type="time"
+                  value={newStartTime}
+                  onChange={(e) => setNewStartTime(e.target.value)}
+                />
+              </label>
+              <label><span>结束时间：</span>
+                <input
+                  type="time"
+                  value={newEndTime}
+                  onChange={(e) => setNewEndTime(e.target.value)}
+                />
+              </label>
+              <button onClick={handleAddHost}>添加</button>
+            </div>
           </div>
+          <hr />
           
           <ul className="host-list">
             {config.block_hosts.map((host, index) => (
               <li key={index} className="host-item">
-                <span>{host}</span>
+                <div className="host-info">
+                  <span>{getFilterHostDisplay(host)}</span>
+                  <div className="time-controls">
+                    <label>
+                      开始:
+                      <input
+                        type="time"
+                        value={getFilterTimes(host).start}
+                        onChange={(e) => updateFilterTime(index, e.target.value, getFilterTimes(host).end)}
+                      />
+                    </label>
+                    <label>
+                      结束:
+                      <input
+                        type="time"
+                        value={getFilterTimes(host).end}
+                        onChange={(e) => updateFilterTime(index, getFilterTimes(host).start, e.target.value)}
+                      />
+                    </label>
+                  </div>
+                </div>
                 <button 
                   onClick={() => handleRemoveHost(host)}
                   className="remove-btn"

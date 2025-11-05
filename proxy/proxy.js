@@ -58,13 +58,46 @@ function loadConfig() {
   return config;
 }
 
-// 检查主机名是否在拦截列表中
+// 检查主机名是否在拦截列表中，并且当前时间在拦截时间段内
 function shouldBlockHost(host) {
   if (!host) return false;
   
-  return blockHosts.some(blockedHost => 
-    host.includes(blockedHost)
-  );
+  // 获取当前时间
+  const now = new Date();
+  const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+  
+  return blockHosts.some(blockItem => {
+    // 兼容旧格式（字符串格式）
+    if (typeof blockItem === 'string') {
+      return host.includes(blockItem);
+    }
+    
+    // 新格式（对象格式）
+    if (typeof blockItem === 'object' && blockItem.filter_host) {
+      // 检查主机名是否匹配
+      if (!host.includes(blockItem.filter_host)) {
+        return false;
+      }
+      
+      // 如果没有设置时间段，则始终拦截
+      if (!blockItem.filter_start_time || !blockItem.filter_end_time) {
+        return true;
+      }
+      
+      // 检查当前时间是否在拦截时间段内
+      const startTime = blockItem.filter_start_time;
+      const endTime = blockItem.filter_end_time;
+      
+      // 处理跨天的情况（例如 22:00 到 06:00）
+      if (startTime > endTime) {
+        return currentTime >= startTime || currentTime <= endTime;
+      } else {
+        return currentTime >= startTime && currentTime <= endTime;
+      }
+    }
+    
+    return false;
+  });
 }
 
 function getContentLength(body) {

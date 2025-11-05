@@ -147,9 +147,10 @@
   display: flex;
   margin-bottom: 15px;
   gap: 10px;
+  flex-direction: column;
 }
 
-.host-input input {
+.host-input input[type="text"] {
   flex: 1;
   padding: 10px;
   border: 1px solid #ddd;
@@ -165,10 +166,42 @@
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
+  align-self: flex-start;
 }
 
 .host-input button:hover {
   background-color: #0069d9;
+}
+
+.time-inputs {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.time-inputs label {
+  flex-direction: column;
+  font-size: 14px;
+}
+
+hr.simple-line {
+
+
+}
+
+/* 时间控件样式 */
+input[type="time"] {
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+  background-color: white;
+}
+
+input[type="time"]:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
 }
 
 .host-list {
@@ -180,7 +213,7 @@
 .host-item {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   padding: 12px 10px;
   border-bottom: 1px solid #eee;
 }
@@ -189,8 +222,30 @@
   border-bottom: none;
 }
 
+.host-info {
+  flex-grow: 1;
+}
+
 .host-item span {
   font-size: 14px;
+}
+
+.time-controls {
+  display: flex;
+  gap: 15px;
+  margin-top: 5px;
+  align-items: center;
+}
+
+.time-controls label {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+}
+
+.time-controls input[type="time"] {
+  width: 100px;
+  margin-top: 2px;
 }
 
 .remove-btn {
@@ -201,6 +256,9 @@
   cursor: pointer;
   border-radius: 3px;
   font-size: 12px;
+  height: fit-content;
+  align-self: center;
+  margin-left: 10px;
 }
 
 .remove-btn:hover {
@@ -227,11 +285,24 @@
   border-radius: 4px;
 }
 
+.setting-row input[type="number"] {
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.setting-row input[type="number"]:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
 .actions {
   display: flex;
   justify-content: space-between;
   gap: 15px;
-  margin-bottom:30px;
+  margin-bottom: 30px;
 }
 
 .save-btn, .restart-btn {
@@ -282,4 +353,71 @@ button:hover {
 button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* Docker信息样式 */
+.docker-info {
+  color: #007bff;
+  font-size: 0.9em;
+}
+
+.host-ip-info {
+  margin-top: 15px;
+  padding-top: 10px;
+  border-top: 1px solid #eee;
+}
+
+.host-ip-list {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0;
+}
+
+.host-ip-item {
+  display: flex;
+  padding: 5px 0;
+}
+
+.method-name {
+  font-weight: bold;
+  width: 150px;
+  color: #555;
+}
+
+.host-ip-address {
+  flex: 1;
+  font-family: 'Courier New', monospace;
+  background-color: #e9ecef;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .config-container {
+    margin: 10px;
+    padding: 20px;
+  }
+  
+  .time-controls {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+  }
+  
+  .time-controls input[type="time"] {
+    width: 120px;
+  }
+  
+  .host-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  
+  .remove-btn {
+    align-self: flex-start;
+    margin-left: 0;
+    margin-top: 10px;
+  }
 }

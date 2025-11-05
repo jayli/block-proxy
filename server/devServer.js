@@ -136,6 +136,27 @@ function hexToIP(hex) {
   return ip.reverse().join('.');
 }
 
+// 检查当前时间是否在拦截时间段内
+function isWithinFilterTime(filterItem) {
+  // 如果没有设置时间段，则始终拦截
+  if (!filterItem.filter_start_time || !filterItem.filter_end_time) {
+    return true;
+  }
+  
+  const now = new Date();
+  const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+  
+  const startTime = filterItem.filter_start_time;
+  const endTime = filterItem.filter_end_time;
+  
+  // 处理跨天的情况（例如 22:00 到 06:00）
+  if (startTime > endTime) {
+    return currentTime >= startTime || currentTime <= endTime;
+  } else {
+    return currentTime >= startTime && currentTime <= endTime;
+  }
+}
+
 module.exports = {
   devServer: (devServerConfig, { env, paths, proxy, allowedHost }) => {
 
