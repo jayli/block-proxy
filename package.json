@@ -4,10 +4,6 @@
   "private": true,
   "description": "Small-scale network proxy filter",
   "dependencies": {
-    "@testing-library/dom": "^10.4.1",
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.0",
-    "@testing-library/user-event": "^13.5.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-scripts": "5.0.1",
@@ -18,7 +14,7 @@
     "url": "git+https://github.com/jayli/block-proxy.git"
   },
   "scripts": {
-    "dev": "cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/ && craco start",
+    "dev": "cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/ && PORT=8003 craco start",
     "start": "npm run dev",
     "build": "react-scripts build",
     "docker:build": "docker build -t block-proxy .",
