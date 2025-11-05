@@ -1,32 +1,39 @@
-
-
-
-
-
-FROM node:18-alpine
+# 构建阶段
+FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-# 复制依赖文件
+# 安装 pnpm
+RUN npm install -g pnpm --registry=https://registry.npmmirror.com
+
+# 复制依赖文件（利用 Docker 缓存）
 COPY package.json pnpm-lock.yaml ./
 
-CMD ["npm", "run", "clear"]
+# 安装依赖
+RUN pnpm install --force --registry=https://registry.npmmirror.com && \
+    pnpm store prune && \
+    rm -rf /root/.pnpm-store
 
+# 复制应用代码
 COPY . ./
 
-ENV PATH=/usr/local/bin:$PATH
+# 修复权限
+RUN chown -R 1001:1001 /app
 
-RUN npm install -g pnpm --registry=https://registry.npmmirror.com
-RUN pnpm install --force --registry=https://registry.npmmirror.com
-# RUN corepack enable && pnpm i --frozen-lockfile --registry=https://registry.npmmirror.com
+# 生产阶段
+FROM node:18-alpine
 
-EXPOSE 3000
-EXPOSE 8001
-EXPOSE 8002
+# 创建非 root 用户
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodeuser -u 1001
+
+WORKDIR /app
+
+# 从构建阶段复制文件
+COPY --from=builder --chown=nodeuser:nodejs /app /app
+
+USER nodeuser
+
+EXPOSE 8001 8002 8003
 
 CMD ["npm", "run", "dev"]
-
-#RUN mkdir /app/videos
-
-#ENTRYPOINT ["/app/bin/recorder.js"]
-#CMD ["npm", "start"]
