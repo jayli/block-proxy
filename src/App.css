@@ -147,7 +147,7 @@
   display: flex;
   margin-bottom: 15px;
   gap: 10px;
-  flex-direction: column;
+  flex-direction: row;
 }
 
 .host-input input[type="text"] {
@@ -159,7 +159,6 @@
 }
 
 .host-input button {
-  padding: 10px 15px;
   background-color: #007bff;
   color: white;
   border: none;
@@ -192,10 +191,9 @@ hr.simple-line {
 
 /* 时间控件样式 */
 input[type="time"] {
-  padding: 8px;
+  padding: 4px;
   border: 1px solid #ddd;
-  border-radius: 4px;
-  font-size: 14px;
+  border-radius: 3px;
   background-color: white;
 }
 
@@ -224,17 +222,19 @@ input[type="time"]:focus {
 }
 
 .host-info {
+  display: flex;
   flex-grow: 1;
 }
 
-.host-item span {
+span.host-text {
   font-size: 14px;
+  flex-grow: 1;
+  align-self: center; /* 垂直居中 */
 }
 
 .time-controls {
   display: flex;
-  gap: 15px;
-  margin-top: 5px;
+  gap: 8px;
   align-items: center;
 }
 
@@ -242,11 +242,6 @@ input[type="time"]:focus {
   display: flex;
   flex-direction: column;
   font-size: 12px;
-}
-
-.time-controls input[type="time"] {
-  width: 100px;
-  margin-top: 2px;
 }
 
 .remove-btn {
@@ -259,7 +254,7 @@ input[type="time"]:focus {
   font-size: 12px;
   height: fit-content;
   align-self: center;
-  margin-left: 10px;
+  margin-left: 18px;
 }
 
 .remove-btn:hover {

@@ -2,18 +2,13 @@
   "block_hosts": [
     {
       "filter_host": "baidu.com",
-      "filter_start_time": "10:00",
-      "filter_end_time": "20:00"
+      "filter_start_time": "00:00",
+      "filter_end_time": "23:59"
     },
     {
       "filter_host": "bilibili.com",
-      "filter_start_time": "09:00",
-      "filter_end_time": "18:00"
-    },
-    {
-      "filter_host": "xxxxx",
-      "filter_start_time": "10:00",
-      "filter_end_time": "18:00"
+      "filter_start_time": "00:00",
+      "filter_end_time": "23:59"
     },
     {
       "filter_host": "xcvxcvcxv",

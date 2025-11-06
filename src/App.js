@@ -22,8 +22,8 @@ function App() {
   });
   
   const [newHost, setNewHost] = useState('');
-  const [newStartTime, setNewStartTime] = useState('09:00');
-  const [newEndTime, setNewEndTime] = useState('18:00');
+  const [newStartTime, setNewStartTime] = useState('00:00');
+  const [newEndTime, setNewEndTime] = useState('23:59');
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState({ message: '', type: '' });
   const [toastTimer, setToastTimer] = useState(null);
@@ -323,18 +323,18 @@ function App() {
               type="text"
               value={newHost}
               onChange={(e) => setNewHost(e.target.value)}
-              placeholder="输入要拦截的主机 (例如: example.com)"
+              placeholder="要拦截的域名,例如:example.com"
               onKeyPress={(e) => e.key === 'Enter' && handleAddHost()}
             />
             <div className="time-inputs">
-              <label><span>开始时间：</span>
+              <label><span>开始：</span>
                 <input
                   type="time"
                   value={newStartTime}
                   onChange={(e) => setNewStartTime(e.target.value)}
                 />
               </label>
-              <label><span>结束时间：</span>
+              <label><span>结束：</span>
                 <input
                   type="time"
                   value={newEndTime}
@@ -349,18 +349,19 @@ function App() {
             {config.block_hosts.map((host, index) => (
               <li key={index} className="host-item">
                 <div className="host-info">
-                  <span>{getFilterHostDisplay(host)}</span>
+                  <span className="host-text">{getFilterHostDisplay(host)}</span>
                   <div className="time-controls">
                     <label>
-                      开始:
+                      {/*开始:*/}
                       <input
                         type="time"
                         value={getFilterTimes(host).start}
                         onChange={(e) => updateFilterTime(index, e.target.value, getFilterTimes(host).end)}
                       />
                     </label>
+                    <label>~</label>
                     <label>
-                      结束:
+                      {/*结束:*/}
                       <input
                         type="time"
                         value={getFilterTimes(host).end}
