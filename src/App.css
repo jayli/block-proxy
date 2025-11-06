@@ -213,7 +213,7 @@ input[type="time"]:focus {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding: 12px 10px;
+  padding: 12px 0px;
   border-bottom: 1px solid #eee;
 }
 
@@ -254,7 +254,7 @@ span.host-text {
   font-size: 12px;
   height: fit-content;
   align-self: center;
-  margin-left: 18px;
+  margin-left: 10px;
 }
 
 .remove-btn:hover {
