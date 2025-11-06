@@ -297,8 +297,6 @@ span.host-text {
 .actions {
   display: flex;
   justify-content: space-between;
-  gap: 15px;
-  margin-bottom: 30px;
 }
 
 .save-btn, .restart-btn {

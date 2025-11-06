@@ -382,7 +382,8 @@ function App() {
         </div>
         
         <div className="config-section">
-          <h2>代理设置</h2>
+          <h2>端口设置</h2>
+          {/*<p><span>配置页端口默认 8003</span></p> */}
           <div className="setting-row">
             <label>代理端口:</label>
             <input
@@ -394,7 +395,7 @@ function App() {
           </div>
           
           <div className="setting-row">
-            <label>Web界面端口:</label>
+            <label>监控端口:</label>
             <input
               type="number"
               disabled={isDocker}
@@ -402,25 +403,25 @@ function App() {
               onChange={(e) => setConfig({...config, web_interface_port: parseInt(e.target.value) || 8002})}
             />
           </div>
+          <div className="setting-row actions">
+            <button 
+              onClick={handleSaveConfig} 
+              disabled={loading}
+              className="save-btn"
+            >
+              {loading ? '保存中...' : '保存配置'}
+            </button>
+            
+            <button 
+              onClick={handleRestartProxy} 
+              disabled={loading}
+              className="restart-btn"
+            >
+              {loading ? '重启中...' : '重启代理'}
+            </button>
+          </div>
         </div>
         
-        <div className="actions">
-          <button 
-            onClick={handleSaveConfig} 
-            disabled={loading}
-            className="save-btn"
-          >
-            {loading ? '保存中...' : '保存配置'}
-          </button>
-          
-          <button 
-            onClick={handleRestartProxy} 
-            disabled={loading}
-            className="restart-btn"
-          >
-            {loading ? '重启中...' : '重启代理'}
-          </button>
-        </div>
         <div className="config-section">
           <h2>代理设置</h2>
           <p>
