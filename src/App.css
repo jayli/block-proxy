@@ -1,6 +1,6 @@
 /* 服务器信息样式 */
 .server-info {
-  padding: 10px 0;
+  /*padding: 10px 0;*/
 }
 
 .server-info p {
@@ -389,7 +389,7 @@ button:disabled {
 }
 
 /* 响应式设计 */
-@media (max-width: 768px) {
+@media (max-width: 500px) {
   .config-container {
     margin: 10px;
     padding: 20px;
@@ -400,14 +400,8 @@ button:disabled {
     align-items: flex-start;
     gap: 5px;
   }
-  
-  .time-controls input[type="time"] {
-    width: 120px;
-  }
-  
+
   .host-item {
-    flex-direction: column;
-    align-items: flex-start;
     gap: 10px;
   }
   
