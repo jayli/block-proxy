@@ -185,8 +185,9 @@
 }
 
 hr.simple-line {
-
-
+  height:1px;
+  border-width:0px;
+  background-color:#e3e3e3
 }
 
 /* 时间控件样式 */

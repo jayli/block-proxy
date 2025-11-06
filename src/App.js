@@ -344,8 +344,7 @@ function App() {
               <button onClick={handleAddHost}>添加</button>
             </div>
           </div>
-          <hr />
-          
+          <hr className="simple-line" />
           <ul className="host-list">
             {config.block_hosts.map((host, index) => (
               <li key={index} className="host-item">
