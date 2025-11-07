@@ -286,6 +286,35 @@ function App() {
     await saveConfig(updatedConfig);
   };
 
+  // 更新拦截项的MAC地址
+  const updateFilterMac = async (index, mac) => {
+    const updatedBlockHosts = [...config.block_hosts];
+
+    // 兼容旧格式转换为新格式
+    if (typeof updatedBlockHosts[index] === 'string') {
+      updatedBlockHosts[index] = {
+        filter_host: updatedBlockHosts[index],
+        filter_start_time: '00:00',
+        filter_end_time: '23:59',
+        filter_mac: mac,
+        filter_weekday: [1, 2, 3, 4, 5, 6, 7] // 默认每天生效
+      };
+    } else {
+      updatedBlockHosts[index] = {
+        ...updatedBlockHosts[index],
+        filter_mac: mac
+      };
+    }
+
+    const updatedConfig = {
+      ...config,
+      block_hosts: updatedBlockHosts
+    };
+
+    setConfig(updatedConfig);
+    await saveConfig(updatedConfig);
+  };
+
   function getIpAddress() {
     let addr = '';
     if (serverIPs.length == 0) {
@@ -322,6 +351,14 @@ function App() {
       return [1, 2, 3, 4, 5, 6, 7]; // 默认每天生效
     }
     return filterItem.filter_weekday || [1, 2, 3, 4, 5, 6, 7];
+  };
+
+  // 获取拦截项的MAC地址
+  const getFilterMac = (filterItem) => {
+    if (typeof filterItem === 'string') {
+      return ''; // 字符串格式没有MAC地址字段
+    }
+    return filterItem.filter_mac || '';
   };
 
   // 星期几的显示名称
@@ -421,14 +458,22 @@ function App() {
                           onClick={() => updateFilterWeekday(index, day)}
                           title={`周${name}`}
                         >
-                          {name}
-                        </button>
+                        {name}
+                      </button>
                       );
                     })}
                   </div>
+                  <div className="mac-input">
+                    <label>MAC:</label>
+                    <input
+                      type="text"
+                      value={getFilterMac(host)}
+                      onChange={(e) => updateFilterMac(index, e.target.value)}
+                      placeholder="MAC地址(可选)"
+                    />
+                  </div>
                   <div className="time-controls">
                     <label>
-                      {/*开始:*/}
                       <input
                         type="time"
                         value={getFilterTimes(host).start}
@@ -437,7 +482,6 @@ function App() {
                     </label>
                     <label>~</label>
                     <label>
-                      {/*结束:*/}
                       <input
                         type="time"
                         value={getFilterTimes(host).end}

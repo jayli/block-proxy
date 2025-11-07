@@ -424,6 +424,33 @@ button:disabled {
   box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
 }
 
+/* MAC地址输入框样式 */
+.mac-input {
+  display: flex;
+  align-items: center;
+  margin: 0 10px;
+  gap: 5px;
+}
+
+.mac-input label {
+  font-size: 12px;
+  color: #555;
+}
+
+.mac-input input[type="text"] {
+  width: 120px;
+  padding: 4px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.mac-input input[type="text"]:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
 /* 响应式设计 */
 @media (max-width: 500px) {
   .config-container {
@@ -445,5 +472,13 @@ button:disabled {
     align-self: flex-start;
     margin-left: 0;
     margin-top: 10px;
+  }
+
+  .mac-input {
+    margin: 5px 0;
+  }
+  
+  .mac-input input[type="text"] {
+    width: 100px;
   }
 }

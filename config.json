@@ -4,7 +4,7 @@
       "filter_host": "baidu.com",
       "filter_start_time": "00:00",
       "filter_end_time": "23:59",
-      "filter_mac":"",
+      "filter_mac": "",
       "filter_weekday": [
         1,
         2,
@@ -17,7 +17,7 @@
       "filter_host": "bilibili.com",
       "filter_start_time": "00:00",
       "filter_end_time": "23:59",
-      "filter_mac":"",
+      "filter_mac": "",
       "filter_weekday": [
         1,
         2,
@@ -79,8 +79,16 @@
       "mac": "46:44:38:60:23:5A"
     },
     {
+      "ip": "192.168.124.151",
+      "mac": "14:C0:50:14:6E:A5"
+    },
+    {
       "ip": "192.168.124.200",
       "mac": "54:52:84:95:DF:5E"
+    },
+    {
+      "ip": "192.168.124.211",
+      "mac": "F4:3C:3B:77:E:AE"
     },
     {
       "ip": "192.168.124.229",

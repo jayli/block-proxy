@@ -20,7 +20,7 @@ function loadConfig() {
     block_hosts: blockHosts, // 使用全局变量的默认值
     proxy_port: proxyPort,
     web_interface_port: webInterfacePort,
-    devices: devices
+    devices: []
   };
 
   try {
@@ -45,7 +45,7 @@ function loadConfig() {
       }
 
       if (loadedConfig.devices) {
-        devices = loadConfig.devices;
+        devices = loadedConfig.devices;
         config.devices = devices;
       }
       
@@ -68,8 +68,11 @@ function loadConfig() {
 
 // 检查主机名是否在拦截列表中，并且当前时间在拦截时间段内，且命中来源ip
 function shouldBlockHost(host, ip) {
+  console.log('来源ip',ip);
   if (!host) return false;
-  if (!ip) return false;
+  if (!ip) {
+    ip = "0.0.0.0";
+  }
   
   // 获取当前时间信息
   const now = new Date();
@@ -88,9 +91,12 @@ function shouldBlockHost(host, ip) {
     // 新格式（对象格式）
     if (typeof blockItem === 'object' && blockItem.filter_host) {
 
+      console.log(host, blockItem.filter_mac, mac);
       // 检查主机mac是否匹配，如果规则中mac是空，则对所有ip都生效
-      if (blockItem.filter_mac && blockItem.filter_mac != "" && blockItem.filter_mac != mac) {
-        return false; // 不拦截
+      if (blockItem.filter_mac && blockItem.filter_mac == "") {
+        // 如果filter_mac 为空，则所有来源都做检查
+      } else if (blockItem.filter_mac && blockItem.filter_mac != "" && blockItem.filter_mac.toLowerCase() != mac.toLowerCase()) {
+        // return false; // 不拦截
       }
       
       // 检查主机名是否匹配
@@ -201,7 +207,9 @@ function getAnyProxyOptions() {
     rule: {
       // 只对特定域名启用 HTTPS 拦截
       async beforeDealHttpsRequest(requestDetail) {
-        const clientIp = requestDetail.remoteAddress;
+        // ????????????????? 怎么获得来源 IP
+        const clientIp = requestDetail?.socket?.remoteAddress;
+        console.log('获取来源ip', clientIp);
         const host = requestDetail.host;
         // 只对配置中的域名进行 HTTPS 拦截
         if (shouldBlockHost(host, clientIp)) {
@@ -230,6 +238,8 @@ function getAnyProxyOptions() {
       // 拦截 HTTP 请求
       async beforeSendRequest(requestDetail) {
         const clientIp = requestDetail.remoteAddress;
+        // ??????????????????? 怎么获取 来源IP
+        console.log(clientIp);
         const host = requestDetail.requestOptions.hostname;
         // 如果是裸IP请求则直接放行
         if (net.isIPv4(host) || net.isIPv6(host)) {
