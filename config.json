@@ -9,14 +9,21 @@
         2,
         3,
         4,
-        6,
         7
       ]
     },
     {
       "filter_host": "bilibili.com",
       "filter_start_time": "00:00",
-      "filter_end_time": "23:59"
+      "filter_end_time": "23:59",
+      "filter_weekday": [
+        1,
+        2,
+        3,
+        5,
+        6,
+        7
+      ]
     }
   ],
   "proxy_port": 8001,

@@ -389,20 +389,20 @@ button:disabled {
 /* 星期几控件样式 */
 .weekday-controls {
   display: flex;
-  gap: 4px;
-  margin-top: 8px;
   flex-wrap: wrap;
+  margin-right:6px;
+  align-items: center;
 }
 
 .weekday-btn {
   width: 24px;
   height: 24px;
   padding: 0;
-  border: 1px solid #ddd;
-  background-color: #f8f9fa;
-  color: #6c757d;
+  /*border: 1px solid #ddd;*/
+  background-color: #e5e5e5;
+  color: #515b63;
   font-size: 12px;
-  border-radius: 3px;
+  border-radius: 0px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -417,7 +417,6 @@ button:disabled {
 .weekday-btn.active {
   background-color: #007bff;
   color: white;
-  border-color: #007bff;
 }
 
 .weekday-btn:focus {

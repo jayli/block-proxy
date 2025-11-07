@@ -409,6 +409,23 @@ function App() {
               <li key={index} className="host-item">
                 <div className="host-info">
                   <span className="host-text">{getFilterHostDisplay(host)}</span>
+                  <div className="weekday-controls">
+                    {weekdayNames.map((name, dayIndex) => {
+                      const day = dayIndex + 1;
+                      const weekdays = getFilterWeekdays(host);
+                      const isActive = weekdays.includes(day);
+                      return (
+                        <button
+                          key={day}
+                          className={`weekday-btn ${isActive ? 'active' : ''}`}
+                          onClick={() => updateFilterWeekday(index, day)}
+                          title={`周${name}`}
+                        >
+                          {name}
+                        </button>
+                      );
+                    })}
+                  </div>
                   <div className="time-controls">
                     <label>
                       {/*开始:*/}
@@ -427,23 +444,6 @@ function App() {
                         onChange={(e) => updateFilterTime(index, getFilterTimes(host).start, e.target.value)}
                       />
                     </label>
-                  </div>
-                  <div className="weekday-controls">
-                    {weekdayNames.map((name, dayIndex) => {
-                      const day = dayIndex + 1;
-                      const weekdays = getFilterWeekdays(host);
-                      const isActive = weekdays.includes(day);
-                      return (
-                        <button
-                          key={day}
-                          className={`weekday-btn ${isActive ? 'active' : ''}`}
-                          onClick={() => updateFilterWeekday(index, day)}
-                          title={`周${name}`}
-                        >
-                          {name}
-                        </button>
-                      );
-                    })}
                   </div>
                 </div>
                 <button 
