@@ -115,7 +115,8 @@ function App() {
         const newFilterItem = {
           filter_host: newHost.trim(),
           filter_start_time: newStartTime,
-          filter_end_time: newEndTime
+          filter_end_time: newEndTime,
+          filter_weekday: [1, 2, 3, 4, 5, 6, 7] // 默认每天生效
         };
 
         const updatedConfig = {
@@ -219,7 +220,8 @@ function App() {
       updatedBlockHosts[index] = {
         filter_host: updatedBlockHosts[index],
         filter_start_time: startTime,
-        filter_end_time: endTime
+        filter_end_time: endTime,
+        filter_weekday: [1, 2, 3, 4, 5, 6, 7] // 默认每天生效
       };
     } else {
       updatedBlockHosts[index] = {
@@ -228,6 +230,52 @@ function App() {
         filter_end_time: endTime
       };
     }
+    
+    const updatedConfig = {
+      ...config,
+      block_hosts: updatedBlockHosts
+    };
+    
+    setConfig(updatedConfig);
+    await saveConfig(updatedConfig);
+  };
+
+  // 更新拦截项的星期几设置
+  const updateFilterWeekday = async (index, day) => {
+    const updatedBlockHosts = [...config.block_hosts];
+    
+    // 兼容旧格式转换为新格式
+    if (typeof updatedBlockHosts[index] === 'string') {
+      updatedBlockHosts[index] = {
+        filter_host: updatedBlockHosts[index],
+        filter_start_time: '00:00',
+        filter_end_time: '23:59',
+        filter_weekday: [1, 2, 3, 4, 5, 6, 7] // 默认每天生效
+      };
+    }
+    
+    // 初始化 filter_weekday 如果不存在
+    if (!updatedBlockHosts[index].filter_weekday) {
+      updatedBlockHosts[index].filter_weekday = [1, 2, 3, 4, 5, 6, 7];
+    }
+    
+    // 切换星期几的选中状态
+    const weekdays = [...updatedBlockHosts[index].filter_weekday];
+    const dayIndex = weekdays.indexOf(day);
+    
+    if (dayIndex > -1) {
+      // 如果已存在，则移除
+      weekdays.splice(dayIndex, 1);
+    } else {
+      // 如果不存在，则添加
+      weekdays.push(day);
+      weekdays.sort((a, b) => a - b); // 排序
+    }
+    
+    updatedBlockHosts[index] = {
+      ...updatedBlockHosts[index],
+      filter_weekday: weekdays
+    };
     
     const updatedConfig = {
       ...config,
@@ -267,6 +315,17 @@ function App() {
       end: filterItem.filter_end_time || '23:59'
     };
   };
+
+  // 获取拦截项的星期几设置
+  const getFilterWeekdays = (filterItem) => {
+    if (typeof filterItem === 'string') {
+      return [1, 2, 3, 4, 5, 6, 7]; // 默认每天生效
+    }
+    return filterItem.filter_weekday || [1, 2, 3, 4, 5, 6, 7];
+  };
+
+  // 星期几的显示名称
+  const weekdayNames = ['一', '二', '三', '四', '五', '六', '日'];
 
   return (
     <div className="App">
@@ -368,6 +427,23 @@ function App() {
                         onChange={(e) => updateFilterTime(index, getFilterTimes(host).start, e.target.value)}
                       />
                     </label>
+                  </div>
+                  <div className="weekday-controls">
+                    {weekdayNames.map((name, dayIndex) => {
+                      const day = dayIndex + 1;
+                      const weekdays = getFilterWeekdays(host);
+                      const isActive = weekdays.includes(day);
+                      return (
+                        <button
+                          key={day}
+                          className={`weekday-btn ${isActive ? 'active' : ''}`}
+                          onClick={() => updateFilterWeekday(index, day)}
+                          title={`周${name}`}
+                        >
+                          {name}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
                 <button 

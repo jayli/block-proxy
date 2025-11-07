@@ -3,7 +3,15 @@
     {
       "filter_host": "baidu.com",
       "filter_start_time": "00:00",
-      "filter_end_time": "23:59"
+      "filter_end_time": "23:59",
+      "filter_weekday": [
+        1,
+        2,
+        3,
+        4,
+        6,
+        7
+      ]
     },
     {
       "filter_host": "bilibili.com",

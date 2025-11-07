@@ -62,9 +62,10 @@ function loadConfig() {
 function shouldBlockHost(host) {
   if (!host) return false;
   
-  // 获取当前时间
+  // 获取当前时间信息
   const now = new Date();
   const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+  const currentDay = now.getDay() === 0 ? 7 : now.getDay(); // 转换为 1-7，周日为7
   
   return blockHosts.some(blockItem => {
     // 兼容旧格式（字符串格式）
@@ -77,6 +78,13 @@ function shouldBlockHost(host) {
       // 检查主机名是否匹配
       if (!host.includes(blockItem.filter_host)) {
         return false;
+      }
+      
+      // 检查星期几是否匹配
+      if (blockItem.filter_weekday && Array.isArray(blockItem.filter_weekday)) {
+        if (!blockItem.filter_weekday.includes(currentDay)) {
+          return false;
+        }
       }
       
       // 如果没有设置时间段，则始终拦截

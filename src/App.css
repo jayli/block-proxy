@@ -386,6 +386,45 @@ button:disabled {
   border-radius: 3px;
 }
 
+/* 星期几控件样式 */
+.weekday-controls {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.weekday-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #ddd;
+  background-color: #f8f9fa;
+  color: #6c757d;
+  font-size: 12px;
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.weekday-btn:hover {
+  background-color: #e9ecef;
+  border-color: #adb5bd;
+}
+
+.weekday-btn.active {
+  background-color: #007bff;
+  color: white;
+  border-color: #007bff;
+}
+
+.weekday-btn:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
 /* 响应式设计 */
 @media (max-width: 500px) {
   .config-container {
