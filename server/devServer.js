@@ -331,9 +331,11 @@ module.exports = {
       }
       
       // 延迟启动LocalProxy，确保端口完全准备好
-      setTimeout(() => {
+      setTimeout(async () => {
         console.log('Dev server started, starting LocalProxy...');
         LocalProxy.start();
+        await LocalProxy.updateDevices();
+        console.log('local network devices updated!');
       }, 100);
     };
 

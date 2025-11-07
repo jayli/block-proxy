@@ -5,19 +5,22 @@ const fs = require('fs');
 const path = require('path');
 const { start } = require('repl');
 const net = require('net');
+const scanNetwork = require("./scan").scanNetwork;
 
 // 全局变量存储关键配置参数
+const configPath = path.join(__dirname, '../config.json');
 let blockHosts = ["baidu.com", "bilibili.com"];
 let proxyPort = 8001;
 let webInterfacePort = 8002;
+let devices = [];
 
 // 读取配置文件的函数
 function loadConfig() {
-  const configPath = path.join(__dirname, '../config.json');
   let config = {
     block_hosts: blockHosts, // 使用全局变量的默认值
     proxy_port: proxyPort,
-    web_interface_port: webInterfacePort
+    web_interface_port: webInterfacePort,
+    devices: devices
   };
 
   try {
@@ -40,6 +43,11 @@ function loadConfig() {
         webInterfacePort = loadedConfig.web_interface_port;
         config.web_interface_port = webInterfacePort;
       }
+
+      if (loadedConfig.devices) {
+        devices = loadConfig.devices;
+        config.devices = devices;
+      }
       
       console.log('Loaded config from config.json:', config);
     } else {
@@ -58,14 +66,18 @@ function loadConfig() {
   return config;
 }
 
-// 检查主机名是否在拦截列表中，并且当前时间在拦截时间段内
-function shouldBlockHost(host) {
+// 检查主机名是否在拦截列表中，并且当前时间在拦截时间段内，且命中来源ip
+function shouldBlockHost(host, ip) {
   if (!host) return false;
+  if (!ip) return false;
   
   // 获取当前时间信息
   const now = new Date();
   const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
   const currentDay = now.getDay() === 0 ? 7 : now.getDay(); // 转换为 1-7，周日为7
+
+  // 获得ip对应的 mac 地址
+  const mac = getMacByIp(ip);
   
   return blockHosts.some(blockItem => {
     // 兼容旧格式（字符串格式）
@@ -75,11 +87,17 @@ function shouldBlockHost(host) {
     
     // 新格式（对象格式）
     if (typeof blockItem === 'object' && blockItem.filter_host) {
+
+      // 检查主机mac是否匹配，如果规则中mac是空，则对所有ip都生效
+      if (blockItem.filter_mac && blockItem.filter_mac != "" && blockItem.filter_mac != mac) {
+        return false; // 不拦截
+      }
+      
       // 检查主机名是否匹配
       if (!host.includes(blockItem.filter_host)) {
         return false;
       }
-      
+
       // 检查星期几是否匹配
       if (blockItem.filter_weekday && Array.isArray(blockItem.filter_weekday)) {
         if (!blockItem.filter_weekday.includes(currentDay)) {
@@ -119,6 +137,16 @@ function getContentLength(body) {
     contentLength = uint8Array.byteLength;
   }
   return contentLength;
+}
+
+function getMacByIp(ipAddress) {
+  // 从 devices 中查询 ip 对应的 mac 地址，否则返回空
+  if (!ipAddress || !devices || !Array.isArray(devices)) {
+    return "";
+  }
+  
+  const device = devices.find(device => device.ip === ipAddress);
+  return device ? device.mac : "";
 }
 
 // 保存代理服务器实例的变量
@@ -173,9 +201,10 @@ function getAnyProxyOptions() {
     rule: {
       // 只对特定域名启用 HTTPS 拦截
       async beforeDealHttpsRequest(requestDetail) {
+        const clientIp = requestDetail.remoteAddress;
         const host = requestDetail.host;
         // 只对配置中的域名进行 HTTPS 拦截
-        if (shouldBlockHost(host)) {
+        if (shouldBlockHost(host, clientIp)) {
           return true; // 允许 HTTPS 拦截
         }
         return false; // 不拦截 HTTPS
@@ -200,11 +229,12 @@ function getAnyProxyOptions() {
       
       // 拦截 HTTP 请求
       async beforeSendRequest(requestDetail) {
+        const clientIp = requestDetail.remoteAddress;
         const host = requestDetail.requestOptions.hostname;
         // 如果是裸IP请求则直接放行
         if (net.isIPv4(host) || net.isIPv6(host)) {
           return null;
-        } else if (shouldBlockHost(host)) {
+        } else if (shouldBlockHost(host, clientIp)) {
           // 如果是列表中的域名则拦截
           console.log(`拦截到请求: ${host}${requestDetail.requestOptions.path}`);
           // 为被拦截的域名返回自定义响应
@@ -241,6 +271,22 @@ function getAnyProxyOptions() {
 }
 
 module.exports = {
+  updateDevices: async function() {
+    var macs = []
+    try {
+      macs = await scanNetwork();
+    } catch (e) {
+      macs = [];
+    }
+    // TODO here 需要验证这个函数的正确性
+    const config = loadConfig();
+    fs.writeFileSync(configPath, JSON.stringify({
+      ...config,
+      devices: macs
+    }, null, 2));
+    devices = macs;
+    console.log('Devices updated!');
+  },
   start: function(callback) { 
     // 每次启动时都重新加载配置
     const config = loadConfig();
