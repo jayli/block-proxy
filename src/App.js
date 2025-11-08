@@ -30,6 +30,7 @@ function App() {
   const [serverIPs, setServerIPs] = useState([]);
   const [isDocker, setIsDocker] = useState(false);
   const [hostIPs, setHostIPs] = useState([]);
+  const [devices, setDevices] = useState([]);
 
   // 组件加载时获取当前配置和服务器IP
   useEffect(() => {
@@ -62,12 +63,17 @@ function App() {
     }
   };
 
+  // 修改 fetchConfig 函数：
   const fetchConfig = async () => {
     try {
       const response = await fetch('/api/config');
       if (response.ok) {
         const data = await response.json();
         setConfig(data);
+        // 同时设置设备信息
+        if (data.devices) {
+          setDevices(data.devices);
+        }
       } else {
         showToast('获取配置失败', 'error');
       }
@@ -222,6 +228,7 @@ function App() {
 
       if (response.ok) {
         showToast('路由表刷新成功!', 'success');
+        await fetchConfig();
       } else {
         const errorData = await response.json();
         showToast('刷新失败: ' + errorData.error, 'error');
@@ -603,6 +610,34 @@ function App() {
             )}
           </p>
         </div>
+
+        <div className="config-section">
+          <h2>路由表</h2>
+          {devices && devices.length > 0 ? (
+            <div>
+              <p>当前共有 {devices.length} 个设备</p>
+              <ul className="ip-list">
+                {devices.map((device, index) => (
+                  <li key={index} className="ip-item">
+                    <span className="interface-name">{device.mac || '未知MAC'} &nbsp;</span>
+                    <span className="ip-address">{device.ip || '未知IP'}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p>暂无设备信息</p>
+          )}
+          <button 
+            onClick={fetchConfig} 
+            disabled={loading}
+            style={{ marginTop: '10px' }}
+          >
+            {loading ? '刷新中...' : '刷新路由表'}
+          </button>
+        </div>
+
+
       </div>
     </div>
   );
