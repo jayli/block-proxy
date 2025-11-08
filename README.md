@@ -4,7 +4,7 @@
 
 ### 开发和调试
 
-代码 clone 下来后执行`pnpm i`，执行 `npm run dev` 运行本地服务。开启三个端口：
+代码 clone 下来后执行`pnpm i`，执行 `npm run dev` 运行本地服务。默认开启三个端口：
 
 1. 8001: 代理端口
 2. 8002: 监控端口
@@ -22,8 +22,10 @@
 
 拷贝 tar 到 openwrt后，启动容器：
 
-  `docker run --init -d --restart=unless-stopped -e TZ=Asia/Shanghai --publish 8001:8001 --publish 8002:8002 --publish 8003:8003 --name block-proxy block-proxy`
+  `docker run --init -d --restart=unless-stopped -e TZ=Asia/Shanghai --network=host --name block-proxy block-proxy`
 
+为了方便获取子网机器ip和mac地址，docker 容器和宿主机共享同一个网络
 
+访问代理服务器：`http://proxy-ip:8003`
 
 <img src="https://github.com/user-attachments/assets/f6c547b3-0308-4424-a7a5-99bb356b4e1c" width=300 />
