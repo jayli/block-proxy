@@ -337,19 +337,52 @@ function getAnyProxyOptions() {
 
 module.exports = {
   updateDevices: async function() {
-    var macs = []
-    try {
-      macs = await scanNetwork();
-    } catch (e) {
-      macs = [];
-    }
-    // TODO here 需要验证这个函数的正确性
     const config = loadConfig();
+    var oldRouterMap = config.devices || []; // 确保旧路由表是数组
+    var newRouterMap = []
+    try {
+      newRouterMap = await scanNetwork();
+    } catch (e) {
+      newRouterMap = [];
+    }
+
+    var mergedRouterMap = [];
+    // 把新的路由表中变更和新增的部分增补到 oldRouterMap 中
+    // 形成新的 mergedRouterMap
+    
+    // 创建一个以IP为键的映射表，用于快速查找现有设备
+    const oldDeviceMap = {};
+    oldRouterMap.forEach(device => {
+      oldDeviceMap[device.ip] = device;
+    });
+    
+    // 初始化合并后的设备列表为旧设备列表
+    mergedRouterMap = [...oldRouterMap];
+    
+    // 处理每一个新扫描到的设备
+    newRouterMap.forEach(newDevice => {
+      const existingDevice = oldDeviceMap[newDevice.ip];
+      
+      // 如果这是一个新设备（IP不存在于旧列表中）
+      if (!existingDevice) {
+        mergedRouterMap.push(newDevice);
+        console.log(`新增设备: ${newDevice.ip} (${newDevice.mac})`);
+      } 
+      // 如果设备已存在但MAC地址发生了变化
+      else if (existingDevice.mac !== newDevice.mac) {
+        // 找到该设备在合并列表中的索引
+        const index = mergedRouterMap.findIndex(device => device.ip === newDevice.ip);
+        // 更新设备信息
+        mergedRouterMap[index] = newDevice;
+        console.log(`更新设备: ${newDevice.ip} (${existingDevice.mac} -> ${newDevice.mac})`);
+      }
+    });
+
     fs.writeFileSync(configPath, JSON.stringify({
       ...config,
-      devices: macs
+      devices: mergedRouterMap
     }, null, 2));
-    devices = macs;
+    devices = mergedRouterMap;
     console.log('Devices updated!');
   },
   start: function(callback) { 
@@ -372,7 +405,6 @@ module.exports = {
         callback();
       }
     }
-    
   },
   restart: function(callback) { 
     // 实现重启功能

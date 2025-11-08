@@ -336,6 +336,16 @@ module.exports = {
         LocalProxy.start(async () => {
           await LocalProxy.updateDevices();
           console.log('local network devices updated!');
+
+          // 设置定时任务，每两小时更新一次设备信息
+          setInterval(async () => {
+            try {
+              await LocalProxy.updateDevices();
+              console.log('Network devices updated automatically every 2 hours');
+            } catch (error) {
+              console.error('Failed to automatically update network devices:', error);
+            }
+          }, 2 * 60 * 60 * 1000); // 2小时 = 2 * 60 * 60 * 1000 毫秒
         });
       }, 100);
     };
