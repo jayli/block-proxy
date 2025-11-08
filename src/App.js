@@ -537,7 +537,6 @@ function App() {
             <input
               type="number"
               value={config.proxy_port}
-              disabled={isDocker}
               onChange={(e) => setConfig({...config, proxy_port: parseInt(e.target.value) || 8001})}
             />
           </div>
@@ -546,7 +545,6 @@ function App() {
             <label>监控端口:</label>
             <input
               type="number"
-              disabled={isDocker}
               value={config.web_interface_port}
               onChange={(e) => setConfig({...config, web_interface_port: parseInt(e.target.value) || 8002})}
             />
