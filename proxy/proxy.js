@@ -6,10 +6,11 @@ const path = require('path');
 const { start } = require('repl');
 const net = require('net');
 const scanNetwork = require("./scan").scanNetwork;
+const util = require('util');
 
 // 全局变量存储关键配置参数
 const configPath = path.join(__dirname, '../config.json');
-let blockHosts = ["baidu.com", "bilibili.com"];
+let blockHosts = [];
 let proxyPort = 8001;
 let webInterfacePort = 8002;
 let devices = [];
@@ -49,7 +50,7 @@ function loadConfig() {
         config.devices = devices;
       }
       
-      console.log('Loaded config from config.json:', config);
+      // console.log('Loaded config from config.json:', config);
     } else {
       // 如果配置文件不存在，则创建默认配置文件
       fs.writeFileSync(configPath, JSON.stringify({
@@ -66,23 +67,31 @@ function loadConfig() {
   return config;
 }
 
-// 检查主机名是否在拦截列表中，并且当前时间在拦截时间段内，且命中来源ip
-function shouldBlockHost(host, ip) {
-  console.log('来源ip',ip);
+// 根据来源 ip 来遍历当前 blockList，把对应mac拦截配置匹配的项都找出来
+function getBlockRules(ip) {
+  // 获得ip对应的 mac 地址
+  const mac = getMacByIp(ip);
+  var currBlockList = [];
+  blockHosts.forEach(function(item, index){
+    if (item.filter_mac === undefined || item.filter_mac == "") {
+      currBlockList.push(item);
+    } else if (item.filter_mac != "" && item.filter_mac.toLowerCase() === mac.toLowerCase()) {
+      currBlockList.push(item);
+    }
+  });
+  return currBlockList;
+}
+
+// 根据BlockList，检查主机名是否在拦截列表中，并且当前时间在拦截时间段内
+function shouldBlockHost(host, blockList) {
   if (!host) return false;
-  if (!ip) {
-    ip = "0.0.0.0";
-  }
   
   // 获取当前时间信息
   const now = new Date();
   const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
   const currentDay = now.getDay() === 0 ? 7 : now.getDay(); // 转换为 1-7，周日为7
 
-  // 获得ip对应的 mac 地址
-  const mac = getMacByIp(ip);
-  
-  return blockHosts.some(blockItem => {
+  return blockList.some(blockItem => {
     // 兼容旧格式（字符串格式）
     if (typeof blockItem === 'string') {
       return host.includes(blockItem);
@@ -91,18 +100,10 @@ function shouldBlockHost(host, ip) {
     // 新格式（对象格式）
     if (typeof blockItem === 'object' && blockItem.filter_host) {
 
-      console.log(host, blockItem.filter_mac, mac);
-      // 检查主机mac是否匹配，如果规则中mac是空，则对所有ip都生效
-      if (blockItem.filter_mac && blockItem.filter_mac == "") {
-        // 如果filter_mac 为空，则所有来源都做检查
-      } else if (blockItem.filter_mac && blockItem.filter_mac != "" && blockItem.filter_mac.toLowerCase() != mac.toLowerCase()) {
-        // return false; // 不拦截
-      }
-      
-      // 检查主机名是否匹配
       if (!host.includes(blockItem.filter_host)) {
         return false;
       }
+      // console.log('访问网址 === 配置网址')
 
       // 检查星期几是否匹配
       if (blockItem.filter_weekday && Array.isArray(blockItem.filter_weekday)) {
@@ -201,18 +202,48 @@ function startProxyServer() {
   }
 }
 
+// console.log(normalizeIP('::ffff:192.168.124.118'));     // "192.168.124.118"
+// console.log(normalizeIP('::FFFF:10.0.0.5'));           // "10.0.0.5"
+// console.log(normalizeIP('192.168.1.100'));             // "192.168.1.100"
+// console.log(normalizeIP('[::ffff:172.16.0.10]:3000')); // "172.16.0.10"
+// console.log(normalizeIP('::1'));                       // "::1"
+function normalizeIP(rawIP) {
+  if (typeof rawIP !== 'string') return rawIP;
+
+  // 处理 [::ffff:192.168.1.1]:8080 这类格式（来自 req.url 或 proxy）
+  let ip = rawIP;
+  if (ip.startsWith('[')) {
+    const match = ip.match(/^\[([^\]]+)\]/);
+    if (match) ip = match[1];
+  }
+
+  // 移除 ::ffff: 前缀（忽略大小写）
+  return ip.replace(/^::ffff:/i, '');
+}
+
+function getRemoteAddressFromReq(requestDetail) {
+  var rawIP = requestDetail?._req?.client?.remoteAddress;
+  if (rawIP === undefined) {
+    return "0.0.0.0";
+  } else {
+    return normalizeIP(rawIP);
+  }
+}
+
 function getAnyProxyOptions() {
   return {
     port: proxyPort,
     rule: {
       // 只对特定域名启用 HTTPS 拦截
       async beforeDealHttpsRequest(requestDetail) {
-        // ????????????????? 怎么获得来源 IP
-        const clientIp = requestDetail?.socket?.remoteAddress;
-        console.log('获取来源ip', clientIp);
+        const clientIp = getRemoteAddressFromReq(requestDetail);
+        const blockRules = getBlockRules(clientIp);
         const host = requestDetail.host;
-        // 只对配置中的域名进行 HTTPS 拦截
-        if (shouldBlockHost(host, clientIp)) {
+        // 如果没有对应ip的匹配规则
+        if (blockRules.length === 0) {
+          return false;
+        } else if (shouldBlockHost(host, blockRules)) {
+          // 只对配置中的域名进行 HTTPS 拦截
           return true; // 允许 HTTPS 拦截
         }
         return false; // 不拦截 HTTPS
@@ -237,18 +268,18 @@ function getAnyProxyOptions() {
       
       // 拦截 HTTP 请求
       async beforeSendRequest(requestDetail) {
-        const clientIp = requestDetail.remoteAddress;
-        // ??????????????????? 怎么获取 来源IP
-        console.log(clientIp);
+        const clientIp = getRemoteAddressFromReq(requestDetail);
         const host = requestDetail.requestOptions.hostname;
-        // 如果是裸IP请求则直接放行
+        // 如果是裸IP请求，全部放行
         if (net.isIPv4(host) || net.isIPv6(host)) {
           return null;
-        } else if (shouldBlockHost(host, clientIp)) {
-          // 如果是列表中的域名则拦截
-          console.log(`拦截到请求: ${host}${requestDetail.requestOptions.path}`);
+        }
+        // 如果是 https 请求，说明已经被beforeDealHttpsRequest处理过且认为应当拦截，应当直接返回拦截结果
+        // 之所以这样处理是https转过来的请求clientIp变成了127.0.0.1（应该是 anyproxy 的 bug）
+        if (requestDetail.protocol == "https") {
+          console.log(`拦截到https请求: ${host}${requestDetail.requestOptions.path}`);
           // 为被拦截的域名返回自定义响应
-          let customBody = `AnyProxy: request to ${host} is blocked!`;
+          let customBody = `AnyProxy: https request to ${host} is blocked!`;
           return {
             response: {
               statusCode: 200,
@@ -259,6 +290,30 @@ function getAnyProxyOptions() {
               body: customBody
             }
           };
+        } else if (requestDetail.protocol == "http") {
+          // 如果是 http 请求，说明是直接访问过来的，没有经过beforeDealHttpsRequest，因此clientIp是真实的
+          let blockRules = getBlockRules(clientIp);
+          // 没有命中规则，直接放行
+          if (blockRules.length === 0) {
+            return null;
+          }
+          if (shouldBlockHost(host, blockRules)) {
+            // 如果是列表中的域名则拦截
+            console.log(`拦截到https请求: ${host}${requestDetail.requestOptions.path}`);
+            // 为被拦截的域名返回自定义响应
+            let customBody = `AnyProxy: http request to ${host} is blocked!`;
+            return {
+              response: {
+                statusCode: 200,
+                header: {
+                  'Content-Type': 'text/plain; charset=utf-8',
+                  'Content-Length': getContentLength(customBody)
+                },
+                body: customBody
+              }
+            };
+          }
+
         }
 
         return null;

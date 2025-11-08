@@ -4,13 +4,15 @@
       "filter_host": "baidu.com",
       "filter_start_time": "00:00",
       "filter_end_time": "23:59",
-      "filter_mac": "",
+      "filter_mac": "D2:9E:8D:1B:F1:4E",
       "filter_weekday": [
         1,
         2,
         3,
         4,
-        5
+        5,
+        6,
+        7
       ]
     },
     {
@@ -23,7 +25,9 @@
         2,
         3,
         4,
-        5
+        5,
+        6,
+        7
       ]
     }
   ],
