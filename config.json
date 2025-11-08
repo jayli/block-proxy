@@ -19,7 +19,7 @@
       "filter_host": "bilibili.com",
       "filter_start_time": "00:00",
       "filter_end_time": "23:59",
-      "filter_mac": "",
+      "filter_mac": "D2:9E:8D:1B:F1:4E",
       "filter_weekday": [
         1,
         2,

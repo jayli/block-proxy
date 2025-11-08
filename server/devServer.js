@@ -252,6 +252,17 @@ module.exports = {
         }
       });
 
+      // 在 devServer.js 的 onBeforeSetupMiddleware 中添加新的 API 端点
+      devServer.app.post('/api/update-devices', async (req, res) => {
+        try {
+          // 调用本地代理的更新设备方法
+          await LocalProxy.updateDevices();
+          res.status(200).json({ message: 'Devices updated successfully' });
+        } catch (error) {
+          res.status(500).json({ error: 'Failed to update devices: ' + error.message });
+        }
+      });
+
       // 重启代理接口
       devServer.app.post('/api/restart', async (req, res) => {
         try {

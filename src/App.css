@@ -112,7 +112,7 @@
 }
 
 .config-container {
-  max-width: 700px;
+  max-width: 750px;
   margin: 0 auto;
   background: white;
   border-radius: 8px;
@@ -390,7 +390,6 @@ button:disabled {
 .weekday-controls {
   display: flex;
   flex-wrap: wrap;
-  margin-right:6px;
   align-items: center;
 }
 
@@ -438,7 +437,7 @@ button:disabled {
 }
 
 .mac-input input[type="text"] {
-  width: 120px;
+  width: 106px;
   padding: 4px;
   border: 1px solid #ddd;
   border-radius: 3px;

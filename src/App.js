@@ -211,6 +211,27 @@ function App() {
     setLoading(false);
   };
 
+
+  // 在 handleRestartProxy 函数之后添加以下函数：
+  const handleUpdateDevices = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('/api/update-devices', {
+        method: 'POST'
+      });
+
+      if (response.ok) {
+        showToast('路由表刷新成功!', 'success');
+      } else {
+        const errorData = await response.json();
+        showToast('刷新失败: ' + errorData.error, 'error');
+      }
+    } catch (error) {
+      showToast('网络错误: ' + error.message, 'error');
+    }
+    setLoading(false);
+  };
+
   // 更新拦截项的时间段
   const updateFilterTime = async (index, startTime, endTime) => {
     const updatedBlockHosts = [...config.block_hosts];
@@ -530,6 +551,15 @@ function App() {
               className="save-btn"
             >
               {loading ? '保存中...' : '保存配置'}
+            </button>
+            
+            <button 
+              onClick={handleUpdateDevices} 
+              disabled={loading}
+              className="restart-btn"
+              style={{ backgroundColor: '#17a2b8', color: 'white' }}
+            >
+              {loading ? '刷新中...' : '刷新路由表'}
             </button>
             
             <button 
