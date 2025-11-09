@@ -580,6 +580,8 @@ function App() {
         <div className="config-section">
           <h2>代理设置</h2>
           <p>
+            <img src="/iphone-proxy-setting.jpg" alt="iPhone Proxy Setting"
+                 style={{ float: 'right', marginLeft: '10px', width: '166px' }} />
             <b>服务器：</b>
             {serverIPs.length > 0 ? (
               <span>
@@ -607,6 +609,9 @@ function App() {
               <span>正在获取服务器IP地址...</span>
             )}
           </p>
+          <p>
+            <b>配置方法</b>：（以Iphone为例）<br />设置 → 无线局域网 → 点击当前网络 → HTTP代理/配置代理，设置服务器和端口（图右）
+          </p>
         </div>
 
         <div className="config-section">
@@ -633,6 +638,12 @@ function App() {
           >
             {loading ? '刷新中...' : '刷新路由表'}
           </button>
+        </div>
+        <div className="config-section">
+          <h3>项目源码</h3>
+          <div>
+            <p>Github 地址：<a href="https://github.com/jayli/block-proxy">Block Proxy</a></p>
+          </div>
         </div>
       </div>
     </div>
