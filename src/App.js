@@ -642,3 +642,4 @@ function App() {
 }
 
 export default App;
+/* vim: set filetype=javascriptreact : */
