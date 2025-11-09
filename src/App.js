@@ -609,9 +609,10 @@ function App() {
               <span>正在获取服务器IP地址...</span>
             )}
           </p>
-          <p>
-            <b>配置方法</b>：（以Iphone为例）<br />设置 → 无线局域网 → 点击当前网络 → HTTP代理/配置代理，设置服务器和端口（图右）
-          </p>
+          <div>
+            <p><b>配置方法</b>：（以Iphone为例）</p>
+            <p>设置 → 无线局域网 → 点击当前网络 → HTTP代理/配置代理，设置服务器和端口（图右）</p>
+          </div>
         </div>
 
         <div className="config-section">
