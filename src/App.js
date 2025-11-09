@@ -634,8 +634,6 @@ function App() {
             {loading ? '刷新中...' : '刷新路由表'}
           </button>
         </div>
-
-
       </div>
     </div>
   );
