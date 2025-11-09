@@ -30,3 +30,6 @@
 
 <img src="https://github.com/user-attachments/assets/d8e65dd6-58b3-4093-9718-1011107f6e22" width=300 />
 
+### Docker 文件下载
+
+Download → [block-proxy.tar](http://yui.cool:7001/public/downloads/block-proxy.tar)
