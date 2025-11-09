@@ -28,4 +28,5 @@
 
 访问代理服务器：`http://proxy-ip:8003`
 
-<img src="https://github.com/user-attachments/assets/f6c547b3-0308-4424-a7a5-99bb356b4e1c" width=300 />
+<img src="https://github.com/user-attachments/assets/d8e65dd6-58b3-4093-9718-1011107f6e22" width=300 />
+
