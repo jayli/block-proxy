@@ -28,8 +28,8 @@
 
 访问代理服务器：`http://proxy-ip:8003`
 
-<img src="https://github.com/user-attachments/assets/d8e65dd6-58b3-4093-9718-1011107f6e22" width=300 />
+<img src="https://github.com/user-attachments/assets/16f47d3f-1ef9-47a2-8640-c7e04ec64e1a" width=300 />
 
 ### Docker 文件下载
 
-Download → <http://yui.cool:7001/public/downloads/block-proxy.tar>
+Download → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" target=_blank>block-proxy.tar</a>（右键另存为）
