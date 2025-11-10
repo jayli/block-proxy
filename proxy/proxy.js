@@ -7,6 +7,7 @@ const { start } = require('repl');
 const net = require('net');
 const scanNetwork = require("./scan").scanNetwork;
 const util = require('util');
+const os = require('os');
 
 // 全局变量存储关键配置参数
 const configPath = path.join(__dirname, '../config.json');
@@ -14,6 +15,7 @@ let blockHosts = [];
 let proxyPort = 8001;
 let webInterfacePort = 8002;
 let devices = [];
+let localMac = getLocalMacAddress();
 
 // 读取配置文件的函数
 function loadConfig() {
@@ -76,14 +78,15 @@ function getBlockRules(ip) {
     if (item.filter_mac === undefined || item.filter_mac == "") {
       currBlockList.push(item);
     } else if (item.filter_mac != "" && item.filter_mac.toLowerCase() === mac.toLowerCase()) {
+      // TODO here f4:6b:8c:90:29:5  ->  f4:6b:8c:90:29:05
       currBlockList.push(item);
     }
   });
   return currBlockList;
 }
 
-// 根据BlockList，检查主机名是否在拦截列表中，并且当前时间在拦截时间段内
-function shouldBlockHost(host, blockList) {
+// In proxy/proxy.js, modify the shouldBlockHost function to include pathname checking:
+function shouldBlockHost(host, blockList, pathname) {
   if (!host) return false;
   
   // 获取当前时间信息
@@ -109,6 +112,23 @@ function shouldBlockHost(host, blockList) {
       if (blockItem.filter_weekday && Array.isArray(blockItem.filter_weekday)) {
         if (!blockItem.filter_weekday.includes(currentDay)) {
           return false;
+        }
+      }
+      console.log(host, 111);
+      
+      // 在传入pathname的情况下检查路径名是否匹配（新增功能）
+      if (pathname != "" && blockItem.filter_pathname && blockItem.filter_pathname.trim() !== '') {
+        try {
+          const regex = new RegExp(blockItem.filter_pathname);
+          if (!regex.test(pathname)) {
+            return false; // 路径不匹配，不拦截
+          }
+        } catch (e) {
+          console.error('Invalid regex in filter_pathname:', blockItem.filter_pathname);
+          // If regex is invalid, fall back to exact match
+          if (!pathname.includes(blockItem.filter_pathname)) {
+            return false;
+          }
         }
       }
       
@@ -146,10 +166,28 @@ function getContentLength(body) {
   return contentLength;
 }
 
+function getLocalMacAddress() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    const nets = interfaces[name];
+    for (var net of nets) {
+      // 跳过回环地址和 IPv6
+      if (net.family === 'IPv4' && !net.internal) {
+        return net.mac; // 返回第一个非回环 IPv4 网卡的 MAC
+      }
+    }
+  }
+  return null;
+}
+
 function getMacByIp(ipAddress) {
   // 从 devices 中查询 ip 对应的 mac 地址，否则返回空
   if (!ipAddress || !devices || !Array.isArray(devices)) {
     return "";
+  }
+
+  if (ipAddress == "127.0.0.1") {
+    return localMac;
   }
   
   const device = devices.find(device => device.ip === ipAddress);
@@ -230,6 +268,20 @@ function getRemoteAddressFromReq(requestDetail) {
   }
 }
 
+function getSymbolProperty(obj, symbolDescription) {
+  if (typeof obj !== 'object' || obj === null) {
+    return undefined;
+  }
+
+  const symbols = Object.getOwnPropertySymbols(obj);
+  for (var sym of symbols) {
+    if (sym.description === symbolDescription) {
+      return obj[sym];
+    }
+  }
+  return undefined;
+}
+
 function getAnyProxyOptions() {
   return {
     port: proxyPort,
@@ -239,41 +291,40 @@ function getAnyProxyOptions() {
         const clientIp = getRemoteAddressFromReq(requestDetail);
         const blockRules = getBlockRules(clientIp);
         const host = requestDetail.host;
+        console.log('\n\n\n{{{');
+        // console.log(requestDetail._req.client);
+        console.log(getSymbolProperty(requestDetail._req.client, 'async_id_symbol'), clientIp);
+        console.log("\n\n\n")
+
+        // HTTPS 的 requestDetail.url 为空, requestDetail.requestOptions 也为空
+        // 这里只能简单的判断域名，pathname 的判断都放到 beforeSendRequest 中
+
+        // 如果是裸IP请求，全部放行
+        if (net.isIPv4(host) || net.isIPv6(host)) {
+          return false;
+        }
+
         // 如果没有对应ip的匹配规则
+        let shouldBlock = shouldBlockHost(host, blockRules, "");
         if (blockRules.length === 0) {
           return false;
-        } else if (shouldBlockHost(host, blockRules)) {
+        } else if (shouldBlock) {
+          console.log('https 拦截', host);
           // 只对配置中的域名进行 HTTPS 拦截
           return true; // 允许 HTTPS 拦截
         }
         return false; // 不拦截 HTTPS
       },
 
-      async onError(requestDetail, error) {
-        // 资源不可达
-        if (error.code == "ENETUNREACH") {
-          return {
-            response: {
-              statusCode: 404,
-              header: { 'Content-Type': 'text/plain; charset=utf-8' },
-              body: `AnyProxy Error: ${error.code}`
-            }
-          };
-        }
-      },
-
-      async onConnectError(requestDetail, error) {
-        return null;
-      },
-      
       // 拦截 HTTP 请求
       async beforeSendRequest(requestDetail) {
         const clientIp = getRemoteAddressFromReq(requestDetail);
         const host = requestDetail.requestOptions.hostname;
-        // 如果是裸IP请求，全部放行
-        if (net.isIPv4(host) || net.isIPv6(host)) {
-          return null;
-        }
+        const pathname = requestDetail.requestOptions.path?.split('?')[0];;
+        console.log(getSymbolProperty(requestDetail._req.client, 'async_id_symbol'), clientIp);
+        console.log('}}}');
+
+        // ???????????????????????????????????????????????????? 这里得不到真实IP
         // 如果是 https 请求，说明已经被beforeDealHttpsRequest处理过且认为应当拦截，应当直接返回拦截结果
         // 之所以这样处理是https转过来的请求clientIp变成了127.0.0.1（应该是 anyproxy 的 bug）
         if (requestDetail.protocol == "https") {
@@ -297,9 +348,9 @@ function getAnyProxyOptions() {
           if (blockRules.length === 0) {
             return null;
           }
-          if (shouldBlockHost(host, blockRules)) {
+          if (shouldBlockHost(host, blockRules, pathname)) {
             // 如果是列表中的域名则拦截
-            console.log(`拦截到https请求: ${host}${requestDetail.requestOptions.path}`);
+            console.log(`拦截到http请求: ${host}${requestDetail.requestOptions.path}`);
             // 为被拦截的域名返回自定义响应
             let customBody = `AnyProxy: http request to ${host} is blocked!`;
             return {
@@ -313,9 +364,25 @@ function getAnyProxyOptions() {
               }
             };
           }
-
         }
 
+        return null;
+      },
+
+      async onError(requestDetail, error) {
+        // 资源不可达
+        if (error.code == "ENETUNREACH") {
+          return {
+            response: {
+              statusCode: 404,
+              header: { 'Content-Type': 'text/plain; charset=utf-8' },
+              body: `AnyProxy Error: ${error.code}`
+            }
+          };
+        }
+      },
+
+      async onConnectError(requestDetail, error) {
         return null;
       },
 

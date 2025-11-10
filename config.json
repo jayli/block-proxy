@@ -2,6 +2,7 @@
   "block_hosts": [
     {
       "filter_host": "baidu.com",
+      "filter_pathname": "",
       "filter_start_time": "00:00",
       "filter_end_time": "23:59",
       "filter_mac": "D2:9E:8D:1B:F1:4E",
@@ -17,9 +18,10 @@
     },
     {
       "filter_host": "bilibili.com",
+      "filter_pathname": "/tv/",
       "filter_start_time": "00:00",
       "filter_end_time": "23:59",
-      "filter_mac": "D2:9E:8D:1B:F1:4E",
+      "filter_mac": "F4:6B:8C:90:29:05",
       "filter_weekday": [
         1,
         2,
@@ -101,6 +103,18 @@
     {
       "ip": "192.168.124.240",
       "mac": "F4:6B:8C:90:29:5"
+    },
+    {
+      "ip": "192.168.124.132",
+      "mac": "7A:25:CF:6B:59:E0"
+    },
+    {
+      "ip": "192.168.124.10",
+      "mac": "BE:50:23:BF:D8:66"
+    },
+    {
+      "ip": "192.168.124.227",
+      "mac": "48:38:B6:46:F8:BD"
     }
   ]
 }
