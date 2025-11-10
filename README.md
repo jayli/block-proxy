@@ -32,4 +32,4 @@
 
 ### Docker 文件下载
 
-Download → [block-proxy.tar](http://yui.cool:7001/public/downloads/block-proxy.tar)
+Download → <a herf="http://yui.cool:7001/public/downloads/block-proxy.tar" target=_blank>Block-proxy</a>
