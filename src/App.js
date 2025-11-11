@@ -657,7 +657,7 @@ function App() {
             disabled={loading}
             style={{ marginTop: '10px' }}
           >
-            {loading ? '刷新中...' : '刷新路由表'}
+            {loading ? '刷新中...' : '更新路由表'}
           </button>
         </div>
         <div className="config-section">
