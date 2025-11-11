@@ -114,7 +114,6 @@ function shouldBlockHost(host, blockList, pathname) {
           return false;
         }
       }
-      console.log(host, 111);
       
       // 在传入pathname的情况下检查路径名是否匹配（新增功能）
       if (pathname != "" && blockItem.filter_pathname && blockItem.filter_pathname.trim() !== '') {
@@ -291,10 +290,6 @@ function getAnyProxyOptions() {
         const clientIp = getRemoteAddressFromReq(requestDetail);
         const blockRules = getBlockRules(clientIp);
         const host = requestDetail.host;
-        console.log('\n\n\n{{{');
-        // console.log(requestDetail._req.client);
-        console.log(getSymbolProperty(requestDetail._req.client, 'async_id_symbol'), clientIp);
-        console.log("\n\n\n")
 
         // HTTPS 的 requestDetail.url 为空, requestDetail.requestOptions 也为空
         // 这里只能简单的判断域名，pathname 的判断都放到 beforeSendRequest 中
@@ -309,7 +304,7 @@ function getAnyProxyOptions() {
         if (blockRules.length === 0) {
           return false;
         } else if (shouldBlock) {
-          console.log('https 拦截', host);
+          console.log('https 拦截', host, '接下来判断是否根据pathname进行拦截');
           // 只对配置中的域名进行 HTTPS 拦截
           return true; // 允许 HTTPS 拦截
         }
@@ -318,19 +313,28 @@ function getAnyProxyOptions() {
 
       // 拦截 HTTP 请求
       async beforeSendRequest(requestDetail) {
-        const clientIp = getRemoteAddressFromReq(requestDetail);
+        const clientIp = requestDetail._req?.sourceIp || '127.0.0.1';
         const host = requestDetail.requestOptions.hostname;
+        const blockRules = getBlockRules(clientIp);
         const pathname = requestDetail.requestOptions.path?.split('?')[0];;
-        console.log(getSymbolProperty(requestDetail._req.client, 'async_id_symbol'), clientIp);
-        console.log('}}}');
 
-        // ???????????????????????????????????????????????????? 这里得不到真实IP
-        // 如果是 https 请求，说明已经被beforeDealHttpsRequest处理过且认为应当拦截，应当直接返回拦截结果
-        // 之所以这样处理是https转过来的请求clientIp变成了127.0.0.1（应该是 anyproxy 的 bug）
-        if (requestDetail.protocol == "https") {
-          console.log(`拦截到https请求: ${host}${requestDetail.requestOptions.path}`);
+        // 如果是 http 请求，说明是直接访问过来的，没有经过beforeDealHttpsRequest，因此clientIp是真实的
+        // 进入到这里的有两种情况：
+        //  1. http 协议请求到这里
+        //  2. https 协议根据域名需要拦截，转发到这里，功能上可以让所有 https 请求都转发到这里，但涉及到
+        //     把 https 拆包，可能有性能问题，所以 beforeDealHttpsRequest 先根据域名拦截，这里统一做
+        //     pathname + 域名 + mac 的拦截
+
+        // 如果当前 IP 没有配置拦截规则，直接放行
+        if (blockRules.length === 0) {
+          return null;
+        }
+        // 如果当前 IP 有针对域名和 pathname 的规则，则拦截
+        if (shouldBlockHost(host, blockRules, pathname)) {
+          // 如果是列表中的域名则拦截
+          console.log(`拦截到请求: ${host}${pathname}}`);
           // 为被拦截的域名返回自定义响应
-          let customBody = `AnyProxy: https request to ${host} is blocked!`;
+          let customBody = `AnyProxy: request to ${host}${pathname} is blocked!`;
           return {
             response: {
               statusCode: 200,
@@ -341,31 +345,9 @@ function getAnyProxyOptions() {
               body: customBody
             }
           };
-        } else if (requestDetail.protocol == "http") {
-          // 如果是 http 请求，说明是直接访问过来的，没有经过beforeDealHttpsRequest，因此clientIp是真实的
-          let blockRules = getBlockRules(clientIp);
-          // 没有命中规则，直接放行
-          if (blockRules.length === 0) {
-            return null;
-          }
-          if (shouldBlockHost(host, blockRules, pathname)) {
-            // 如果是列表中的域名则拦截
-            console.log(`拦截到http请求: ${host}${requestDetail.requestOptions.path}`);
-            // 为被拦截的域名返回自定义响应
-            let customBody = `AnyProxy: http request to ${host} is blocked!`;
-            return {
-              response: {
-                statusCode: 200,
-                header: {
-                  'Content-Type': 'text/plain; charset=utf-8',
-                  'Content-Length': getContentLength(customBody)
-                },
-                body: customBody
-              }
-            };
-          }
         }
 
+        // 其他情况一律放行
         return null;
       },
 

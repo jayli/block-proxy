@@ -23,6 +23,29 @@ https.globalAgent.maxCachedSessions = 0;
 
 const DEFAULT_CHUNK_COLLECT_THRESHOLD = 20 * 1024 * 1024; // about 20 mb
 
+// console.log(normalizeIP('::ffff:192.168.124.118'));     // "192.168.124.118"
+// console.log(normalizeIP('::FFFF:10.0.0.5'));           // "10.0.0.5"
+// console.log(normalizeIP('192.168.1.100'));             // "192.168.1.100"
+// console.log(normalizeIP('[::ffff:172.16.0.10]:3000')); // "172.16.0.10"
+// console.log(normalizeIP('::1'));                       // "::1"
+function normalizeIP(rawIP) {
+  if (typeof rawIP !== 'string') return rawIP;
+
+  // 处理 [::ffff:192.168.1.1]:8080 这类格式（来自 req.url 或 proxy）
+  let ip = rawIP;
+  if (ip.startsWith('[')) {
+    const match = ip.match(/^\[([^\]]+)\]/);
+    if (match) ip = match[1];
+  }
+
+  // 移除 ::ffff: 前缀（忽略大小写）
+  return ip.replace(/^::ffff:/i, '');
+}
+
+function normalizeSocketKey(ip, port) {
+  return ip + ":" + port
+}
+
 class CommonReadableStream extends Readable {
   constructor(config) {
     super({
@@ -251,6 +274,30 @@ function getWsReqInfo(wsReq) {
     protocol: isEncript ? 'wss' : 'ws'
   };
 }
+
+// 只在 beforeSendRequest 时用，req 是 http 封装后的
+function getSourceIp(req, socketMap) {
+  // 如果是 http 请求，则直接是原始 IP
+  // 如果是 https 请求，则是127.0.0.1
+  var localIp = req.client.remoteAddress.split(":").pop();
+  var connectionPort = getConnectionPort(req.socket.server._connectionKey);
+  if (localIp != '127.0.0.1' && localIp != '0.0.0.0') {
+    return localIp;
+  } else {
+    var mapKey = '127.0.0.1:' + connectionPort;
+    // console.log('mapkey', mapKey);
+    if (socketMap.has(mapKey)) {
+      localIp = socketMap.get(mapKey).remoteAddress.split(":").pop();
+    }
+    return localIp;
+  }
+}
+
+// 6::::51479  -> '51479'
+function getConnectionPort(connectionKey) {
+  return connectionKey.split(":").pop();
+}
+
 /**
  * get a request handler for http/https server
  *
@@ -269,6 +316,11 @@ function getUserReqHandler(userRule, recorder) {
       in http  server: http://www.example.com/a/b/c
       in https server: /a/b/c
     */
+    // console.log(req.socket.server._connectionKey);
+    // beforeSendRequest 前调用，这里有原始的 ip
+    // console.log(reqHandlerCtx.httpServerPort)
+    // console.log(reqHandlerCtx.cltSockets);
+    req.sourceIp = getSourceIp(req, reqHandlerCtx.cltSockets);
 
     const host = req.headers.host;
     const protocol = (!!req.connection.encrypted && !(/^http:/).test(req.url)) ? 'https' : 'http';
@@ -526,6 +578,10 @@ function getConnectReqHandler(userRule, recorder, httpsServerMgr) {
   const reqHandlerCtx = this; reqHandlerCtx.conns = new Map(); reqHandlerCtx.cltSockets = new Map()
 
   return function (req, cltSocket, head) {
+    // 只在 https 里调用
+    // console.log(cltSocket);
+    // console.log(reqHandlerCtx.conns);
+    // console.log(req.socket.remoteAddress);
     const host = req.url.split(':')[0],
       targetPort = req.url.split(':')[1];
     let shouldIntercept;
@@ -890,6 +946,7 @@ class RequestHandler {
 
     reqHandlerCtx.userRequestHandler = getUserReqHandler.apply(reqHandlerCtx, [userRule, recorder]);
     reqHandlerCtx.wsHandler = getWsHandler.bind(this, userRule, recorder);
+    reqHandlerCtx.httpServerPort = config.httpServerPort;
 
     reqHandlerCtx.httpsServerMgr = new HttpsServerMgr({
       handler: reqHandlerCtx.userRequestHandler,
