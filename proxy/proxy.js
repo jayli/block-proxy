@@ -140,17 +140,8 @@ function shouldBlockHost(host, blockList, pathname) {
       
       // 在传入pathname的情况下检查路径名是否匹配（新增功能）
       if (pathname != "" && blockItem.filter_pathname && blockItem.filter_pathname.trim() !== '') {
-        try {
-          const regex = new RegExp(blockItem.filter_pathname);
-          if (!regex.test(pathname)) {
-            return false; // 路径不匹配，不拦截
-          }
-        } catch (e) {
-          console.error('Invalid regex in filter_pathname:', blockItem.filter_pathname);
-          // If regex is invalid, fall back to exact match
-          if (!pathname.includes(blockItem.filter_pathname)) {
-            return false;
-          }
+        if (!pathname.includes(blockItem.filter_pathname)) {
+          return false; // 访问路径不包含配置路径，则不拦截
         }
       }
       

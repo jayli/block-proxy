@@ -22,6 +22,7 @@ function App() {
   });
   
   const [newHost, setNewHost] = useState('');
+  const [newPathName, setNewPathName] = useState('');
   const [newStartTime, setNewStartTime] = useState('00:00');
   const [newEndTime, setNewEndTime] = useState('23:59');
   const [loading, setLoading] = useState(false);
@@ -112,33 +113,27 @@ function App() {
 
   const handleAddHost = async () => {
     if (newHost.trim()) {
-      // 检查是否已存在相同的主机
-      const exists = config.block_hosts.some(item => 
-        typeof item === 'string' ? item === newHost.trim() : item.filter_host === newHost.trim()
-      );
-      
-      if (!exists) {
-        const newFilterItem = {
-          filter_host: newHost.trim(),
-          filter_start_time: newStartTime,
-          filter_end_time: newEndTime,
-          filter_weekday: [1, 2, 3, 4, 5, 6, 7] // 默认每天生效
-        };
+      const newFilterItem = {
+        filter_host: newHost.trim(),
+        filter_pathname: newPathName.trim(), // 添加 pathname 字段，默认为空
+        filter_start_time: newStartTime,
+        filter_end_time: newEndTime,
+        filter_weekday: [1, 2, 3, 4, 5, 6, 7] // 默认每天生效
+      };
 
-        const updatedConfig = {
-          ...config,
-          block_hosts: [...config.block_hosts, newFilterItem]
-        };
+      const updatedConfig = {
+        ...config,
+        block_hosts: [...config.block_hosts, newFilterItem]
+      };
 
-        // Update local state first
-        setConfig(updatedConfig);
-        setNewHost('');
+      // Update local state first
+      setConfig(updatedConfig);
+      setNewHost('');
 
-        // Save to config.json via API
-        setLoading(true);
-        await saveConfig(updatedConfig);
-        setLoading(false);
-      }
+      // Save to config.json via API
+      setLoading(true);
+      await saveConfig(updatedConfig);
+      setLoading(false);
     }
   };
 
@@ -362,6 +357,14 @@ function App() {
     return typeof filterItem === 'string' ? filterItem : filterItem.filter_host;
   };
 
+  // 获取拦截项的 pathname
+  const getFilterPathname = (filterItem) => {
+    if (typeof filterItem === 'string') {
+      return ''; // 字符串格式没有 pathname 字段
+    }
+    return filterItem.filter_pathname || '';
+  };
+
   // 获取拦截项的时间段
   const getFilterTimes = (filterItem) => {
     if (typeof filterItem === 'string') {
@@ -447,8 +450,13 @@ function App() {
               type="text"
               value={newHost}
               onChange={(e) => setNewHost(e.target.value)}
-              placeholder="要拦截的域名,例如:example.com"
-              onKeyPress={(e) => e.key === 'Enter' && handleAddHost()}
+              placeholder="域名,例如:example.com"
+            />
+            <input
+              type="text"
+              value={newPathName}
+              onChange={(e) => setNewPathName(e.target.value)}
+              placeholder="路径,例:/ab/c, 留空拦截全部"
             />
             <div className="time-inputs">
               <label><span>开始：</span>
@@ -470,10 +478,17 @@ function App() {
           </div>
           <hr className="simple-line" />
           <ul className="host-list">
+            <li key={1000} className="host-item">
+              <div className="host-info">域名</div>
+              <div className="weekday-controls title-weedkey-controls">星期</div>
+              <div className="title-mac-input">MAC 地址</div>
+              <div className="title-time-controls">时间段</div>
+              <div className="table-right-blank"></div>
+            </li>
             {config.block_hosts.map((host, index) => (
               <li key={index} className="host-item">
                 <div className="host-info">
-                  <span className="host-text">{getFilterHostDisplay(host)}</span>
+                  <span className="host-text">{getFilterHostDisplay(host)}<br />{getFilterPathname(host)}</span>
                   <div className="weekday-controls">
                     {weekdayNames.map((name, dayIndex) => {
                       const day = dayIndex + 1;
@@ -492,7 +507,6 @@ function App() {
                     })}
                   </div>
                   <div className="mac-input">
-                    <label>MAC:</label>
                     <input
                       type="text"
                       value={getFilterMac(host)}
@@ -522,7 +536,7 @@ function App() {
                   onClick={() => handleRemoveHost(host)}
                   className="remove-btn"
                 >
-                  删除
+                  X
                 </button>
               </li>
             ))}
@@ -612,6 +626,12 @@ function App() {
           <div>
             <p><b>配置方法</b>：（以Iphone为例）</p>
             <p>设置 → 无线局域网 → 点击当前网络 → HTTP代理/配置代理，设置服务器和端口（图右）</p>
+          </div>
+          <div>
+            <p><b>拦截配置</b>：</p>
+            <p>1. 不写 Mac 地址则拦截内网所有设备。</p>
+            <p>2. 路径留空则该域名下所有请求都拦截</p>
+            <p>3. 路径处可以写部分匹配</p>
           </div>
         </div>
 

@@ -223,6 +223,8 @@ input[type="time"]:focus {
 .host-info {
   display: flex;
   flex-grow: 1;
+  align-items:center;
+  font-size:15px;
 }
 
 span.host-text {
@@ -247,7 +249,8 @@ span.host-text {
   background-color: #dc3545;
   color: white;
   border: none;
-  padding: 5px 10px;
+  padding: 5px 7px;
+  min-width: 23px;
   cursor: pointer;
   border-radius: 3px;
   font-size: 12px;
@@ -388,7 +391,7 @@ button:disabled {
 /* 星期几控件样式 */
 .weekday-controls {
   display: flex;
-  flex-wrap: wrap;
+  /*flex-wrap: wrap;*/
   align-items: center;
 }
 
@@ -449,6 +452,25 @@ button:disabled {
   box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
 }
 
+.table-right-blank {
+  min-width:30px;
+}
+
+.title-mac-input {
+  font-size:15px;
+  text-align:center;
+  min-width:131px;
+}
+.title-time-controls {
+  font-size:15px;
+  text-align:center;
+  min-width:183px;
+}
+.title-weedkey-controls {
+  font-size:15px;
+  min-width:106px;
+}
+
 /* 响应式设计 */
 @media (max-width: 500px) {
   .config-container {
@@ -480,3 +502,4 @@ button:disabled {
     width: 100px;
   }
 }
+
