@@ -69,6 +69,30 @@ function loadConfig() {
   return config;
 }
 
+// F4:6B:8c:90:29:5  ->  f4:6b:8c:90:29:05
+function normalizeMacAddress(mac) {
+  // 去除可能的空格，并转为小写
+  const cleaned = mac.trim().toLowerCase();
+  
+  // 按冒号分割成6个部分
+  const parts = cleaned.split(':');
+  
+  // 验证是否为6段
+  if (parts.length !== 6) {
+    throw new Error('Invalid MAC address: must have 6 parts separated by colons');
+  }
+  
+  // 对每一段：补前导零（确保长度为2），并验证是否为合法十六进制
+  const normalized = parts.map(part => {
+    if (!/^[0-9a-f]{1,2}$/.test(part)) {
+      throw new Error(`Invalid hex part: "${part}"`);
+    }
+    return part.padStart(2, '0'); // 补0到长度为2
+  });
+  
+  return normalized.join(':');
+}
+
 // 根据来源 ip 来遍历当前 blockList，把对应mac拦截配置匹配的项都找出来
 function getBlockRules(ip) {
   // 获得ip对应的 mac 地址
@@ -77,8 +101,7 @@ function getBlockRules(ip) {
   blockHosts.forEach(function(item, index){
     if (item.filter_mac === undefined || item.filter_mac == "") {
       currBlockList.push(item);
-    } else if (item.filter_mac != "" && item.filter_mac.toLowerCase() === mac.toLowerCase()) {
-      // TODO here f4:6b:8c:90:29:5  ->  f4:6b:8c:90:29:05
+    } else if (item.filter_mac != "" && normalizeMacAddress(item.filter_mac) === normalizeMacAddress(mac)) {
       currBlockList.push(item);
     }
   });
@@ -289,7 +312,8 @@ function getAnyProxyOptions() {
       async beforeDealHttpsRequest(requestDetail) {
         const clientIp = getRemoteAddressFromReq(requestDetail);
         const blockRules = getBlockRules(clientIp);
-        const host = requestDetail.host;
+        // requestDetail.host 是域名+端口的形式
+        const host = requestDetail.host.split(":")[0];
 
         // HTTPS 的 requestDetail.url 为空, requestDetail.requestOptions 也为空
         // 这里只能简单的判断域名，pathname 的判断都放到 beforeSendRequest 中
@@ -332,7 +356,7 @@ function getAnyProxyOptions() {
         // 如果当前 IP 有针对域名和 pathname 的规则，则拦截
         if (shouldBlockHost(host, blockRules, pathname)) {
           // 如果是列表中的域名则拦截
-          console.log(`拦截到请求: ${host}${pathname}}`);
+          console.log(`拦截到请求: ${host}${pathname}`);
           // 为被拦截的域名返回自定义响应
           let customBody = `AnyProxy: request to ${host}${pathname} is blocked!`;
           return {
