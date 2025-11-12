@@ -1,6 +1,12 @@
 # Block-Proxy
 
-限制小朋友上网的代理，依赖 anyproxy，基于 Docker 安装，用在 openwrt 里。
+限制小朋友上网的代理，依赖 anyproxy，用在 openwrt 里。特性：
+
+- 域名拦截
+- Pathname 拦截
+- 指定拦截Mac地址
+- 设定日期和时间段
+- 监控上网记录
 
 ### 开发和调试
 
@@ -22,27 +28,32 @@
 
 拷贝 tar 到 openwrt后，启动容器：
 
-```sh
+```
 docker run --init -d --restart=unless-stopped \
            -e TZ=Asia/Shanghai --network=host \
            --name block-proxy block-proxy
 ```
 
-为了方便获取子网机器ip和mac地址，docker 容器和宿主机共享同一个网络
+为了方便获取子网机器ip和mac地址，docker 容器和宿主机共享同一个网络，同时指定时区。
 
 ### 配置
 
-#### 配置后台
+#### 后台配置
 
 访问路径：`http://proxy-ip:8003`
 
+路由表间隔两小时刷新一次。如果新加入网的设备没生效，刷新一下路由表。添加限制条件后，点击重启代理按钮。
+
 <img src="https://github.com/user-attachments/assets/16f47d3f-1ef9-47a2-8640-c7e04ec64e1a" width=300 />
 
-路由表间隔两小时刷新一次。如果新加入网的设备没生效，刷新一下路由表。
+
+#### 设备配置
+
+iPhone/iPad 为例：设置 → 无线局域网 → 点击当前网络 → HTTP代理/配置代理，设置服务器和端口。
 
 #### 禁掉设备直连
 
-最好在网关禁止设备直连，只允许通过代理访问。配置规则：
+防止小朋友修改网Wifi连接，只允许设备通过代理访问，把直连上网权限关掉。网关里配置防火墙规则：
 
 ```
 iptables -I FORWARD -m mac --mac-source D2:9E:8D:1B:F1:4E  -j REJECT
