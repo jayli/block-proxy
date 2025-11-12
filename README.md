@@ -95,12 +95,10 @@ Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" t
 
 得益于 Node 的 流式 `pipe()` 机制，理论上高并发情况下内存几乎无增长，CPU 占用也等同于原生。实测千兆局域网内、5000 个 TCP 并发量，网络延迟在 10ms 以内，网速跑到了带宽上限（硬件：R4S）。但当命中代理规则时，速度会变慢，因为命中规则后代理返回为空，所以快慢无所谓。
 
-#### AnyProxy bug 修复
+#### AnyProxy 修改记录
 
 1. `Content-length` 被吞掉的问题：这个是 AnyProxy 的设计缺陷，AnyProxy 定位为 Mock 工具，为了便于修改响应内容，因此AnyProxy 默认不设置 `Content-length`，其实 AnyProxy 应当让开发者自己处理`Content-length`，并给出最佳实践，而不是一刀切，为了规避重写响应后和源报文Length不一致的问题而直接删掉`Content-length`和`Connection`这两个重要字段。
 2. `beforeSendRequest` 中无法获得源 IP。在经过 https 隧道后到达`beforeSendRequest`回调函数时，req 中携带的 socket 不是原始的 socket，得到的 remoteAddress 始终是 `127.0.0.1`。这是代理机制决定的，但 AnyProxy 作为工具箱应当把重要的最初创建隧道时的源 socket 保留下来，以便把关键的原始信息透传给规则回调函数，交给开发者去处理。
-
-block-proxy 临时给这两个问题打了补丁。
 
 ### License
 
