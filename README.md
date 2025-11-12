@@ -22,7 +22,9 @@
 
 拷贝 tar 到 openwrt后，启动容器：
 
-  `docker run --init -d --restart=unless-stopped -e TZ=Asia/Shanghai --network=host --name block-proxy block-proxy`
+```sh
+docker run --init -d --restart=unless-stopped -e TZ=Asia/Shanghai --network=host --name block-proxy block-proxy
+```
 
 为了方便获取子网机器ip和mac地址，docker 容器和宿主机共享同一个网络
 
@@ -40,8 +42,10 @@
 
 最好在网关禁止设备直连，只允许通过代理访问。配置规则：
 
-  iptables -I FORWARD -m mac --mac-source D2:9E:8D:1B:F1:4E  -j REJECT
-  ip6tables -I forwarding_rule -m mac --mac-source D2:9E:8D:1B:F1:4E -j REJECT
+```
+iptables -I FORWARD -m mac --mac-source D2:9E:8D:1B:F1:4E  -j REJECT
+ip6tables -I forwarding_rule -m mac --mac-source D2:9E:8D:1B:F1:4E -j REJECT
+```
 
 重启防火墙
 
