@@ -26,9 +26,24 @@
 
 为了方便获取子网机器ip和mac地址，docker 容器和宿主机共享同一个网络
 
-访问代理服务器：`http://proxy-ip:8003`
+### 配置
+
+#### 配置后台
+
+配置后台：`http://proxy-ip:8003`
 
 <img src="https://github.com/user-attachments/assets/16f47d3f-1ef9-47a2-8640-c7e04ec64e1a" width=300 />
+
+路由表间隔两小时刷新一次。如果新加入网的设备没生效，刷新一下路由表。
+
+#### 禁掉设备直连
+
+最好在网关禁止设备直连，只允许通过代理访问。配置规则：
+
+  iptables -I FORWARD -m mac --mac-source D2:9E:8D:1B:F1:4E  -j REJECT
+  ip6tables -I forwarding_rule -m mac --mac-source D2:9E:8D:1B:F1:4E -j REJECT
+
+重启防火墙
 
 ### Docker 文件下载
 
