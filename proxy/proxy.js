@@ -397,7 +397,7 @@ function getAnyProxyOptions() {
       enable: true,
       webPort: webInterfacePort
     },
-    throttle: 10000,
+    throttle: 100000, // 800 Mbps
     forceProxyHttps: false, // 关闭全局 HTTPS 拦截
     wsIntercept: false,
     silent: true
