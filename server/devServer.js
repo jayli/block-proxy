@@ -175,6 +175,10 @@ module.exports = {
         }
       }
 
+      devServer.app.get('/api/timezone', async (req, res) => {
+        res.status(200).json({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+      });
+
       // 获取服务器IP地址接口
       devServer.app.get('/api/server-ip', async (req, res) => {
         try {

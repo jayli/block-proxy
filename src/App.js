@@ -22,6 +22,7 @@ function App() {
   });
   
   const [newHost, setNewHost] = useState('');
+  const [timezone, setTimeZone] = useState('');
   const [newPathName, setNewPathName] = useState('');
   const [newStartTime, setNewStartTime] = useState('00:00');
   const [newEndTime, setNewEndTime] = useState('23:59');
@@ -37,6 +38,7 @@ function App() {
   useEffect(() => {
     fetchConfig();
     fetchServerIPs();
+    fetchTimeZone();
     
     // 清理定时器
     return () => {
@@ -45,6 +47,16 @@ function App() {
       }
     };
   }, []);
+
+  const fetchTimeZone = async () => {
+    const response = await fetch('/api/timezone');
+    if (response.ok) {
+      const data = await response.json();
+      setTimeZone(data.timezone);
+    } else {
+      setTimeZone("");
+    }
+  };
 
   const fetchServerIPs = async () => {
     try {
@@ -412,7 +424,11 @@ function App() {
           <div className="server-info">
             {serverIPs.length > 0 ? (
               <div>
-                <p><strong>服务器IP地址:</strong><span className="docker-info">{isDocker ? ' (Docker环境)' : ' (非Docker环境)'}</span></p>
+                <p>
+                  <strong>服务器IP地址:</strong>
+                  <span className="docker-info">{isDocker ? ' (Docker环境)' : ' (非Docker环境)'}</span>
+                  <span>&nbsp;{timezone}</span>
+                </p>
                 <ul className="ip-list">
                   {serverIPs.map((ip, index) => (
                     <li key={index} className="ip-item">
