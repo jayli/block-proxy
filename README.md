@@ -20,9 +20,10 @@
 
 准备工作，构建 docker 包，先启动本地 Docker：
 
+- 服务启动：`npm run dev`，启动代理同时启动后台服务
+- 只启动代理：`npm run proxy`（本地调试用）
 - 本地打包：`npm run docker:build`
 - 打arm包：`npm run docker:build_arm`
-- 本地调试：`npm run dev`
 - 导出tar包到本地：`docker save -o block-proxy.tar block-proxy`
 - 安装包到openwrt：`docker load < block-proxy.tar`
 

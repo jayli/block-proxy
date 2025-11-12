@@ -16,6 +16,7 @@
   "scripts": {
     "dev": "cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/ && PORT=8003 craco start",
     "start": "npm run dev",
+    "proxy": "cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/ && node proxy/start.js",
     "build": "react-scripts build",
     "docker:build": "docker build -t block-proxy .",
     "docker:build_arm": "docker buildx build --platform linux/arm64/v8 -t block-proxy .",
