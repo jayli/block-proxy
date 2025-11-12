@@ -23,7 +23,9 @@
 拷贝 tar 到 openwrt后，启动容器：
 
 ```sh
-docker run --init -d --restart=unless-stopped -e TZ=Asia/Shanghai --network=host --name block-proxy block-proxy
+docker run --init -d --restart=unless-stopped \
+           -e TZ=Asia/Shanghai --network=host \
+           --name block-proxy block-proxy
 ```
 
 为了方便获取子网机器ip和mac地址，docker 容器和宿主机共享同一个网络
@@ -32,7 +34,7 @@ docker run --init -d --restart=unless-stopped -e TZ=Asia/Shanghai --network=host
 
 #### 配置后台
 
-配置后台：`http://proxy-ip:8003`
+访问路径：`http://proxy-ip:8003`
 
 <img src="https://github.com/user-attachments/assets/16f47d3f-1ef9-47a2-8640-c7e04ec64e1a" width=300 />
 
