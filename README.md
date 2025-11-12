@@ -27,7 +27,7 @@
 - 导出tar包到本地：`docker save -o block-proxy.tar block-proxy`
 - 安装包到openwrt：`docker load < block-proxy.tar`
 
-拷贝 tar 到 openwrt后，启动容器：
+拷贝 tar 到 openwrt 后，启动容器：
 
 ```
 docker run --init -d --restart=unless-stopped \
@@ -35,7 +35,16 @@ docker run --init -d --restart=unless-stopped \
            --name block-proxy block-proxy
 ```
 
-为了方便获取子网机器ip和mac地址，docker 容器和宿主机共享同一个网络，同时指定时区。
+网关里为了方便获取子网机器ip和mac地址，docker 容器和宿主机共享同一个网络，同时指定时区。
+
+如果是在 Window/Mac 中，需要手动指定端口绑定：
+
+```
+docker run --init -d --restart=unless-stopped \
+           -e TZ=Asia/Shanghai -p 8001:8001 -p 8002:8002 -p 8003:8003 \
+           --name block-proxy block-proxy
+```
+
 
 ### 配置
 
