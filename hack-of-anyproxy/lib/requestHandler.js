@@ -285,7 +285,6 @@ function getSourceIp(req, socketMap) {
     return localIp;
   } else {
     var mapKey = '127.0.0.1:' + connectionPort;
-    // console.log('mapkey', mapKey);
     if (socketMap.has(mapKey)) {
       localIp = socketMap.get(mapKey).remoteAddress.split(":").pop();
     }
