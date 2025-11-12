@@ -37,7 +37,7 @@ docker run --init -d --restart=unless-stopped \
 
 网关里为了方便获取子网机器ip和mac地址，docker 容器和宿主机共享同一个网络，同时指定时区。
 
-如果是在 Window/Mac 中，需要手动指定端口绑定：
+如果是在 Window/Mac 中，需要手动指定端口绑定（不推荐）：
 
 ```
 docker run --init -d --restart=unless-stopped \
