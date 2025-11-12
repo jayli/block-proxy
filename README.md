@@ -93,7 +93,17 @@ Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" t
 2. Wifi 带宽速度
 3. TCP 连接并发量
 
-得益于 Node 的 流式 `pipe()` 机制，理论上高并发情况下内存几乎无增长，CPU 占用也等同于原生。实测千兆局域网内、5000 个 TCP 并发量，网络延迟在 10ms 以内，网速跑到了带宽上限（硬件：R4S）。但当命中代理规则时，速度会变慢，因为命中规则后代理返回为空，所以快慢无所谓。
+得益于 Node 的 流式 `pipe()` 机制，理论上高并发情况下内存几乎无增长，CPU 性能几乎同于原生。当命中代理规则时，速度会变慢，因为命中规则后代理返回为空，所以快慢无所谓。千兆局域网内侧速度基本能跑满。
+
+**高并发测试**：
+
+|直连测速     |代理测速     |
+|:---------:|:----------------:|
+|<img height="500" alt="image" src="https://github.com/user-attachments/assets/8268bc5c-956f-4b67-89c1-cdd5725114b3" />  | <img height="500" alt="image" src="https://github.com/user-attachments/assets/abf4bfa1-c8b8-4907-ba0e-bcc76e8899fa" />|
+
+**网速测试**：
+
+<img width="544" alt="image" src="https://github.com/user-attachments/assets/67c61e34-67ae-4345-97ca-d266cd35ddf4" />
 
 #### AnyProxy 修改记录
 
