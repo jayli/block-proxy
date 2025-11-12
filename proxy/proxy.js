@@ -333,6 +333,11 @@ function getAnyProxyOptions() {
         const blockRules = getBlockRules(clientIp);
         const pathname = requestDetail.requestOptions.path?.split('?')[0];;
 
+        // 如果是裸IP请求，全部放行
+        if (net.isIPv4(host) || net.isIPv6(host)) {
+          return null;
+        }
+
         // 如果是 http 请求，说明是直接访问过来的，没有经过beforeDealHttpsRequest，因此clientIp是真实的
         // 进入到这里的有两种情况：
         //  1. http 协议请求到这里
