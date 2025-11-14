@@ -8,7 +8,7 @@ const os = require('os');
 const { execSync } = require('child_process');
 
 function initExpress() {
-  const expressPath = path.join(__dirname, '/app.js');
+  const expressPath = path.join(__dirname, '/express.js');
 
   // 执行命令并获取输出（同步阻塞）
   const output = execSync(`node ${expressPath}`, {
