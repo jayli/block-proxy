@@ -14,18 +14,21 @@
     "url": "git+https://github.com/jayli/block-proxy.git"
   },
   "scripts": {
-    "dev": "cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/ && PORT=8003 craco start",
+    "cp": "cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/",
+    "dev": "npm run cp && craco start",
     "start": "npm run dev",
+    "express": "npm run cp && node ./server/app.js",
     "proxy": "cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/ && node proxy/start.js",
     "build": "react-scripts build",
-    "docker:build": "docker build -t block-proxy .",
-    "docker:build_arm": "docker buildx build --platform linux/arm64/v8 -t block-proxy .",
+    "docker:build": "npm run build && docker build -t block-proxy .",
+    "docker:build_arm": "npm run build && docker buildx build --platform linux/arm64/v8 -t block-proxy .",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
   "devDependencies": {
-    "@craco/craco": "^7.1.0",
     "anyproxy": "^4.1.3",
+    "@craco/craco": "^7.1.0",
+    "express": "^5.1.0",
     "ping": "^1.0.0"
   },
   "browserslist": {

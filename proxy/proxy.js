@@ -488,5 +488,27 @@ module.exports = {
       // 如果没有运行中的实例，直接启动
       this.start(callback);
     }
+  },
+  
+  // 代理服务启动，并同时启动定时任务
+  init: function() {
+    var that = this;
+    setTimeout(() => {
+      console.log('Dev server started, starting LocalProxy...');
+      that.start(async () => {
+        await that.updateDevices();
+        console.log('local network devices updated!');
+
+        // 设置定时任务，每两小时更新一次设备信息
+        setInterval(async () => {
+          try {
+            await that.updateDevices();
+            console.log('Network devices updated automatically every 2 hours');
+          } catch (error) {
+            console.error('Failed to automatically update network devices:', error);
+          }
+        }, 2 * 60 * 60 * 1000); // 2小时 = 2 * 60 * 60 * 1000 毫秒
+      });
+    }, 100);
   }
 };

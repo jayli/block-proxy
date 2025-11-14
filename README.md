@@ -12,6 +12,7 @@
 
 代码 clone 下来后执行`pnpm i`，执行 `npm run dev` 运行本地服务。默认开启三个端口：
 
+0. 3000: 调试端口（仅开发调试用）
 1. 8001: 代理端口
 2. 8002: 监控端口
 3. 8003: 配置端口
@@ -20,8 +21,10 @@
 
 准备工作，构建 docker 包，先启动本地 Docker：
 
-- 服务启动：`npm run dev`，启动代理同时启动后台服务
-- 只启动代理：`npm run proxy`（本地调试用）
+- 开发调试：`npm run dev`，开发调试用3000端口
+- 只启动代理：`npm run proxy`，不启动配置后台，只启动代理
+- 后台构建：`npm run build`
+- 生产启动：`npm run express`，生产环境使用
 - 本地打包：`npm run docker:build`
 - 打arm包：`npm run docker:build_arm`
 - 导出tar包到本地：`docker save -o block-proxy.tar block-proxy`

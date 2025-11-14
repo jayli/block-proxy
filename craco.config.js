@@ -1,3 +1,3 @@
-const devServer = require("./server/devServer");
+const devServer = require("./server/craco");
 
 module.exports = devServer;
