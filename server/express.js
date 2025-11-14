@@ -5,10 +5,12 @@ const path = require('path');
 const util = require('./util');
 const net = require('net');
 const os = require('os');
+const { exec, execSync } = require('child_process');
 const LocalProxy = require('../proxy/proxy');
 
 const app = express();
 const PORT = 8003;
+const DEV = process.env.BLOCK_PROXY_DEV || 0;
 
 // 1. 托管 React build 后的静态文件
 const staticPath = path.join(__dirname, '../build/');
@@ -186,5 +188,11 @@ app.get((req, res) => {
 // 启动服务器
 app.listen(PORT, () => {
   console.log(`✅ 静态服务器运行在 http://localhost:${PORT}`);
+  // 如果是开发环境，则启动SSR服务，开启端口3000
+  if (DEV === '1') {
+    console.log('启动 craco start');
+    exec('npm run craco', { cwd: path.join(__dirname,'../') }, () => {});
+  }
+  // 启动本地代理
   LocalProxy.init();
 });

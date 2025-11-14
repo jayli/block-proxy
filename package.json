@@ -15,8 +15,9 @@
   },
   "scripts": {
     "cp": "cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/",
-    "dev": "npm run cp && craco start",
-    "start": "npm run dev",
+    "craco":"craco start",
+    "dev": "BLOCK_PROXY_DEV=1 npm run express",
+    "start": "npm run express",
     "express": "npm run cp && node ./server/express.js",
     "proxy": "cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/ && node proxy/start.js",
     "build": "react-scripts build",

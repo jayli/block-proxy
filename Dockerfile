@@ -36,4 +36,4 @@ USER nodeuser
 
 EXPOSE 8001 8002 8003
 
-CMD ["npm", "run", "express"]
+CMD ["npm", "run", "start"]
