@@ -5,21 +5,15 @@ const { URL } = require('url');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { exec } = require('child_process');
+const { execSync } = require('child_process');
 
 function initExpress() {
   const expressPath = path.join(__dirname, '/app.js');
 
-  exec('node ' + expressPath, (error, stdout, stderr) => {
-    if (error) {
-      console.error('执行出错:', error);
-      return;
-    }
-    if (stderr) {
-      console.error('stderr:', stderr);
-      return;
-    }
-    console.log('命令输出:\n', stdout);
+  // 执行命令并获取输出（同步阻塞）
+  const output = execSync(`node ${expressPath}`, {
+    encoding: 'utf-8',     // 自动将 Buffer 转为字符串
+    stdio: 'pipe'          // 默认值，捕获 stdout/stderr
   });
 }
 
