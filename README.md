@@ -22,9 +22,9 @@
 准备工作，构建 docker 包，先启动本地 Docker：
 
 - 开发调试：`npm run dev`，开发调试用3000端口
+- 生产启动：`npm run start`，生产环境使用
 - 只启动代理：`npm run proxy`，不启动配置后台，只启动代理
 - 后台构建：`npm run build`
-- 生产启动：`npm run express`，生产环境使用
 - 本地打包：`npm run docker:build`
 - 打arm包：`npm run docker:build_arm`
 - 导出tar包到本地：`docker save -o block-proxy.tar block-proxy`
