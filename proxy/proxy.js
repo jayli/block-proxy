@@ -99,10 +99,14 @@ function getBlockRules(ip) {
   const mac = getMacByIp(ip);
   var currBlockList = [];
   blockHosts.forEach(function(item, index){
-    if (item.filter_mac === undefined || item.filter_mac == "") {
-      currBlockList.push(item);
-    } else if (item.filter_mac != "" && normalizeMacAddress(item.filter_mac) === normalizeMacAddress(mac)) {
-      currBlockList.push(item);
+    try {
+      if (item.filter_mac === undefined || item.filter_mac == "") {
+        currBlockList.push(item);
+      } else if (item.filter_mac != "" && normalizeMacAddress(item.filter_mac) === normalizeMacAddress(mac)) {
+        currBlockList.push(item);
+      }
+    } catch(e) {
+      // 如果mac地址格式不正确，则跳过
     }
   });
   return currBlockList;
