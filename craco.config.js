@@ -1,3 +1,52 @@
-const devServer = require("./server/craco");
+// craco 具体的配置，只给开发环境使用
+const http = require('http');
+const https = require('https');
+const { URL } = require('url');
+const fs = require('fs');
+const path = require('path');
 
-module.exports = devServer;
+module.exports = {
+  devServer: (devServerConfig, { env, paths, proxy, allowedHost }) => {
+
+    devServerConfig.onBeforeSetupMiddleware = (devServer) => {
+
+      // get/post /api/config...
+      devServer.app.use('/api', async (req, res) => {
+        const proxyReq = http.request({
+          hostname: 'localhost',
+          port: 8003,
+          path: '/api' + req.url,  // 关键修改：添加缺失的 /api 前缀
+          method: req.method,
+          headers: req.headers
+        }, (proxyRes) => {
+          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          proxyRes.pipe(res);
+        });
+
+        proxyReq.on('error', (err) => {
+          console.error('Proxy error:', err);
+          res.status(500).send('Proxy Error');
+        });
+
+        req.pipe(proxyReq);
+      });
+    };
+
+    /*
+    // 保存原始的onListening回调（如果存在）
+    const originalOnListening = devServerConfig.onListening;
+    
+    // 在服务监听完成后启动LocalProxy
+    devServerConfig.onListening = (devServer) => {
+      // 调用原始的onListening（如果存在）
+      if (originalOnListening) {
+        originalOnListening(devServer);
+      }
+      
+      // LocalProxy.init();
+    };
+    */
+
+    return devServerConfig;
+  },
+};
