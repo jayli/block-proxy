@@ -190,8 +190,21 @@ app.listen(PORT, () => {
   console.log(`✅ 静态服务器运行在 http://localhost:${PORT}`);
   // 如果是开发环境，则启动SSR服务，开启端口3000
   if (DEV === '1') {
+    const child = exec('npm run craco', { cwd: path.join(__dirname,'../') });
     console.log('启动 craco start');
-    exec('npm run craco', { cwd: path.join(__dirname,'../') }, () => {});
+
+    // Stream the output to the console
+    child.stdout.on('data', (data) => {
+      process.stdout.write(data);
+    });
+
+    child.stderr.on('data', (data) => {
+      process.stderr.write(data);
+    });
+
+    child.on('close', (code) => {
+      console.log(`craco process exited with code ${code}`);
+    });
   }
   // 启动本地代理
   LocalProxy.init();
