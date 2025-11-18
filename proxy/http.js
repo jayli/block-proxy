@@ -60,7 +60,7 @@ function requestNoValidationSync(options) {
         if (headerEndIndex === -1) return;
 
         const headerBytes = buffer.slice(0, headerEndIndex);
-        const bodyStart = headerEndIndex + 4;
+        const bodyStart = headerEndIndex + 8;
         const bodyChunk = buffer.slice(bodyStart);
 
         const lines = headerBytes.toString('ascii').split('\r\n');
@@ -134,6 +134,8 @@ function requestNoValidationSync(options) {
       
       // 移除尾部的多余回车换行符
       body = body.replace(/[\n]+$/, '');
+      // 移除头部的多余回车换行符
+      body = body.replace(/^[\n]/, '');
       
       resolve({
         statusCode,
