@@ -8,6 +8,7 @@ const net = require('net');
 const scanNetwork = require("./scan").scanNetwork;
 const util = require('util');
 const os = require('os');
+const _request = require("./http.js").request;
 
 // 全局变量存储关键配置参数
 const configPath = path.join(__dirname, '../config.json');
@@ -383,6 +384,29 @@ function getAnyProxyOptions() {
               statusCode: 404,
               header: { 'Content-Type': 'text/plain; charset=utf-8' },
               body: `AnyProxy Error: ${error.code}`
+            }
+          };
+        } else if (error.code == "HPE_INVALID_CONTENT_LENGTH") {
+          // HPE_INVALID_CONTENT_LENGTH 是 http 的响应同时包含了 content-length
+          // 和 Transfer-Encoding: chunked 时的报错，这类响应不符合 http 的规范
+          // AnyProxy 中的 http.request 报此错误。
+          // 但为了保证兼容性，对于这类错误的请求也应当转发，只要是浏览器能处理的
+          // Proxy 代理就应当转发。因此重写了不校验 header 字段的 _request 方法
+          // 重新请求目标资源，并直接返回
+          //
+          // 这个方法仍可能会有错误，尽管做了转发，由于 content-length 不能保证
+          // 完全正确，所以 socket 根据 content-length 截断的时机可能不对，这里
+          // 不做更多的报错，一并把错误的结果发给客户端
+          const result = await _request(requestDetail.requestOptions);
+          return {
+            response: {
+              statusCode: result.statusCode,
+              header: {
+                ...result.headers,
+                'x-blockproxy-transfer': "true",
+                'x-blockproxy-errorcode':"HPE_INVALID_CONTENT_LENGTH"
+              },
+              body: result.body
             }
           };
         }
