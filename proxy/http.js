@@ -54,7 +54,6 @@ function requestNoValidationSync(options) {
     // 注意：不要在这里调用 socket.end()，避免过早关闭连接
 
     socket.on('data', (chunk) => {
-      console.log('data---->', chunk);
       if (!responseParsed) {
         buffer = Buffer.concat([buffer, chunk]);
         const headerEndIndex = buffer.indexOf('\r\n\r\n');
