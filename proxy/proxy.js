@@ -386,7 +386,7 @@ function getAnyProxyOptions() {
               body: `AnyProxy Error: ${error.code}`
             }
           };
-        } else if (error.code == "HPE_INVALID_CONTENT_LENGTH") {
+        } else if (error.code == "HPE_INVALID_CONTENT_LENGTH" || error.code == "HPE_UNEXPECTED_CONTENT_LENGTH") {
           // HPE_INVALID_CONTENT_LENGTH 是 http 的响应同时包含了 content-length
           // 和 Transfer-Encoding: chunked 时的报错，这类响应不符合 http 的规范
           // AnyProxy 中的 http.request 报此错误。
