@@ -1,9 +1,6 @@
 # Block-Proxy
 
-<img width="400" alt="image" src="https://github.com/user-attachments/assets/be5a9b1c-e9c6-452c-91ce-9aacd8271613" />
-
-
-限制小朋友上网的代理，依赖 anyproxy，用在 openwrt 里。特性：
+限制小朋友上网的代理程序，依赖 anyproxy，用在 openwrt 里。特性：
 
 - 域名拦截
 - Pathname 拦截
