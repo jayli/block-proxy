@@ -60,7 +60,8 @@ function requestNoValidationSync(options) {
         if (headerEndIndex === -1) return;
 
         const headerBytes = buffer.slice(0, headerEndIndex);
-        const bodyStart = headerEndIndex + 8;
+        // 修正: 只需要跳过 \r\n\r\n (4 bytes) 而不是8 bytes
+        const bodyStart = headerEndIndex + 4;
         const bodyChunk = buffer.slice(bodyStart);
 
         const lines = headerBytes.toString('ascii').split('\r\n');
@@ -101,19 +102,31 @@ function requestNoValidationSync(options) {
         }
 
         responseParsed = true;
+
+        // 处理初始的bodyChunk（如果有）
         if (bodyChunk.length > 0) {
-          bodyChunks.push(bodyChunk);
-          receivedBodyLength += bodyChunk.length;
+          // 检查是否为chunked编码
+          const transferEncoding = headersObj['transfer-encoding'];
+          if (transferEncoding && transferEncoding.includes('chunked')) {
+            // 对于chunked数据，我们将其存储为原始数据，在end事件中统一处理
+            bodyChunks.push(bodyChunk);
+            receivedBodyLength += bodyChunk.length;
+          } else {
+            // 非chunked数据按原来的方式处理
+            bodyChunks.push(bodyChunk);
+            receivedBodyLength += bodyChunk.length;
+          }
         }
-        
+
         // 如果已知内容长度且已经接收完毕，则关闭连接
         if (expectedBodyLength !== null && receivedBodyLength >= expectedBodyLength) {
           socket.end();
         }
       } else {
+        // 已经解析了响应头，正在接收响应体
         bodyChunks.push(chunk);
         receivedBodyLength += chunk.length;
-        
+
         // 检查是否已接收完整的响应体
         if (expectedBodyLength !== null && receivedBodyLength >= expectedBodyLength) {
           socket.end();
@@ -122,21 +135,66 @@ function requestNoValidationSync(options) {
     });
 
     socket.on('end', () => {
-      const bodyBuffer = Buffer.concat(bodyChunks);
-      let body = bodyBuffer.toString('utf8'); // 默认 UTF-8
-      
-      // 尝试修复可能的响应体问题
-      // 如果body以数字开头，可能是Content-Length的值残留
-      if (/^\d+\s*\n/.test(body)) {
-        // 移除开头的数字和换行符
-        body = body.replace(/^\d+\s*\n/, '');
+      // 检查是否为分块传输编码
+      const transferEncoding = headersObj['transfer-encoding'];
+      let finalBody = '';
+
+      if (transferEncoding && transferEncoding.includes('chunked')) {
+        // 对每个buffer分别进行解码
+        for (const chunkBuffer of bodyChunks) {
+          const chunkString = chunkBuffer.toString('utf8');
+          let decodedChunk = '';
+          let position = 0;
+
+          while (position < chunkString.length) {
+            // 查找当前块大小行的结束位置
+            let lineEnding = chunkString.indexOf('\r\n', position);
+            if (lineEnding === -1) break;
+
+            // 提取块大小（十六进制字符串）
+            const chunkSizeHex = chunkString.substring(position, lineEnding).trim();
+            const chunkSize = parseInt(chunkSizeHex, 16);
+
+            // 如果块大小为0，表示这是最后一个块
+            if (chunkSize === 0) {
+              break;
+            }
+
+            // 块数据开始位置
+            const dataStart = lineEnding + 2;
+            // 块数据结束位置
+            const dataEnd = dataStart + chunkSize;
+
+            // 确保我们没有超出边界
+            if (dataEnd <= chunkString.length) {
+              // 提取块数据
+              decodedChunk += chunkString.substring(dataStart, dataEnd);
+              // 移动到下一个块的大小行
+              position = dataEnd + 2; // 跳过数据后的 \r\n
+            } else {
+              // 数据不完整，跳出循环
+              break;
+            }
+          }
+
+          // 将解码后的chunk添加到最终结果中
+          finalBody += decodedChunk;
+        }
+
+        body = finalBody;
+      } else {
+        // 非chunked编码，直接连接buffers
+        const bodyBuffer = Buffer.concat(bodyChunks);
+        body = bodyBuffer.toString('utf8'); // 默认 UTF-8
+
+        // 尝试修复可能的响应体问题
+        // 如果body以数字开头，可能是Content-Length的值残留
+        if (/^\d+\s*\n/.test(body)) {
+          // 移除开头的数字和换行符
+          body = body.replace(/^\d+\s*\n/, '');
+        }
       }
-      
-      // 移除尾部的多余回车换行符
-      body = body.replace(/[\n]+$/, '');
-      // 移除头部的多余回车换行符
-      body = body.replace(/^[\n]/, '');
-      
+
       resolve({
         statusCode,
         statusMessage,
