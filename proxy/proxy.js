@@ -386,6 +386,25 @@ function getAnyProxyOptions() {
               body: `AnyProxy Error: ${error.code}`
             }
           };
+        } else if (error.code =="HPE_INVALID_VERSION") {
+          // 请求的返回是http 0.0版本：
+          // HTTP/0.0 307 Temporary Redirect\r\n
+          // Location: https://a.yui.cool:88/\r\n
+          // Content-Length: 0\r\n
+          // \r\n
+          const result = await _request(requestDetail.requestOptions);
+          // console.log(result);
+          return {
+            response: {
+              statusCode: result.statusCode,
+              header: {
+                ...result.headers,
+                'x-blockproxy-transfer': "true",
+                'x-blockproxy-errorcode':"HPE_INVALID_VERSION"
+              },
+              body: result.body
+            }
+          };
         } else if (error.code == "HPE_INVALID_CONTENT_LENGTH" || error.code == "HPE_UNEXPECTED_CONTENT_LENGTH") {
           // HPE_INVALID_CONTENT_LENGTH 是 http 的响应同时包含了 content-length
           // 和 Transfer-Encoding: chunked 时的报错，这类响应不符合 http 的规范

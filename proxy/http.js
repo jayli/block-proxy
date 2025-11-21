@@ -66,7 +66,7 @@ function requestNoValidationSync(options) {
 
         const lines = headerBytes.toString('ascii').split('\r\n');
         const statusLine = lines[0];
-        const match = statusLine.match(/^HTTP\/1\.1\s+(\d{3})\s*(.*)$/i);
+        const match = statusLine.match(/^HTTP\/[10]\.[10]\s+(\d{3})\s*(.*)$/i);
         if (!match) {
           return handleError(new Error('Invalid HTTP status line'));
         }
@@ -102,6 +102,10 @@ function requestNoValidationSync(options) {
         }
 
         responseParsed = true;
+
+        if (expectedBodyLength == 0) {
+          socket.end();
+        }
 
         // 处理初始的bodyChunk（如果有）
         if (bodyChunk.length > 0) {
@@ -182,7 +186,7 @@ function requestNoValidationSync(options) {
         }
 
         body = finalBody;
-      } else {
+      } else if (expectedBodyLength != 0) {
         // 非chunked编码，直接连接buffers
         const bodyBuffer = Buffer.concat(bodyChunks);
         body = bodyBuffer.toString('utf8'); // 默认 UTF-8
@@ -193,6 +197,8 @@ function requestNoValidationSync(options) {
           // 移除开头的数字和换行符
           body = body.replace(/^\d+\s*\n/, '');
         }
+      } else {
+        body = "";
       }
 
       resolve({
