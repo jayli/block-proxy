@@ -1,4 +1,5 @@
 {
+  "vpn_proxy":"",
   "block_hosts": [
     {
       "filter_host": "baidu.com",

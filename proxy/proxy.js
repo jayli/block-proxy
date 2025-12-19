@@ -8,6 +8,9 @@ const net = require('net');
 const scanNetwork = require("./scan").scanNetwork;
 const util = require('util');
 const os = require('os');
+const http = require("http");
+const https = require('https');
+const { URL } = require('url');
 const _request = require("./http.js").request;
 
 // 全局变量存储关键配置参数
@@ -15,6 +18,7 @@ const configPath = path.join(__dirname, '../config.json');
 let blockHosts = [];
 let proxyPort = 8001;
 let webInterfacePort = 8002;
+let vpn_proxy = "";
 let devices = [];
 let localMac = getLocalMacAddress();
 
@@ -24,6 +28,7 @@ function loadConfig() {
     block_hosts: blockHosts, // 使用全局变量的默认值
     proxy_port: proxyPort,
     web_interface_port: webInterfacePort,
+    vpn_proxy:"",
     devices: []
   };
 
@@ -36,6 +41,11 @@ function loadConfig() {
       if (loadedConfig.block_hosts) {
         blockHosts = loadedConfig.block_hosts;
         config.block_hosts = blockHosts;
+      }
+
+      if (loadedConfig.vpn_proxy) {
+        vpn_proxy = loadedConfig.vpn_proxy;
+        config.vpn_proxy = vpn_proxy;
       }
       
       if (loadedConfig.proxy_port) {
@@ -59,7 +69,8 @@ function loadConfig() {
       fs.writeFileSync(configPath, JSON.stringify({
         block_hosts: blockHosts,
         proxy_port: proxyPort,
-        web_interface_port: webInterfacePort
+        web_interface_port: webInterfacePort,
+        vpn_proxy: ""
       }, null, 2));
       console.log('Created default config.json file');
     }
@@ -300,12 +311,25 @@ function getSymbolProperty(obj, symbolDescription) {
   return undefined;
 }
 
+function parseAddress(str) {
+  const [ip, portStr] = str.split(':');
+  const port = portStr ? parseInt(portStr, 10) : null;
+  if (isNaN(port)) {
+    throw new Error('Invalid port');
+  }
+  return { ip, port };
+}
+
 function getAnyProxyOptions() {
   return {
     port: proxyPort,
     rule: {
       // 只对特定域名启用 HTTPS 拦截
-      async beforeDealHttpsRequest(requestDetail) {
+      async beforeDealHttpsRequest(requestDetail, next) {
+        // 如果配置了 vpn_proxy，全部走解密逻辑，仅调试使用
+        if (vpn_proxy != "") {
+          return true;
+        }
         const clientIp = getRemoteAddressFromReq(requestDetail);
         const blockRules = getBlockRules(clientIp);
         // requestDetail.host 是域名+端口的形式
@@ -333,6 +357,7 @@ function getAnyProxyOptions() {
 
       // 拦截 HTTP 请求
       async beforeSendRequest(requestDetail) {
+        const { url, requestOptions } = requestDetail;
         const clientIp = requestDetail._req?.sourceIp || '127.0.0.1';
         const host = requestDetail.requestOptions.hostname;
         const blockRules = getBlockRules(clientIp);
@@ -352,7 +377,62 @@ function getAnyProxyOptions() {
 
         // 如果当前 IP 没有配置拦截规则，直接放行
         if (blockRules.length === 0) {
-          return null;
+          if (vpn_proxy != "") {
+            // -------------TODO 这里构造代理请求有问题！！！！！！
+            const { ip, port } = parseAddress(vpn_proxy);
+            const isHttps = requestDetail.isHttps; // AnyProxy 提供的字段
+
+            // 注意：此时如果是 HTTPS，说明已被 MITM，requestOptions 是解密后的 HTTP 请求
+            const proxyOptions = {
+              host: ip,
+              port: port,
+              method: requestOptions.method || 'GET',
+              // 对于 HTTP 代理，path 应该是 /path?query，不是完整 URL！
+              path: requestOptions.path, // ✅ 正确：/index.html?foo=bar
+              headers: {
+                ...requestOptions.headers,
+                'Host': host, // 保持原始 Host
+                'Connection': 'close'
+              }
+            };
+
+            return new Promise((resolve) => {
+              const client = http; // 上游是 HTTP 代理，所以用 http 模块
+              const proxyReq = client.request(proxyOptions, (proxyRes) => {
+                let body = [];
+                proxyRes.on('data', chunk => body.push(chunk));
+                proxyRes.on('end', () => {
+                  resolve({
+                    response: {
+                      statusCode: proxyRes.statusCode,
+                      header: proxyRes.headers,
+                      body: Buffer.concat(body)
+                    }
+                  });
+                });
+              });
+
+              proxyReq.on('error', err => {
+                console.error('Proxy forward error:', err);
+                resolve({
+                  response: {
+                    statusCode: 502,
+                    header: { 'content-type': 'text/plain' },
+                    body: `Proxy error: ${err.message}`
+                  }
+                });
+              });
+
+              if (requestDetail.requestData) {
+                proxyReq.write(requestDetail.requestData);
+              }
+              proxyReq.end();
+            });
+            
+          } else {
+            // 其他情况一律放行
+            return null;
+          }
         }
         // 如果当前 IP 有针对域名和 pathname 的规则，则拦截
         if (shouldBlockHost(host, blockRules, pathname)) {
@@ -372,7 +452,6 @@ function getAnyProxyOptions() {
           };
         }
 
-        // 其他情况一律放行
         return null;
       },
 
