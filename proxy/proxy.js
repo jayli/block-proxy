@@ -11,6 +11,9 @@ const os = require('os');
 const http = require("http");
 const https = require('https');
 const { URL } = require('url');
+const axios = require('axios');
+const { HttpProxyAgent } = require('http-proxy-agent');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 const _request = require("./http.js").request;
 
 // 全局变量存储关键配置参数
@@ -320,6 +323,88 @@ function parseAddress(str) {
   return { ip, port };
 }
 
+/**
+ * 使用本地 HTTP 代理 (127.0.0.1:1111) 转发请求
+ * @param {Object} requestOptions - 来自 AnyProxy 的 requestDetail.requestOptions
+ * @param {Buffer|string} [body] - 请求体（可选）
+ * @returns {Promise<{statusCode: number, headers: Object, body: Buffer}>}
+ */
+async function forwardViaLocalProxy(requestOptions, body = null) {
+  const proxyUrl = 'http://127.0.0.1:1087';
+
+  // 判断目标是否为 HTTPS（AnyProxy 会在 MITM 后将 isHttps 设为 true）
+  const isHttps = requestOptions.protocol === 'https:' || 
+                  (typeof requestOptions.isHttps !== 'undefined' && requestOptions.isHttps);
+
+  // 构造目标 URL（必须是完整 URL）
+  const protocol = isHttps ? 'https:' : 'http:';
+  const hostname = requestOptions.hostname || requestOptions.host;
+  const port = requestOptions.port || (isHttps ? 443 : 80);
+  const path = requestOptions.path || '/';
+
+  // 注意：path 已包含 query string（如 /search?q=1）
+  const targetUrl = `${protocol}//${hostname}${port !== (isHttps ? 443 : 80) ? ':' + port : ''}${path}`;
+
+  // 选择代理 Agent
+  const agent = isHttps 
+    ? new HttpsProxyAgent(proxyUrl)
+    : new HttpProxyAgent(proxyUrl);
+
+  // 准备 axios 配置
+  const config = {
+    url: targetUrl,
+    method: requestOptions.method || 'GET',
+    headers: { ...requestOptions.headers },
+    data: body,
+    httpAgent: !isHttps ? agent : undefined,
+    httpsAgent: isHttps ? agent : undefined,
+    responseType: 'stream', // 为了获取原始 buffer，也可用 'arraybuffer'
+    validateStatus: () => true, // 不抛错，让调用方处理状态码
+    maxRedirects: 0, // 禁用自动重定向（由客户端处理）
+  };
+
+  try {
+    const response = await axios(config);
+
+    // 将响应流读取为 Buffer
+    const chunks = [];
+    for await (const chunk of response.data) {
+      chunks.push(chunk);
+    }
+    const responseBody = Buffer.concat(chunks);
+
+    return {
+      statusCode: response.status,
+      headers: response.headers,
+      body: responseBody
+    };
+  } catch (error) {
+    if (error.response) {
+      // 服务器返回了错误状态码（如 4xx, 5xx）
+      const chunks = [];
+      if (error.response.data) {
+        // 如果是 stream，需要读取；但 axios 默认非 stream 时是字符串/对象
+        if (typeof error.response.data === 'string') {
+          return {
+            statusCode: error.response.status,
+            headers: error.response.headers,
+            body: Buffer.from(error.response.data)
+          };
+        } else if (Buffer.isBuffer(error.response.data)) {
+          return {
+            statusCode: error.response.status,
+            headers: error.response.headers,
+            body: error.response.data
+          };
+        }
+      }
+    }
+
+    // 网络错误（如 ECONNREFUSED）
+    throw error;
+  }
+}
+
 function getAnyProxyOptions() {
   return {
     port: proxyPort,
@@ -362,6 +447,7 @@ function getAnyProxyOptions() {
         const host = requestDetail.requestOptions.hostname;
         const blockRules = getBlockRules(clientIp);
         const pathname = requestDetail.requestOptions.path?.split('?')[0];;
+        const body = requestDetail.requestData;
 
         // 如果是裸IP请求，全部放行
         if (net.isIPv4(host) || net.isIPv6(host)) {
@@ -378,57 +464,17 @@ function getAnyProxyOptions() {
         // 如果当前 IP 没有配置拦截规则，直接放行
         if (blockRules.length === 0) {
           if (vpn_proxy != "") {
-            // -------------TODO 这里构造代理请求有问题！！！！！！
+            // -------------TODO 这里构造代理请求有问题！！！！！！，继续调试
             const { ip, port } = parseAddress(vpn_proxy);
-            const isHttps = requestDetail.isHttps; // AnyProxy 提供的字段
-
-            // 注意：此时如果是 HTTPS，说明已被 MITM，requestOptions 是解密后的 HTTP 请求
-            const proxyOptions = {
-              host: ip,
-              port: port,
-              method: requestOptions.method || 'GET',
-              // 对于 HTTP 代理，path 应该是 /path?query，不是完整 URL！
-              path: requestOptions.path, // ✅ 正确：/index.html?foo=bar
-              headers: {
-                ...requestOptions.headers,
-                'Host': host, // 保持原始 Host
-                'Connection': 'close'
+            console.log(2222);
+            const result = await forwardViaLocalProxy(requestOptions, body);
+            return {
+              response: {
+                statusCode: result.statusCode,
+                header: result.headers,
+                body: result.body
               }
             };
-
-            return new Promise((resolve) => {
-              const client = http; // 上游是 HTTP 代理，所以用 http 模块
-              const proxyReq = client.request(proxyOptions, (proxyRes) => {
-                let body = [];
-                proxyRes.on('data', chunk => body.push(chunk));
-                proxyRes.on('end', () => {
-                  resolve({
-                    response: {
-                      statusCode: proxyRes.statusCode,
-                      header: proxyRes.headers,
-                      body: Buffer.concat(body)
-                    }
-                  });
-                });
-              });
-
-              proxyReq.on('error', err => {
-                console.error('Proxy forward error:', err);
-                resolve({
-                  response: {
-                    statusCode: 502,
-                    header: { 'content-type': 'text/plain' },
-                    body: `Proxy error: ${err.message}`
-                  }
-                });
-              });
-
-              if (requestDetail.requestData) {
-                proxyReq.write(requestDetail.requestData);
-              }
-              proxyReq.end();
-            });
-            
           } else {
             // 其他情况一律放行
             return null;
