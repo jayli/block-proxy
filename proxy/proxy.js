@@ -324,17 +324,10 @@ function parseAddress(str) {
 }
 
 /**
- * 使用本地 HTTP 代理 (127.0.0.1:1111) 转发请求
- * @param {Object} requestOptions - 来自 AnyProxy 的 requestDetail.requestOptions
- * @param {Buffer|string} [body] - 请求体（可选）
- * @returns {Promise<{statusCode: number, headers: Object, body: Buffer}>}
+ * 使用本地 HTTP 代理 (127.0.0.1:1087) 转发请求
  */
-async function forwardViaLocalProxy(requestOptions, body = null) {
-  const proxyUrl = 'http://127.0.0.1:1087';
-
-  // 判断目标是否为 HTTPS（AnyProxy 会在 MITM 后将 isHttps 设为 true）
-  const isHttps = requestOptions.protocol === 'https:' || 
-                  (typeof requestOptions.isHttps !== 'undefined' && requestOptions.isHttps);
+async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfig) {
+  const isHttps = url.startsWith('https:') ? true : false;
 
   // 构造目标 URL（必须是完整 URL）
   const protocol = isHttps ? 'https:' : 'http:';
@@ -342,29 +335,31 @@ async function forwardViaLocalProxy(requestOptions, body = null) {
   const port = requestOptions.port || (isHttps ? 443 : 80);
   const path = requestOptions.path || '/';
 
-  // 注意：path 已包含 query string（如 /search?q=1）
-  const targetUrl = `${protocol}//${hostname}${port !== (isHttps ? 443 : 80) ? ':' + port : ''}${path}`;
-
-  // 选择代理 Agent
-  const agent = isHttps 
-    ? new HttpsProxyAgent(proxyUrl)
-    : new HttpProxyAgent(proxyUrl);
+  // 注意：url 已包含 query string（如 /search?q=1）
+  var targetUrl = url;
 
   // 准备 axios 配置
-  const config = {
-    url: targetUrl,
+  const axiosConfig = {
+    url: '',
     method: requestOptions.method || 'GET',
+    baseURL: targetUrl,
+    allowAbsoluteUrls: true,
     headers: { ...requestOptions.headers },
     data: body,
-    httpAgent: !isHttps ? agent : undefined,
-    httpsAgent: isHttps ? agent : undefined,
+    httpAgent: new http.Agent({ keepAlive: true }),
+    httpsAgent: new https.Agent({ keepAlive: true }),
     responseType: 'stream', // 为了获取原始 buffer，也可用 'arraybuffer'
-    validateStatus: () => true, // 不抛错，让调用方处理状态码
-    maxRedirects: 0, // 禁用自动重定向（由客户端处理）
+    // validateStatus: () => true, // 不抛错，让调用方处理状态码
+    maxRedirects: 21,
+    proxy: {
+      protocol: 'http',
+      host: proxyConfig.ip,
+      port: proxyConfig.port
+    },
   };
 
   try {
-    const response = await axios(config);
+    const response = await axios(axiosConfig);
 
     // 将响应流读取为 Buffer
     const chunks = [];
@@ -420,8 +415,7 @@ function getAnyProxyOptions() {
         // requestDetail.host 是域名+端口的形式
         const host = requestDetail.host.split(":")[0];
 
-        // HTTPS 的 requestDetail.url 为空, requestDetail.requestOptions 也为空
-        // 这里只能简单的判断域名，pathname 的判断都放到 beforeSendRequest 中
+        // HTTPS 这里只判断 ip 源和 域名，pathname 和 query 的判断放到beforeSendRequest中
 
         // 如果是裸IP请求，全部放行
         if (net.isIPv4(host) || net.isIPv6(host)) {
@@ -458,16 +452,17 @@ function getAnyProxyOptions() {
         // 进入到这里的有两种情况：
         //  1. http 协议请求到这里
         //  2. https 协议根据域名需要拦截，转发到这里，功能上可以让所有 https 请求都转发到这里，但涉及到
-        //     把 https 拆包，可能有性能问题，所以 beforeDealHttpsRequest 先根据域名拦截，这里统一做
+        //     把 https 拆包，有性能问题，所以 beforeDealHttpsRequest 先根据域名拦截，这里统一做
         //     pathname + 域名 + mac 的拦截
 
         // 如果当前 IP 没有配置拦截规则，直接放行
         if (blockRules.length === 0) {
+          // 如果配置了 vpn_proxy，通过 proxy 转发请求
           if (vpn_proxy != "") {
-            // -------------TODO 这里构造代理请求有问题！！！！！！，继续调试
             const { ip, port } = parseAddress(vpn_proxy);
-            console.log(2222);
-            const result = await forwardViaLocalProxy(requestOptions, body);
+            const result = await forwardViaLocalProxy(url, requestOptions, body, {
+              ip: ip, port: port
+            });
             return {
               response: {
                 statusCode: result.statusCode,
@@ -485,7 +480,8 @@ function getAnyProxyOptions() {
           // 如果是列表中的域名则拦截
           console.log(`拦截到请求: ${host}${pathname}`);
           // 为被拦截的域名返回自定义响应
-          let customBody = `AnyProxy: request to ${host}${pathname} is blocked!`;
+          // let customBody = `AnyProxy: request to ${host}${pathname} is blocked!`;
+          let customBody = '';
           return {
             response: {
               statusCode: 200,
