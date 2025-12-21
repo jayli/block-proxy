@@ -334,9 +334,20 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
   const hostname = requestOptions.hostname || requestOptions.host;
   const port = requestOptions.port || (isHttps ? 443 : 80);
   const path = requestOptions.path || '/';
+  const proxyUrl = `http://${proxyConfig.ip}:${proxyConfig.port}`;
+  const agentOptions = {
+    keepAlive: true,        // 启用 keep-alive
+    rejectUnauthorized: false // 忽略 SSL 证书错误 (等同于 curl -k)
+    // 你可以在这里添加其他 http.Agent 或 https.Agent 的选项
+    // 例如: keepAliveMsecs: 1000, maxSockets: 256, timeout: 10000 等
+  };
+  const agent = isHttps ? new HttpsProxyAgent(proxyUrl, agentOptions) : new HttpProxyAgent(proxyUrl, agentOptions);
 
   // 注意：url 已包含 query string（如 /search?q=1）
   var targetUrl = url;
+  const parsedTargetUrl = new URL(targetUrl);
+  const finalHeaders = { ...requestOptions.headers };
+  finalHeaders['host'] = hostname;
 
   // 准备 axios 配置
   const axiosConfig = {
@@ -344,10 +355,10 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
     method: requestOptions.method || 'GET',
     // baseURL: targetUrl,
     // allowAbsoluteUrls: true,
-    headers: { ...requestOptions.headers },
+    headers: finalHeaders,
     data: body,
-    httpAgent: new http.Agent({ keepAlive: true, rejectUnauthorized: false }),
-    httpsAgent: new https.Agent({ keepAlive: true, rejectUnauthorized: false }),
+    httpAgent: agent,
+    httpsAgent: agent,
     responseType: 'stream', // 为了获取原始 buffer，也可用 'arraybuffer'
     // validateStatus: () => true, // 不抛错，让调用方处理状态码
     maxRedirects: 21,
@@ -358,11 +369,18 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
     // },
   };
 
+  // ... 在 forwardViaLocalProxy 函数内 ...
   console.log('[DEBUG] Forwarding via local proxy:', JSON.stringify({ url, proxyConfig /* , axiosConfig // Be careful logging full config */ }, null, 2));
-  // 打印关键头部
-  console.log('[DEBUG] Request Headers being sent via axios:', JSON.stringify(axiosConfig.headers, null, 2));
-  // 打印 URL
-  console.log('[DEBUG] Request URL being sent via axios:', axiosConfig.url);
+
+  // 打印关键信息
+  console.log('[DEBUG] Target URL for axios:', targetUrl);
+  console.log('[DEBUG] Original Request Host Header:', hostname);
+  console.log('[DEBUG] All Original Request Headers:', JSON.stringify(requestOptions.headers, null, 2)); // Be cautious with sensitive headers
+
+  // 检查 Host 头部
+  const newParsedTargetUrl = new URL(targetUrl);
+  const expectedHostHeader = newParsedTargetUrl.host; // 包含端口号 (如果非标准端口)
+  console.log('[DEBUG] Expected Host Header (from targetUrl):', expectedHostHeader);
 
   try {
     const response = await axios(axiosConfig);
