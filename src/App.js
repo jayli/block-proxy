@@ -23,7 +23,7 @@ function App() {
   
   const [newHost, setNewHost] = useState('');
   const [timezone, setTimeZone] = useState('');
-  const [newPathName, setNewPathName] = useState('');
+  const [newMatchRule, setNewMatchRule] = useState('');
   const [newStartTime, setNewStartTime] = useState('00:00');
   const [newEndTime, setNewEndTime] = useState('23:59');
   const [loading, setLoading] = useState(false);
@@ -127,7 +127,7 @@ function App() {
     if (newHost.trim()) {
       const newFilterItem = {
         filter_host: newHost.trim(),
-        filter_pathname: newPathName.trim(), // 添加 pathname 字段，默认为空
+        filter_match_rule: newMatchRule.trim(), // 添加 match_rule 字段，默认为空
         filter_start_time: newStartTime,
         filter_end_time: newEndTime,
         filter_weekday: [1, 2, 3, 4, 5, 6, 7] // 默认每天生效
@@ -369,12 +369,12 @@ function App() {
     return typeof filterItem === 'string' ? filterItem : filterItem.filter_host;
   };
 
-  // 获取拦截项的 pathname
-  const getFilterPathname = (filterItem) => {
+  // 获取拦截项的 match_rule
+  const getFilterMatchRule= (filterItem) => {
     if (typeof filterItem === 'string') {
-      return ''; // 字符串格式没有 pathname 字段
+      return ''; // 字符串格式没有 match_rule 字段
     }
-    return filterItem.filter_pathname || '';
+    return filterItem.filter_match_rule || '';
   };
 
   // 获取拦截项的时间段
@@ -470,9 +470,9 @@ function App() {
             />
             <input
               type="text"
-              value={newPathName}
-              onChange={(e) => setNewPathName(e.target.value)}
-              placeholder="路径,例:/ab/c, 留空拦截全部"
+              value={newMatchRule}
+              onChange={(e) => setNewMatchRule(e.target.value)}
+              placeholder="例子：^https?:\/\/.+abc\.com\/api\/\/def, 留空拦截全部"
             />
             <div className="time-inputs">
               <label><span>开始：</span>
@@ -504,7 +504,7 @@ function App() {
             {config.block_hosts.map((host, index) => (
               <li key={index} className="host-item">
                 <div className="host-info">
-                  <span className="host-text">{getFilterHostDisplay(host)}<br />{getFilterPathname(host)}</span>
+                  <span className="host-text"><strong>{getFilterHostDisplay(host)}</strong><br />{getFilterMatchRule(host)}</span>
                   <div className="weekday-controls">
                     {weekdayNames.map((name, dayIndex) => {
                       const day = dayIndex + 1;

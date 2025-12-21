@@ -127,8 +127,11 @@ function getBlockRules(ip) {
   return currBlockList;
 }
 
-// In proxy/proxy.js, modify the shouldBlockHost function to include pathname checking:
-function shouldBlockHost(host, blockList, pathname) {
+// 检查是否应当拦截 host & match_rule & url
+// match_rule 为空，只拦截 host
+// url 不为空，域名和 url 同时匹配时拦截
+// url 为空，匹配域名拦截
+function shouldBlockHost(host, blockList, url) {
   if (!host) return false;
   
   // 获取当前时间信息
@@ -157,10 +160,13 @@ function shouldBlockHost(host, blockList, pathname) {
         }
       }
       
-      // 在传入pathname的情况下检查路径名是否匹配（新增功能）
-      if (pathname != "" && blockItem.filter_pathname && blockItem.filter_pathname.trim() !== '') {
-        if (!pathname.includes(blockItem.filter_pathname)) {
-          return false; // 访问路径不包含配置路径，则不拦截
+      // 在传入 url 的情况下检查路径名是否匹配（新增功能）
+      if (url != "" && blockItem.filter_match_rule && blockItem.filter_match_rule.trim() !== '') {
+        // 匹配拦截规则，拦截
+        if (new RegExp(blockItem.filter_match_rule).test(url)) {
+          // do nothing
+        } else { // 不匹配拦截规则，不拦截
+          return false;
         }
       }
       
@@ -421,7 +427,9 @@ function getAnyProxyOptions() {
         // requestDetail.host 是域名+端口的形式
         const host = requestDetail.host.split(":")[0];
 
-        // HTTPS 这里只判断 ip 源和 域名，pathname 和 query 的判断放到beforeSendRequest中
+        // HTTPS 这里只判断 ip 源和域名
+        // 域名不匹配的就直接转发，不拆 tls，主要是性能考虑
+        // 域名匹配的情况下，再去看 match_rule 的判断，放到 beforeSendRequest 中
 
         // 如果是裸IP请求，全部放行
         if (net.isIPv4(host) || net.isIPv6(host)) {
@@ -433,7 +441,7 @@ function getAnyProxyOptions() {
         if (blockRules.length === 0) {
           return false;
         } else if (shouldBlock) {
-          console.log('https 拦截', host, '接下来判断是否根据pathname进行拦截');
+          console.log('https 拦截', host, '接下来判断是否根据 match_rule 进行拦截');
           // 只对配置中的域名进行 HTTPS 拦截
           return true; // 允许 HTTPS 拦截
         }
@@ -454,16 +462,16 @@ function getAnyProxyOptions() {
           return null;
         }
 
-        // 如果是 http 请求，说明是直接访问过来的，没有经过beforeDealHttpsRequest，因此clientIp是真实的
+        // 如果是 http 请求，说明是直接访问过来的，没有经过 beforeDealHttpsRequest，因此clientIp是真实的
         // 进入到这里的有两种情况：
         //  1. http 协议请求到这里
-        //  2. https 协议根据域名需要拦截，转发到这里，功能上可以让所有 https 请求都转发到这里，但涉及到
-        //     把 https 拆包，有性能问题，所以 beforeDealHttpsRequest 先根据域名拦截，这里统一做
-        //     pathname + 域名 + mac 的拦截
+        //  2. https 协议根据域名需要拦截，转发到这里，到这里已经完成了拆包
+        //     这里统一做：域名 + match_rule + mac 的拦截和重写
+        //  3. 开启 vpn_proxy 时，所有请求都走这里，主要是方便调试用，正是环境不要打开 vpn_proxy
 
         // 如果当前 IP 没有配置拦截规则，直接放行
         if (blockRules.length === 0) {
-          // 如果配置了 vpn_proxy，通过 proxy 转发请求
+          // 如果配置了 vpn_proxy，不匹配拦截的情况，所有请求都通过 proxy 做七层转发
           if (vpn_proxy != "") {
             const { ip, port } = parseAddress(vpn_proxy);
             const result = await forwardViaLocalProxy(url, requestOptions, body, {
@@ -481,12 +489,12 @@ function getAnyProxyOptions() {
             return null;
           }
         }
-        // 如果当前 IP 有针对域名和 pathname 的规则，则拦截
-        if (shouldBlockHost(host, blockRules, pathname)) {
+        // 如果当前 IP 有针对域名和 url 匹配 matchRule 的规则，则拦截
+        if (shouldBlockHost(host, blockRules, url)) {
           // 如果是列表中的域名则拦截
-          console.log(`拦截到请求: ${host}${pathname}`);
+          console.log(`拦截到请求: ${url}`);
           // 为被拦截的域名返回自定义响应
-          // let customBody = `AnyProxy: request to ${host}${pathname} is blocked!`;
+          // let customBody = `AnyProxy: request to ${url} is blocked!`;
           let customBody = 'blocked';
           return {
             response: {
