@@ -271,7 +271,7 @@ span.host-text {
 }
 
 .setting-row label {
-  width: 120px;
+  /*width: 120px;*/
   font-weight: bold;
   color: #555;
 }

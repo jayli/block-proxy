@@ -340,23 +340,29 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
 
   // 准备 axios 配置
   const axiosConfig = {
-    url: '',
+    url: targetUrl,
     method: requestOptions.method || 'GET',
-    baseURL: targetUrl,
-    allowAbsoluteUrls: true,
+    // baseURL: targetUrl,
+    // allowAbsoluteUrls: true,
     headers: { ...requestOptions.headers },
     data: body,
-    httpAgent: new http.Agent({ keepAlive: true }),
-    httpsAgent: new https.Agent({ keepAlive: true }),
+    httpAgent: new http.Agent({ keepAlive: true, rejectUnauthorized: false }),
+    httpsAgent: new https.Agent({ keepAlive: true, rejectUnauthorized: false }),
     responseType: 'stream', // 为了获取原始 buffer，也可用 'arraybuffer'
     // validateStatus: () => true, // 不抛错，让调用方处理状态码
     maxRedirects: 21,
-    proxy: {
-      protocol: 'http',
-      host: proxyConfig.ip,
-      port: proxyConfig.port
-    },
+    // proxy: {
+    //   protocol: 'http',
+    //   host: proxyConfig.ip,
+    //   port: proxyConfig.port
+    // },
   };
+
+  console.log('[DEBUG] Forwarding via local proxy:', JSON.stringify({ url, proxyConfig /* , axiosConfig // Be careful logging full config */ }, null, 2));
+  // 打印关键头部
+  console.log('[DEBUG] Request Headers being sent via axios:', JSON.stringify(axiosConfig.headers, null, 2));
+  // 打印 URL
+  console.log('[DEBUG] Request URL being sent via axios:', axiosConfig.url);
 
   try {
     const response = await axios(axiosConfig);
@@ -374,6 +380,7 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
       body: responseBody
     };
   } catch (error) {
+    // console.log(error.response);
     if (error.response) {
       // 服务器返回了错误状态码（如 4xx, 5xx）
       const chunks = [];

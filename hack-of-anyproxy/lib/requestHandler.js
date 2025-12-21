@@ -286,7 +286,17 @@ function getSourceIp(req, socketMap) {
   } else {
     var mapKey = '127.0.0.1:' + connectionPort;
     if (socketMap.has(mapKey)) {
-      localIp = socketMap.get(mapKey).remoteAddress.split(":").pop();
+      console.log(socketMap.get(mapKey).remoteAddress);
+      if (socketMap.get(mapKey).remoteAddress === undefined) {
+        localIp = "0.0.0.0";
+      } else {
+        localIp = socketMap.get(mapKey).remoteAddress.split(":").pop();
+      }
+      // try {
+      //   localIp = socketMap.get(mapKey).remoteAddress.split(":").pop();
+      // } catch (e) {
+      //   localIp = "127.0.0.1";
+      // }
     }
     return localIp;
   }
