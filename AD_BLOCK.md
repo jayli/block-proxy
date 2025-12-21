@@ -14,3 +14,19 @@ youtube.response = type=http-response,pattern=^https:\/\/youtubei\.googleapis\.c
 
 [MITM]
 hostname = %APPEND% -redirector*.googlevideo.com,*.googlevideo.com,www.youtube.com,s.youtube.com,youtubei.googleapis.com
+
+
+
+--------------------
+
+youtube.com
+`^https?:\/\/(www|s)\.youtube\.com\/api\/stats\/ads`
+
+youtube.com
+`^https?:\/\/(www|s)\.youtube\.com\/(pagead|ptracking)`
+
+youtube.com
+`^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext`
+
+googlevideo.com
+`^https?:\/\/[\w-]+\.googlevideo\.com\/(?!(dclk_video_ads|videoplayback\?)).+(&oad|ctier)`

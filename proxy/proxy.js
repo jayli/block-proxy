@@ -46,10 +46,9 @@ function loadConfig() {
         config.block_hosts = blockHosts;
       }
 
-      if (loadedConfig.vpn_proxy) {
-        vpn_proxy = loadedConfig.vpn_proxy;
-        config.vpn_proxy = vpn_proxy;
-      }
+      // 更新 vpn_proxy
+      vpn_proxy = loadedConfig.vpn_proxy;
+      config.vpn_proxy = vpn_proxy;
       
       if (loadedConfig.proxy_port) {
         proxyPort = loadedConfig.proxy_port;
@@ -336,41 +335,39 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
   const isHttps = url.startsWith('https:') ? true : false;
 
   // 构造目标 URL（必须是完整 URL）
-  const protocol = isHttps ? 'https:' : 'http:';
-  const hostname = requestOptions.hostname || requestOptions.host;
-  const port = requestOptions.port || (isHttps ? 443 : 80);
-  const path = requestOptions.path || '/';
+  // const protocol = isHttps ? 'https:' : 'http:'; // 这行没用到，可以删掉
+  // const hostname = requestOptions.hostname || requestOptions.host; // 这行没用到，可以删掉
+  // const port = requestOptions.port || (isHttps ? 443 : 80); // 这行没用到，可以删掉
+  // const path = requestOptions.path || '/'; // 这行没用到，可以删掉
   const proxyUrl = `http://${proxyConfig.ip}:${proxyConfig.port}`;
   const agentOptions = {
-    keepAlive: true,        // 启用 keep-alive
-    rejectUnauthorized: false // 忽略 SSL 证书错误 (等同于 curl -k)
-    // 你可以在这里添加其他 http.Agent 或 https.Agent 的选项
-    // 例如: keepAliveMsecs: 1000, maxSockets: 256, timeout: 10000 等
+    keepAlive: true,
+    rejectUnauthorized: false // 忽略 SSL 证书错误
   };
   const agent = isHttps ? new HttpsProxyAgent(proxyUrl, agentOptions) : new HttpProxyAgent(proxyUrl, agentOptions);
 
   // 注意：url 已包含 query string（如 /search?q=1）
   var targetUrl = url;
-  const parsedTargetUrl = new URL(targetUrl);
+  // const parsedTargetUrl = new URL(targetUrl); // 这行没用到，可以删掉
   const finalHeaders = { ...requestOptions.headers };
-  finalHeaders['host'] = hostname;
+  // finalHeaders['host'] = hostname; // 通常不需要手动设置 Host，axios/http(s) 会根据 URL 自动设置。删除这行。
 
   // 准备 axios 配置
   const axiosConfig = {
     url: targetUrl,
     method: requestOptions.method || 'GET',
-    // baseURL: targetUrl,
-    // allowAbsoluteUrls: true,
     headers: finalHeaders,
-    data: body,
+    data: body, // 确保 body 是 Buffer 或其他 Axios 支持的格式 (String, Stream)
     httpAgent: agent,
     httpsAgent: agent,
-    responseType: 'stream', // 为了获取原始 buffer，也可用 'arraybuffer'
-    // validateStatus: () => true, // 不抛错，让调用方处理状态码
+    responseType: 'stream', // 正确处理二进制响应
     maxRedirects: 21
+    // validateStatus: () => true, // 如果你想自己处理所有状态码，取消注释
   };
 
   try {
+    // console.log('---------------------->');
+    // console.log(targetUrl, finalHeaders['accept']);
     const response = await axios(axiosConfig);
 
     // 将响应流读取为 Buffer
@@ -380,36 +377,95 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
     }
     const responseBody = Buffer.concat(chunks);
 
+    // console.log('<-----------------------');
+    // console.log(targetUrl, response.status, response.headers);
+
     return {
       statusCode: response.status,
       headers: response.headers,
-      body: responseBody
+      body: responseBody // 返回 Buffer
     };
   } catch (error) {
-    if (error.response) {
+    if (error.code === "ERR_BAD_RESPONSE") {
+      return {
+        statusCode: error.response?.status,
+        headers: error.response?.headers,
+        body: error.response?.statusText // 返回错误响应的 Buffer 体
+      };
+    } else if (error.response) {
       // 服务器返回了错误状态码（如 4xx, 5xx）
-      const chunks = [];
+      // 错误响应体也可能是二进制 (Protobuf)
+      let errorResponseBody = Buffer.alloc(0); // 初始化为空 Buffer
+
       if (error.response.data) {
-        // 如果是 stream，需要读取；但 axios 默认非 stream 时是字符串/对象
-        if (typeof error.response.data === 'string') {
-          return {
-            statusCode: error.response.status,
-            headers: error.response.headers,
-            body: Buffer.from(error.response.data)
-          };
+        // Axios 在 responseType: 'stream' 时，即使出错，error.response.data 也可能是一个 Stream
+        if (error.response.data.readable === true) { // 检查是否是可读流
+            const errorChunks = [];
+            try {
+                for await (const chunk of error.response.data) {
+                    errorChunks.push(chunk);
+                }
+                errorResponseBody = Buffer.concat(errorChunks);
+            } catch (streamErr) {
+                 console.error("Error reading error response stream:", streamErr);
+                 // 即使读取出错，我们也返回已收集的部分或空 Buffer
+                 errorResponseBody = Buffer.concat(errorChunks); // 尽力而为
+            }
+        } else if (typeof error.response.data === 'string') {
+            // 理论上在 responseType: 'stream' 下不太可能出现这种情况，但以防万一
+            errorResponseBody = Buffer.from(error.response.data, 'utf-8');
         } else if (Buffer.isBuffer(error.response.data)) {
-          return {
-            statusCode: error.response.status,
-            headers: error.response.headers,
-            body: error.response.data
-          };
+            // 如果 Axios 以某种方式直接给了 Buffer (不太常见)
+            errorResponseBody = error.response.data;
         }
+        // 如果都不是，则保持 errorResponseBody 为空 Buffer
       }
+
+      return {
+        statusCode: error.response.status,
+        headers: error.response.headers,
+        body: errorResponseBody // 返回错误响应的 Buffer 体
+      };
     }
 
-    // 网络错误（如 ECONNREFUSED）
-    throw error;
+    // 网络错误（如 ECONNREFUSED, ETIMEDOUT）
+    console.error("Network error in forwardViaLocalProxy:", error.message);
+    throw error; // 重新抛出网络错误，让上游处理
   }
+}
+
+// 重写规则：需要抽象出来
+function rewriteRule(requestDetail) {
+  // 匹配规则 A
+  if (false) {
+    return {
+      response: {
+        statusCode: 200,
+        body:"new content"
+      }
+    };
+  }
+
+  // 匹配规则 B：Youtube 去广告重写逻辑
+  const matchRegExp = new RegExp("(^https?:\/\/(?!redirector)[\\w-]+\.googlevideo\.com\/(?!dclk_video_ads).+)(ctier=L)(&.+)");
+  if (matchRegExp.test(requestDetail.url)) {
+    const matchResult = requestDetail.url.match(matchRegExp);
+    const newUrl = matchResult[1] + matchResult[4];
+    console.log(`302 ---------------- ${newUrl}`);
+    return {
+      response: {
+        statusCode: 302,
+        header: {
+          'Location': newUrl,
+          'Content-Length': '0'
+        },
+        body: Buffer.alloc(0)
+      }
+    };
+  }
+
+  // 不匹配任何规则
+  return false;
 }
 
 function getAnyProxyOptions() {
@@ -463,16 +519,22 @@ function getAnyProxyOptions() {
         }
 
         // 如果是 http 请求，说明是直接访问过来的，没有经过 beforeDealHttpsRequest，因此clientIp是真实的
-        // 进入到这里的有两种情况：
+        // 执行逻辑：
         //  1. http 协议请求到这里
         //  2. https 协议根据域名需要拦截，转发到这里，到这里已经完成了拆包
         //     这里统一做：域名 + match_rule + mac 的拦截和重写
-        //  3. 开启 vpn_proxy 时，所有请求都走这里，主要是方便调试用，正是环境不要打开 vpn_proxy
+        //  3. 在拦截之后，判断是否匹配重写规则，有则执行重写规则
+        //  4. 开启 vpn_proxy 时，所有请求都走这里，主要是方便调试用，正是环境不要打开 vpn_proxy
 
-        // 如果当前 IP 没有配置拦截规则，直接放行
+        // 如果当前 IP 没有配置拦截规则，检查重写逻辑并判断直接放行
         if (blockRules.length === 0) {
-          // 如果配置了 vpn_proxy，不匹配拦截的情况，所有请求都通过 proxy 做七层转发
-          if (vpn_proxy != "") {
+          // 先匹配重写规则
+          var rewriteResult = rewriteRule(requestDetail);
+          if (rewriteResult !== false) {
+            return rewriteResult;
+          } else if (vpn_proxy != "") {
+            // 如果配置了 vpn_proxy，不匹配拦截的情况，所有请求都通过 proxy 做七层转发
+            // TODO: 需要调试所有请求转发的失败的情况，按理说所有请求都应该转发成功
             const { ip, port } = parseAddress(vpn_proxy);
             const result = await forwardViaLocalProxy(url, requestOptions, body, {
               ip: ip, port: port
@@ -486,13 +548,14 @@ function getAnyProxyOptions() {
             };
           } else {
             // 其他情况一律放行
+            console.log("[✅] 1 " + url);
             return null;
           }
         }
         // 如果当前 IP 有针对域名和 url 匹配 matchRule 的规则，则拦截
         if (shouldBlockHost(host, blockRules, url)) {
           // 如果是列表中的域名则拦截
-          console.log(`拦截到请求: ${url}`);
+          console.log(`[⭕️] ${url}`);
           // 为被拦截的域名返回自定义响应
           // let customBody = `AnyProxy: request to ${url} is blocked!`;
           let customBody = 'blocked';
@@ -508,6 +571,18 @@ function getAnyProxyOptions() {
           };
         }
 
+        // 最后做一轮重写逻辑检查
+        var rewriteResult = rewriteRule(requestDetail);
+        if (rewriteResult !== false) {
+          return rewriteResult;
+        }
+        console.log("[✅] 2 " + url);
+        // 如果重写逻辑也不匹配，则请求放行
+        return null;
+      },
+
+      async beforeSendResponse(requestDetail, responseDetail) {
+        console.log(`↩️ ${requestDetail.url}`);
         return null;
       },
 
@@ -570,9 +645,6 @@ function getAnyProxyOptions() {
         return null;
       },
 
-      async beforeSendResponse(requestDetail, responseDetail) {
-        return null;
-      },
 
     },
     webInterface: {

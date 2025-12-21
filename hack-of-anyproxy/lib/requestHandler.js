@@ -654,19 +654,30 @@ function getConnectReqHandler(userRule, recorder, httpsServerMgr) {
             }
           });
           cltSocket.on('error', (error) => {
+            // --- 改进版本 ---
             if (error.code === 'EPIPE') {
-              // 客户端在服务器响应前关闭了连接，这是常见现象，可以记录为调试信息或警告
-              logUtil.printLog(`Client disconnected before response could be sent (EPIPE) for ${req.url}`, logUtil.T_DBG); // 或 T_WARN
-              // 不再将 EPIPE 视为严重错误打印
-              // logUtil.printLog(util.collectErrorLog(error), logUtil.T_ERR); // 可以注释掉或降级
+              // Client likely closed the connection before we could write the full response.
+              // This is usually not a problem with the proxy itself.
+              logUtil.printLog(`Client prematurely closed connection (EPIPE) for ${req.method} ${req.url}`, logUtil.T_DBG);
+              // Optionally notify the user rule if needed, though often not necessary for EPIPE
+              // co.wrap(function *() {
+              //   try {
+              //     yield userRule.onClientSocketError(requestDetail, error);
+              //   } catch (e) {
+              //     logUtil.printLog(`Error notifying user rule about EPIPE: ${e.message}`, logUtil.T_WARN);
+              //   }
+              // })();
             } else {
-              // 处理其他类型的 socket 错误
-              logUtil.printLog(util.collectErrorLog(error), logUtil.T_ERR);
+              // Log other socket errors as errors
+              logUtil.printLog(`Socket error for ${req.method} ${req.url}: ${util.collectErrorLog(error)}`, logUtil.T_ERR);
+              // Notify user rule about non-EPIPE errors
               co.wrap(function *() {
                 try {
                   yield userRule.onClientSocketError(requestDetail, error);
-                } catch (e) { }
-              });
+                } catch (e) {
+                  logUtil.printLog(`Error notifying user rule about socket error: ${e.message}`, logUtil.T_WARN);
+                }
+              })();
             }
           });
           cltSocket.on('end', () => {

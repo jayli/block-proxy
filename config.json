@@ -63,11 +63,86 @@
         7
       ],
       "filter_mac": "7A:25:CF:6B:59:E0"
+    },
+    {
+      "filter_host": "youtube.com",
+      "filter_match_rule": "^https?:\\/\\/(www|s)\\.youtube\\.com\\/api\\/stats\\/ads",
+      "filter_start_time": "00:00",
+      "filter_end_time": "23:59",
+      "filter_weekday": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "filter_host": "youtube.com",
+      "filter_match_rule": "^https?:\\/\\/(www|s)\\.youtube\\.com\\/(pagead|ptracking)",
+      "filter_start_time": "00:00",
+      "filter_end_time": "23:59",
+      "filter_weekday": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "filter_host": "youtube.com",
+      "filter_match_rule": "^https?:\\/\\/s\\.youtube\\.com\\/api\\/stats\\/qoe\\?adcontext",
+      "filter_start_time": "00:00",
+      "filter_end_time": "23:59",
+      "filter_weekday": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "filter_host": "googlevideo.com",
+      "filter_match_rule": "^https?:\\/\\/[\\w-]+\\.googlevideo\\.com\\/(?!(dclk_video_ads|videoplayback\\?)).+(&oad|ctier)",
+      "filter_start_time": "00:00",
+      "filter_end_time": "23:59",
+      "filter_weekday": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "filter_host": "youtube.com",
+      "filter_match_rule": "^https?:\\/\\/\\s.youtube.com/api/stats/qoe?.*adformat=",
+      "filter_start_time": "00:00",
+      "filter_end_time": "23:59",
+      "filter_weekday": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
     }
   ],
   "proxy_port": 8001,
   "web_interface_port": 8002,
-  "vpn_proxy": "127.0.0.1:1087",
+  "vpn_proxy": "",
   "devices": [
     {
       "ip": "192.168.124.1",
@@ -180,6 +255,14 @@
     {
       "ip": "192.168.124.54",
       "mac": "E2:4D:6E:1:21:6E"
+    },
+    {
+      "ip": "192.168.124.178",
+      "mac": "5A:4D:3:E5:65:F7"
+    },
+    {
+      "ip": "192.168.124.149",
+      "mac": "14:C0:50:14:6E:A5"
     }
   ]
 }
