@@ -49,8 +49,8 @@
       "filter_mac": "7A:25:CF:6B:59:E0"
     },
     {
-      "filter_host": "pan.baidu.com",
-      "filter_match_rule": "^https?:\\/\\/pan\\.baidu\\.com\\/disk\\/main",
+      "filter_host": "baidu.com",
+      "filter_match_rule": "",
       "filter_start_time": "00:00",
       "filter_end_time": "23:59",
       "filter_weekday": [
@@ -61,7 +61,8 @@
         5,
         6,
         7
-      ]
+      ],
+      "filter_mac": "7A:25:CF:6B:59:E0"
     }
   ],
   "proxy_port": 8001,
@@ -179,14 +180,6 @@
     {
       "ip": "192.168.124.54",
       "mac": "E2:4D:6E:1:21:6E"
-    },
-    {
-      "ip": "192.168.124.149",
-      "mac": "14:C0:50:14:6E:A5"
-    },
-    {
-      "ip": "192.168.124.178",
-      "mac": "5A:4D:3:E5:65:F7"
     }
   ]
 }
