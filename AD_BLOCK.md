@@ -33,3 +33,6 @@ googlevideo.com
 
 s.youtube.com
 `^https?:\/\/s\.youtube\.com\/api\/stats\/atr.+&is_ad=1`
+
+youtube.com
+`^https?:\/\/(www|s)\.youtube\.com\/pcs\/activeview.+&ad_cpn=`
