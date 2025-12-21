@@ -625,7 +625,7 @@ function getConnectReqHandler(userRule, recorder, httpsServerMgr) {
     })
       .then(() => {
         return new Promise((resolve) => {
-        // mark socket connection as established, to detect the request protocol
+          // mark socket connection as established, to detect the request protocol
           cltSocket.write('HTTP/' + req.httpVersion + ' 200 OK\r\n\r\n', 'UTF-8', resolve);
         });
       })
