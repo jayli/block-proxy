@@ -487,7 +487,7 @@ function getAnyProxyOptions() {
           console.log(`拦截到请求: ${host}${pathname}`);
           // 为被拦截的域名返回自定义响应
           // let customBody = `AnyProxy: request to ${host}${pathname} is blocked!`;
-          let customBody = '';
+          let customBody = 'blocked';
           return {
             response: {
               statusCode: 200,

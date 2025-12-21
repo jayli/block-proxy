@@ -654,12 +654,20 @@ function getConnectReqHandler(userRule, recorder, httpsServerMgr) {
             }
           });
           cltSocket.on('error', (error) => {
-            logUtil.printLog(util.collectErrorLog(error), logUtil.T_ERR);
-            co.wrap(function *() {
-              try {
-                yield userRule.onClientSocketError(requestDetail, error);
-              } catch (e) { }
-            });
+            if (error.code === 'EPIPE') {
+              // 客户端在服务器响应前关闭了连接，这是常见现象，可以记录为调试信息或警告
+              logUtil.printLog(`Client disconnected before response could be sent (EPIPE) for ${req.url}`, logUtil.T_DBG); // 或 T_WARN
+              // 不再将 EPIPE 视为严重错误打印
+              // logUtil.printLog(util.collectErrorLog(error), logUtil.T_ERR); // 可以注释掉或降级
+            } else {
+              // 处理其他类型的 socket 错误
+              logUtil.printLog(util.collectErrorLog(error), logUtil.T_ERR);
+              co.wrap(function *() {
+                try {
+                  yield userRule.onClientSocketError(requestDetail, error);
+                } catch (e) { }
+              });
+            }
           });
           cltSocket.on('end', () => {
             requestStream.push(null);
