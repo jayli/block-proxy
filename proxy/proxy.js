@@ -361,26 +361,8 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
     httpsAgent: agent,
     responseType: 'stream', // 为了获取原始 buffer，也可用 'arraybuffer'
     // validateStatus: () => true, // 不抛错，让调用方处理状态码
-    maxRedirects: 21,
-    // proxy: {
-    //   protocol: 'http',
-    //   host: proxyConfig.ip,
-    //   port: proxyConfig.port
-    // },
+    maxRedirects: 21
   };
-
-  // ... 在 forwardViaLocalProxy 函数内 ...
-  console.log('[DEBUG] Forwarding via local proxy:', JSON.stringify({ url, proxyConfig /* , axiosConfig // Be careful logging full config */ }, null, 2));
-
-  // 打印关键信息
-  console.log('[DEBUG] Target URL for axios:', targetUrl);
-  console.log('[DEBUG] Original Request Host Header:', hostname);
-  console.log('[DEBUG] All Original Request Headers:', JSON.stringify(requestOptions.headers, null, 2)); // Be cautious with sensitive headers
-
-  // 检查 Host 头部
-  const newParsedTargetUrl = new URL(targetUrl);
-  const expectedHostHeader = newParsedTargetUrl.host; // 包含端口号 (如果非标准端口)
-  console.log('[DEBUG] Expected Host Header (from targetUrl):', expectedHostHeader);
 
   try {
     const response = await axios(axiosConfig);
@@ -398,7 +380,6 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
       body: responseBody
     };
   } catch (error) {
-    // console.log(error.response);
     if (error.response) {
       // 服务器返回了错误状态码（如 4xx, 5xx）
       const chunks = [];

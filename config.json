@@ -67,7 +67,7 @@
   ],
   "proxy_port": 8001,
   "web_interface_port": 8002,
-  "vpn_proxy": "127.0.0.1:1080",
+  "vpn_proxy": "127.0.0.1:1087",
   "devices": [
     {
       "ip": "192.168.124.1",
