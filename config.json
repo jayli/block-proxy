@@ -138,6 +138,21 @@
         6,
         7
       ]
+    },
+    {
+      "filter_host": "s.youtube.com",
+      "filter_match_rule": "^https?:\\/\\/s\\.youtube\\.com\\/api\\/stats\\/atr.+&is_ad=1",
+      "filter_start_time": "00:00",
+      "filter_end_time": "23:59",
+      "filter_weekday": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
     }
   ],
   "proxy_port": 8001,

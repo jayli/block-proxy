@@ -30,3 +30,6 @@ youtube.com
 
 googlevideo.com
 `^https?:\/\/[\w-]+\.googlevideo\.com\/(?!(dclk_video_ads|videoplayback\?)).+(&oad|ctier)`
+
+s.youtube.com
+`^https?:\/\/s\.youtube\.com\/api\/stats\/atr.+&is_ad=1`
