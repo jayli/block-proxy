@@ -129,6 +129,7 @@ Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" t
 
 1. `Content-length` 被吞掉的问题：这个是 AnyProxy 的设计缺陷，AnyProxy 定位为 Mock 工具，为了便于修改响应内容，因此AnyProxy 默认不设置 `Content-length`，其实 AnyProxy 应当让开发者自己处理`Content-length`，并给出最佳实践，而不是一刀切，为了规避重写响应后和源报文Length不一致的问题而直接删掉`Content-length`和`Connection`这两个重要字段。
 2. `beforeSendRequest` 中无法获得源 IP。在经过 https 隧道后到达`beforeSendRequest`回调函数时，req 中携带的 socket 不是原始的 socket，得到的 remoteAddress 始终是 `127.0.0.1`。这是代理机制决定的，但 AnyProxy 作为工具箱应当把重要的最初创建隧道时的源 socket 保留下来，以便把关键的原始信息透传给规则回调函数，交给开发者去处理。
+3. `EPIPE 报错`，这个错误会导致程序崩溃，本来 EPIPE 只是一个小错误，是客户端在收到 AnyProxy 响应之前关闭了隧道，anyproxy 没有很好的处理，我打上了补丁。
 
 ### License
 
