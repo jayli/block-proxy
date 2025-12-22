@@ -26,7 +26,7 @@ function getContentLength(body) {
 
 // 这里增加规则即可，不用修改 proxy.js
 // callback 被 MITMHandler 调用
-// callback 返回值是一个包含 response 的对象，如果不做处理则返回 null
+// callback 返回值是一个包含 response 的对象，如果不做处理则返回原 response 里的内容
 module.exports = {
   Youtube: [
     // Rule1
