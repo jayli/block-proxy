@@ -38,6 +38,9 @@
 ```
 docker run --init -d --restart=unless-stopped \
            -e TZ=Asia/Shanghai --network=host \
+           --log-driver local \
+           --log-opt max-size=10m \
+           --log-opt max-file=3 \
            --name block-proxy block-proxy
 ```
 
