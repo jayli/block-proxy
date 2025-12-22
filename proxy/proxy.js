@@ -434,35 +434,59 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
   }
 }
 
+function rewriteRuleBeforeResponse(host, url, request, responseDetail) {
+  if (host == "youtubei.googleapis.com" &&
+           new RegExp("\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch)").test(url)) {
+
+    var Y = require('./youtube.response.js');
+    var responseResult = {};
+    console.log('!!!!!!!!!!!!!!!!!!!!!!', url, responseDetail.response);
+    Y.injection({
+      callback: function(obj) {
+        responseResult = obj;
+      },
+      url: url,
+      response: responseDetail.response,
+      request: request
+    });
+    Y.main();
+    console.log('OOOOOOOOOOKKKKKKKKKKKK', responseResult);
+  }
+  return false;
+}
+
 // 重写规则：需要抽象出来
-function rewriteRule(requestDetail) {
-  // 匹配规则 A
-  if (false) {
-    return {
-      response: {
-        statusCode: 200,
-        body:"new content"
-      }
-    };
+function rewriteRuleBeforeRequest(host, url, requestDetail) {
+  // 匹配规则 A：Youtube 广告控制项的重写逻辑
+  if (host == "youtubei.googleapis.com") {
+    return false;
+    // return {
+    //   response: {
+    //     statusCode: 200,
+    //     body:"new content"
+    //   }
+    // };
   }
 
-  // 匹配规则 B：Youtube 去广告重写逻辑
+  // 匹配规则 B：Youtube 广告内容重写逻辑
   // const matchRegExp = new RegExp("(^https?:\/\/(?!redirector)[\\w-]+\.googlevideo\.com\/(?!dclk_video_ads).+)(ctier=L)(&.+)");
-  const matchRegExp = new RegExp("(^https?:\/\/[\\w-]+\.googlevideo\.com\/.+)(ctier=L)(&.+)");
-  const matchResult = requestDetail.url.match(matchRegExp);
-  if (matchResult !== null) {
-    const newUrl = matchResult[1] + matchResult[3];
-    console.log(`302 ---------------- ${newUrl}`);
-    return {
-      response: {
-        statusCode: 302,
-        header: {
-          'Location': newUrl,
-          'Content-Length': '0'
-        },
-        body: Buffer.alloc(0)
-      }
-    };
+  if (host.endsWith("googlevideo.com")) {
+    const matchRegExp = new RegExp("(^https?:\/\/[\\w-]+\.googlevideo\.com\/.+)(ctier=L)(&.+)");
+    const matchResult = requestDetail.url.match(matchRegExp);
+    if (matchResult !== null) {
+      const newUrl = matchResult[1] + matchResult[3];
+      console.log(`302 ---------------- ${newUrl}`);
+      return {
+        response: {
+          statusCode: 302,
+          header: {
+            'Location': newUrl,
+            'Content-Length': '0'
+          },
+          body: Buffer.alloc(0)
+        }
+      };
+    }
   }
 
   // 不匹配任何规则
@@ -483,6 +507,12 @@ function getAnyProxyOptions() {
         const blockRules = getBlockRules(clientIp);
         // requestDetail.host 是域名+端口的形式
         const host = requestDetail.host.split(":")[0];
+
+
+        // rewrite 规则判断
+        if (host == "youtubei.googleapis.com" || host.endsWith("googlevideo.com")) {
+          return true; // 强制 HTTPS 拦截
+        }
 
         // HTTPS 这里只判断 ip 源和域名
         // 域名不匹配的就直接转发，不拆 tls，主要是性能考虑
@@ -530,7 +560,7 @@ function getAnyProxyOptions() {
         // 如果当前 IP 没有配置拦截规则，检查重写逻辑并判断直接放行
         if (blockRules.length === 0) {
           // 先匹配重写规则
-          var rewriteResult = rewriteRule(requestDetail);
+          var rewriteResult = rewriteRuleBeforeRequest(host, url, requestDetail);
           if (rewriteResult !== false) {
             return rewriteResult;
           } else if (vpn_proxy != "") {
@@ -573,7 +603,7 @@ function getAnyProxyOptions() {
         }
 
         // 最后做一轮重写逻辑检查
-        var rewriteResult = rewriteRule(requestDetail);
+        var rewriteResult = rewriteRuleBeforeRequest(host, url, requestDetail);
         if (rewriteResult !== false) {
           return rewriteResult;
         }
@@ -584,6 +614,11 @@ function getAnyProxyOptions() {
 
       async beforeSendResponse(requestDetail, responseDetail) {
         console.log(`↩️ ${requestDetail.url}`);
+        const host = requestDetail.requestOptions.hostname;
+        var rewriteResult = rewriteRuleBeforeResponse(host, requestDetail.url, requestDetail._req, responseDetail);
+        if (rewriteResult !== false) {
+          return rewriteResult;
+        }
         return null;
       },
 
