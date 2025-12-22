@@ -15,6 +15,7 @@ const axios = require('axios');
 const { HttpProxyAgent } = require('http-proxy-agent');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const _request = require("./http.js").request;
+const Rule = require("./mitm/rule.js");
 
 // 全局变量存储关键配置参数
 const configPath = path.join(__dirname, '../config.json');
@@ -434,39 +435,75 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
   }
 }
 
-// 重写规则：需要抽象出来
-function rewriteRule(requestDetail) {
-  // 匹配规则 A
-  if (false) {
-    return {
-      response: {
-        statusCode: 200,
-        body:"new content"
-      }
-    };
+// type: beforeSendResponse 和 beforeSendRequest 里的定制化的重写规则
+// 常规的reject直接在后台界面里配就可以
+async function MITMHandler(type, url, request, response) {
+  var responseResult = null;
+  var Ms = [];
+
+  Object.keys(Rule).forEach(key => {
+    Ms = Ms.concat(Rule[key]);
+  });
+
+  for (const item of Ms) {
+    if (item['type'] != type) {
+      continue;
+    } else if (!new URL(url).hostname.endsWith(item['host'])) {
+      continue;
+    } else if (new RegExp(item['regexp']).test(url)) {
+      responseResult = await item.callback(url, request, response);
+      break;
+    } else {
+      continue;
+    }
   }
 
-  // 匹配规则 B：Youtube 去广告重写逻辑
-  // const matchRegExp = new RegExp("(^https?:\/\/(?!redirector)[\\w-]+\.googlevideo\.com\/(?!dclk_video_ads).+)(ctier=L)(&.+)");
-  const matchRegExp = new RegExp("(^https?:\/\/[\\w-]+\.googlevideo\.com\/.+)(ctier=L)(&.+)");
-  const matchResult = requestDetail.url.match(matchRegExp);
-  if (matchResult !== null) {
-    const newUrl = matchResult[1] + matchResult[3];
-    console.log(`302 ---------------- ${newUrl}`);
-    return {
-      response: {
-        statusCode: 302,
-        header: {
-          'Location': newUrl,
-          'Content-Length': '0'
-        },
-        body: Buffer.alloc(0)
-      }
-    };
-  }
+  // 要么是 重写后的 response 对象，要么是 null
+  return responseResult;
+}
 
-  // 不匹配任何规则
-  return false;
+async function rewriteRuleBeforeResponse(host, url, request, response) {
+  var responseResult = null;
+  responseResult = await MITMHandler('beforeSendResponse', url, request, response);
+  if (responseResult === null) {
+    return false;
+  } else {
+    return responseResult;
+  }
+}
+
+async function rewriteRuleBeforeRequest(host, url, request) {
+  var responseResult = null;
+  responseResult = await MITMHandler('beforeSendRequest', url, request, {});
+  if (responseResult === null) {
+    return false;
+  } else {
+    return responseResult;
+  }
+}
+
+// 需要强制拆包的域名从 Rule 里获得
+function shouldMitm(host) {
+  var should = false;
+  var mitm_list = [];
+  Object.keys(Rule).forEach(key => {
+    if (Rule.hasOwnProperty(key)) {
+      Rule[key].forEach(function(item) {
+        mitm_list.push(item.host);
+      });
+    }
+  });
+
+  var MITM_LIST = [...new Set(mitm_list)];
+  MITM_LIST.some(function(item) {
+    if (host.toLowerCase().endsWith(item.toLowerCase())) {
+      should = true;
+      return true;
+    } else {
+      return false;
+    }
+  });
+  return should;
 }
 
 function getAnyProxyOptions() {
@@ -483,6 +520,11 @@ function getAnyProxyOptions() {
         const blockRules = getBlockRules(clientIp);
         // requestDetail.host 是域名+端口的形式
         const host = requestDetail.host.split(":")[0];
+
+        // rewrite 规则判断
+        if (shouldMitm(host)) {
+          return true; // 强制 MITM
+        }
 
         // HTTPS 这里只判断 ip 源和域名
         // 域名不匹配的就直接转发，不拆 tls，主要是性能考虑
@@ -530,7 +572,7 @@ function getAnyProxyOptions() {
         // 如果当前 IP 没有配置拦截规则，检查重写逻辑并判断直接放行
         if (blockRules.length === 0) {
           // 先匹配重写规则
-          var rewriteResult = rewriteRule(requestDetail);
+          var rewriteResult = await rewriteRuleBeforeRequest(host, url, requestDetail._req);
           if (rewriteResult !== false) {
             return rewriteResult;
           } else if (vpn_proxy != "") {
@@ -560,6 +602,7 @@ function getAnyProxyOptions() {
           // 为被拦截的域名返回自定义响应
           // let customBody = `AnyProxy: request to ${url} is blocked!`;
           let customBody = ["youtube.com","googlevideo.com"].includes(host) ? Buffer.alloc(0) : "blocked by AnyProxy";
+          customBody = Buffer.alloc(0);
           return {
             response: {
               statusCode: 200,
@@ -573,7 +616,7 @@ function getAnyProxyOptions() {
         }
 
         // 最后做一轮重写逻辑检查
-        var rewriteResult = rewriteRule(requestDetail);
+        var rewriteResult = await rewriteRuleBeforeRequest(host, url, requestDetail._req);
         if (rewriteResult !== false) {
           return rewriteResult;
         }
@@ -584,6 +627,11 @@ function getAnyProxyOptions() {
 
       async beforeSendResponse(requestDetail, responseDetail) {
         console.log(`↩️ ${requestDetail.url}`);
+        const host = requestDetail.requestOptions.hostname;
+        var rewriteResult = await rewriteRuleBeforeResponse(host, requestDetail.url, requestDetail._req, responseDetail.response);
+        if (rewriteResult !== false) {
+          return rewriteResult;
+        }
         return null;
       },
 

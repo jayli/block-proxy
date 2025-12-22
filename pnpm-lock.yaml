@@ -33,9 +33,6 @@ importers:
       express:
         specifier: ^5.1.0
         version: 5.1.0
-      google-protobuf:
-        specifier: ^4.0.1
-        version: 4.0.1
       http-proxy-agent:
         specifier: ^7.0.2
         version: 7.0.2
@@ -3056,9 +3053,6 @@ packages:
   globby@11.1.0:
     resolution: {integrity: sha512-jhIXaOzy1sb8IyocaruWSn1TjmnBVs8Ayhcy83rmxNJ8q2uWKCAj3CnJY+KpGSXCueAPc0i05kVvVKtP1t9S3g==}
     engines: {node: '>=10'}
-
-  google-protobuf@4.0.1:
-    resolution: {integrity: sha512-0I4mx3UtAwpcc8l9Ds5gHcwV2FyPdwvxxBcor8LusE4b6PjoFxEngZRBepjvuQ4B0eZ2iu/Vezh8oRsnpJ9UGA==}
 
   gopd@1.2.0:
     resolution: {integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==}
@@ -9905,8 +9899,6 @@ snapshots:
       ignore: 5.3.2
       merge2: 1.4.1
       slash: 3.0.0
-
-  google-protobuf@4.0.1: {}
 
   gopd@1.2.0: {}
 
