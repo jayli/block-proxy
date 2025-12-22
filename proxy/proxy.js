@@ -446,11 +446,9 @@ async function MITMHandler(type, url, request, response) {
   });
 
   for (const item of Ms) {
-    if (item['type'] != type) {
-      continue;
-    } else if (!new URL(url).hostname.endsWith(item['host'])) {
-      continue;
-    } else if (new RegExp(item['regexp']).test(url)) {
+    if (item['type'].toLowerCase() == type.toLowerCase() &&
+            new URL(url).hostname.toLowerCase().endsWith(item['host'].toLowerCase()) &&
+            new RegExp(item['regexp']).test(url)) {
       responseResult = await item.callback(url, request, response);
       break;
     } else {

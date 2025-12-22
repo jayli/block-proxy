@@ -78,6 +78,51 @@
         6,
         7
       ]
+    },
+    {
+      "filter_host": "youtube.com",
+      "filter_match_rule": "^https?:\\/\\/s\\.youtube\\.com\\/api\\/stats\\/qoe\\?adcontext",
+      "filter_start_time": "00:00",
+      "filter_end_time": "23:59",
+      "filter_weekday": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "filter_host": "youtube.com",
+      "filter_match_rule": "^https?:\\/\\/(www|s)\\.youtube\\.com\\/api\\/stats\\/ads",
+      "filter_start_time": "00:00",
+      "filter_end_time": "23:59",
+      "filter_weekday": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "filter_host": "googlevideo.com",
+      "filter_match_rule": "^https?:\\/\\/[\\w-]+\\.googlevideo\\.com\\/(?!(dclk_video_ads|videoplayback\\?)).+&oad",
+      "filter_start_time": "00:00",
+      "filter_end_time": "23:59",
+      "filter_weekday": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
     }
   ],
   "proxy_port": 8001,
@@ -511,6 +556,10 @@
     {
       "ip": "30.240.102.89",
       "mac": "0:0:0:0:4:0"
+    },
+    {
+      "ip": "192.168.124.251",
+      "mac": "6E:FB:18:4D:9C:3E"
     }
   ]
 }

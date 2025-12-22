@@ -28,13 +28,13 @@ module.exports = {
     // Rule2...
     {
       type: "beforeSendRequest",
-      host: "xxxxx.googlevideo.com",
-      regexp: "(^https?:\/\/[\\w-]+\.googlevideo\.com\/(?!dclk_video_ads).+)(ctier=L)(&.+)",
+      host: "googlevideo.com",
+      regexp: "(^https?:\/\/[\\w-]+\.googlevideo\.com\/.+)(ctier=L)(&.+)",
       callback: async function(url, request, response) {
         const matchRegExp = new RegExp(this.regexp);
         const matchResult = url.match(matchRegExp);
         if (matchResult !== null) {
-          const newUrl = matchResult[1] + matchResult[4];
+          const newUrl = matchResult[1] + matchResult[3];
           console.log(`302 ---------------- ${newUrl}`);
           return {
             response: {
