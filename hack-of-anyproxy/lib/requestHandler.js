@@ -624,9 +624,28 @@ function getConnectReqHandler(userRule, recorder, httpsServerMgr) {
       }
     })
       .then(() => {
-        return new Promise((resolve) => {
-          // mark socket connection as established, to detect the request protocol
-          cltSocket.write('HTTP/' + req.httpVersion + ' 200 OK\r\n\r\n', 'UTF-8', resolve);
+        return new Promise((resolve, reject) => { // 使用 reject
+          // 标记 socket 连接已建立，检测请求协议
+          cltSocket.write('HTTP/' + req.httpVersion + ' 200 OK\r\n\r\n', 'UTF-8', (err) => {
+            if (err) {
+              // write 操作本身失败，包括 EPIPE
+              if (err.code === 'EPIPE') {
+                logUtil.printLog(`EPIPE on writing CONNECT response to ${req.url}`, logUtil.T_DBG);
+                // 对于 EPIPE，我们通常认为不是致命错误，可以 resolve 或者简单地忽略
+                // 选择 resolve，表示操作完成（虽然是失败的完成）
+                resolve();
+                // 或者 reject(err); 如果你想让调用链知道发生了这个问题
+                // 但要注意，reject 可能会被上层捕获并打印堆栈，除非上层也妥善处理
+              } else {
+                // 其他写入错误，可能是更严重的问题
+                logUtil.printLog(`Write error for CONNECT response to ${req.url}: ${util.collectErrorLog(err)}`, logUtil.T_ERR);
+                // reject(err); // 将错误传递给 Promise 链
+              }
+            } else {
+              // 写入成功
+              resolve();
+            }
+          });
         });
       })
       .then(() => {
