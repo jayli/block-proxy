@@ -1,7 +1,7 @@
 
 const http = require("http");
 const https = require('https');
-const $persistentStore = require('./persistentStore');
+const $persistentStore = require('../persistentStore');
 
 var CallBack = new Function;
 var url = '';

@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 // 存储文件路径（可自定义）
-const STORE_PATH = path.join(__dirname, './db/persistentStore.json');
+const STORE_PATH = path.join(__dirname, './persistentStore.json');
 
 // 确保存储文件存在
 if (!fs.existsSync(STORE_PATH)) {
