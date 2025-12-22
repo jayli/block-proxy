@@ -401,23 +401,23 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
       if (error.response.data) {
         // Axios 在 responseType: 'stream' 时，即使出错，error.response.data 也可能是一个 Stream
         if (error.response.data.readable === true) { // 检查是否是可读流
-            const errorChunks = [];
-            try {
-                for await (const chunk of error.response.data) {
-                    errorChunks.push(chunk);
-                }
-                errorResponseBody = Buffer.concat(errorChunks);
-            } catch (streamErr) {
-                 console.error("Error reading error response stream:", streamErr);
-                 // 即使读取出错，我们也返回已收集的部分或空 Buffer
-                 errorResponseBody = Buffer.concat(errorChunks); // 尽力而为
+          const errorChunks = [];
+          try {
+            for await (const chunk of error.response.data) {
+              errorChunks.push(chunk);
             }
+            errorResponseBody = Buffer.concat(errorChunks);
+          } catch (streamErr) {
+            console.error("Error reading error response stream:", streamErr);
+            // 即使读取出错，我们也返回已收集的部分或空 Buffer
+            errorResponseBody = Buffer.concat(errorChunks); // 尽力而为
+          }
         } else if (typeof error.response.data === 'string') {
-            // 理论上在 responseType: 'stream' 下不太可能出现这种情况，但以防万一
-            errorResponseBody = Buffer.from(error.response.data, 'utf-8');
+          // 理论上在 responseType: 'stream' 下不太可能出现这种情况，但以防万一
+          errorResponseBody = Buffer.from(error.response.data, 'utf-8');
         } else if (Buffer.isBuffer(error.response.data)) {
-            // 如果 Axios 以某种方式直接给了 Buffer (不太常见)
-            errorResponseBody = error.response.data;
+          // 如果 Axios 以某种方式直接给了 Buffer (不太常见)
+          errorResponseBody = error.response.data;
         }
         // 如果都不是，则保持 errorResponseBody 为空 Buffer
       }
@@ -554,6 +554,12 @@ function getAnyProxyOptions() {
         const pathname = requestDetail.requestOptions.path?.split('?')[0];;
         const body = requestDetail.requestData;
 
+        var _request      = { ...requestDetail.requestOptions };
+        _request.host     = requestDetail.requestOptions.hostname;
+        _request.url      = requestDetail.url;
+        _request.body     = requestDetail.requestData;
+        _request.protocol = requestDetail.protocol;
+
         // 如果是裸IP请求，全部放行
         if (net.isIPv4(host) || net.isIPv6(host)) {
           return null;
@@ -570,7 +576,7 @@ function getAnyProxyOptions() {
         // 如果当前 IP 没有配置拦截规则，检查重写逻辑并判断直接放行
         if (blockRules.length === 0) {
           // 先匹配重写规则
-          var rewriteResult = await rewriteRuleBeforeRequest(host, url, requestDetail._req);
+          var rewriteResult = await rewriteRuleBeforeRequest(host, url, _request);
           if (rewriteResult !== false) {
             return rewriteResult;
           } else if (vpn_proxy != "") {
@@ -589,14 +595,14 @@ function getAnyProxyOptions() {
             };
           } else {
             // 其他情况一律放行
-            // console.log("[✅] 1 " + url);
+            console.log("[✅] 1 " + url);
             return null;
           }
         }
         // 如果当前 IP 有针对域名和 url 匹配 matchRule 的规则，则拦截
         if (shouldBlockHost(host, blockRules, url)) {
           // 如果是列表中的域名则拦截
-          // console.log(`[⭕️] ${url}`);
+          console.log(`[⭕️] ${url}`);
           // 为被拦截的域名返回自定义响应
           let customBody = ["youtube.com","googlevideo.com"].includes(host) ? Buffer.alloc(0) : "blocked by AnyProxy";
           return {
@@ -612,19 +618,26 @@ function getAnyProxyOptions() {
         }
 
         // 最后做一轮重写逻辑检查
-        var rewriteResult = await rewriteRuleBeforeRequest(host, url, requestDetail._req);
+        var rewriteResult = await rewriteRuleBeforeRequest(host, url, _request);
         if (rewriteResult !== false) {
           return rewriteResult;
         }
-        // console.log("[✅] 2 " + url);
+        console.log("[✅] 2 " + url);
         // 如果重写逻辑也不匹配，则请求放行
         return null;
       },
 
       async beforeSendResponse(requestDetail, responseDetail) {
-        // console.log(`[↩️] ${requestDetail.url}`);
+        console.log(`[↩️] ${requestDetail.url}`);
         const host = requestDetail.requestOptions.hostname;
-        var rewriteResult = await rewriteRuleBeforeResponse(host, requestDetail.url, requestDetail._req, responseDetail.response);
+
+        var _request = { ...requestDetail.requestOptions };
+        _request.host = requestDetail.requestOptions.hostname;
+        _request.url = requestDetail.url;
+        _request.body = requestDetail.requestData;
+        _request.protocol = requestDetail.protocol;
+
+        var rewriteResult = await rewriteRuleBeforeResponse(host, requestDetail.url, _request, responseDetail.response);
         if (rewriteResult !== false) {
           return rewriteResult;
         }

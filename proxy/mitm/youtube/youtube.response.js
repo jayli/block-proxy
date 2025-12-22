@@ -9,6 +9,7 @@ var $response = {};
 var $argument = {};
 var $request = {};
 var $httpClient = http;
+var $notify = new Function;
 
 function injection(global) {
   CallBack = global.callback;

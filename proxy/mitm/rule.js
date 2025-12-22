@@ -36,22 +36,26 @@ module.exports = {
       'regexp': "\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch)",
       'callback': async function(url, request, response) {
         return new Promise((resolve, reject) => {
-          var responseResult = {};
+          var responseResult = null;
           YoutubeResponse.injection({
             callback: function(obj) {
-              // console.log('💙💙💙',obj);
+              // console.log('💙💙💙',response);
               var contentLength = 0;
               if (obj.hasOwnProperty('body')) {
                 contentLength = getContentLength(obj.body);
+              } else {
+                contentLength = getContentLength(response.body);
               }
               response.header['Content-Length'] = String(contentLength);
               responseResult = {
                 response: {
                   statusCode: response.statusCode,
+                  status: response.statusCode,
                   header: response.header,
-                  body: obj.hasOwnProperty('body') ? obj.body : Buffer.alloc(0)
+                  body: obj.hasOwnProperty('body') ? obj.body : response.body
                 }
               }
+              // console.log('>>>>>>>>>>>>>>>>>', request)
               resolve(responseResult);
             },
             url: url,
@@ -83,6 +87,8 @@ module.exports = {
               body: Buffer.alloc(0)
             }
           };
+        } else {
+          return null;
         }
       } // -- callback
     }

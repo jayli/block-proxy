@@ -95,8 +95,8 @@
       ]
     },
     {
-      "filter_host": "googlevideo.com",
-      "filter_match_rule": "^https?:\\/\\/[\\w-]+\\.googlevideo\\.com\\/(?!(dclk_video_ads|videoplayback\\?)).+&oad",
+      "filter_host": "youtube.com",
+      "filter_match_rule": "^https?:\\/\\/(www|s)\\.youtube\\.com\\/api\\/stats\\/ads",
       "filter_start_time": "00:00",
       "filter_end_time": "23:59",
       "filter_weekday": [
@@ -110,8 +110,8 @@
       ]
     },
     {
-      "filter_host": "youtube.com",
-      "filter_match_rule": "^https?:\\/\\/(www|s)\\.youtube\\.com\\/api\\/stats\\/ads",
+      "filter_host": "googlevideo.com",
+      "filter_match_rule": "^https?:\\/\\/[\\w-]+\\.googlevideo\\.com\\/(?!(dclk_video_ads|videoplayback\\?)).+&oad",
       "filter_start_time": "00:00",
       "filter_end_time": "23:59",
       "filter_weekday": [
