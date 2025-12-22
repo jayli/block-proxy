@@ -1,12 +1,15 @@
 # Block-Proxy
 
-限制小朋友上网的代理程序，依赖 anyproxy，用在 openwrt 里。特性：
+基于 MITM 的上网过滤工具
+
+主要是限制小朋友上网，依赖 anyproxy，用在 openwrt 里。特性：
 
 - 域名拦截
-- Pathname 拦截
+- url 正则拦截
 - 指定拦截Mac地址
 - 设定日期和时间段
 - 监控上网记录
+- 顺便过滤广告
 
 ### 开发和调试
 
@@ -84,9 +87,20 @@ Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" t
 
 #### 应用条件：
 
-1. 涉及到 Pathname 的判断，会依赖 https 的解包，需要证书参与，设备必须安装代理的证书。
+1. 基于 MITM，tls 拆包后才能做 url 的匹配、重写等动作，所以客户端设备必须要安装代理工具的证书
 2. 服务需要根据 ip 反查 mac 地址，需要代理服务工作在对子网有扫描权限的节点，最好是部署在 openwrt 网关，可以`arp -a`看下是否可以扫描完全。
 3. 服务会自动更新路由表，每 2 个小时更新一次，对于新入网的设备，最好在后台手动刷新并重启代理，以免拦截规则不能立即生效。
+
+#### Youtube 去广告
+
+一共六条拦截规则，四条 reject 规则直接配置在后台里：
+
+- *youtube.com*：`^https?:\/\/(www|s)\.youtube\.com\/(pagead|ptracking)`
+- *youtube.com*：`^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext`
+- *youtube.com*：`^https?:\/\/(www|s)\.youtube\.com\/api\/stats\/ads`
+- *googlevideo.com*：`^https?:\/\/[\w-]+\.googlevideo\.com\/(?!(dclk_video_ads|videoplayback\?)).+&oad`
+
+另外两条规则在这里：<https://github.com/jayli/block-proxy/blob/main/proxy/mitm/rule.js>
 
 #### 代理性能
 
@@ -108,7 +122,7 @@ Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" t
 
 <img width="544" alt="image" src="https://github.com/user-attachments/assets/67c61e34-67ae-4345-97ca-d266cd35ddf4" />
 
-#### AnyProxy 修改记录
+#### AnyProxy bugfix 记录
 
 1. `Content-length` 被吞掉的问题：这个是 AnyProxy 的设计缺陷，AnyProxy 定位为 Mock 工具，为了便于修改响应内容，因此AnyProxy 默认不设置 `Content-length`，其实 AnyProxy 应当让开发者自己处理`Content-length`，并给出最佳实践，而不是一刀切，为了规避重写响应后和源报文Length不一致的问题而直接删掉`Content-length`和`Connection`这两个重要字段。
 2. `beforeSendRequest` 中无法获得源 IP。在经过 https 隧道后到达`beforeSendRequest`回调函数时，req 中携带的 socket 不是原始的 socket，得到的 remoteAddress 始终是 `127.0.0.1`。这是代理机制决定的，但 AnyProxy 作为工具箱应当把重要的最初创建隧道时的源 socket 保留下来，以便把关键的原始信息透传给规则回调函数，交给开发者去处理。

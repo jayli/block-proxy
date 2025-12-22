@@ -589,16 +589,15 @@ function getAnyProxyOptions() {
             };
           } else {
             // 其他情况一律放行
-            console.log("[✅] 1 " + url);
+            // console.log("[✅] 1 " + url);
             return null;
           }
         }
         // 如果当前 IP 有针对域名和 url 匹配 matchRule 的规则，则拦截
         if (shouldBlockHost(host, blockRules, url)) {
           // 如果是列表中的域名则拦截
-          console.log(`[⭕️] ${url}`);
+          // console.log(`[⭕️] ${url}`);
           // 为被拦截的域名返回自定义响应
-          // let customBody = `AnyProxy: request to ${url} is blocked!`;
           let customBody = ["youtube.com","googlevideo.com"].includes(host) ? Buffer.alloc(0) : "blocked by AnyProxy";
           return {
             response: {
@@ -617,13 +616,13 @@ function getAnyProxyOptions() {
         if (rewriteResult !== false) {
           return rewriteResult;
         }
-        console.log("[✅] 2 " + url);
+        // console.log("[✅] 2 " + url);
         // 如果重写逻辑也不匹配，则请求放行
         return null;
       },
 
       async beforeSendResponse(requestDetail, responseDetail) {
-        console.log(`[↩️] ${requestDetail.url}`);
+        // console.log(`[↩️] ${requestDetail.url}`);
         const host = requestDetail.requestOptions.hostname;
         var rewriteResult = await rewriteRuleBeforeResponse(host, requestDetail.url, requestDetail._req, responseDetail.response);
         if (rewriteResult !== false) {

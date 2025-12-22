@@ -39,7 +39,7 @@ module.exports = {
           var responseResult = {};
           YoutubeResponse.injection({
             callback: function(obj) {
-              console.log('💙💙💙',obj);
+              // console.log('💙💙💙',obj);
               var contentLength = 0;
               if (obj.hasOwnProperty('body')) {
                 contentLength = getContentLength(obj.body);
