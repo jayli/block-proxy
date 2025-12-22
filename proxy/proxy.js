@@ -447,10 +447,11 @@ function rewriteRule(requestDetail) {
   }
 
   // 匹配规则 B：Youtube 去广告重写逻辑
-  const matchRegExp = new RegExp("(^https?:\/\/(?!redirector)[\\w-]+\.googlevideo\.com\/(?!dclk_video_ads).+)(ctier=L)(&.+)");
-  if (matchRegExp.test(requestDetail.url)) {
-    const matchResult = requestDetail.url.match(matchRegExp);
-    const newUrl = matchResult[1] + matchResult[4];
+  // const matchRegExp = new RegExp("(^https?:\/\/(?!redirector)[\\w-]+\.googlevideo\.com\/(?!dclk_video_ads).+)(ctier=L)(&.+)");
+  const matchRegExp = new RegExp("(^https?:\/\/[\\w-]+\.googlevideo\.com\/.+)(ctier=L)(&.+)");
+  const matchResult = requestDetail.url.match(matchRegExp);
+  if (matchResult !== null) {
+    const newUrl = matchResult[1] + matchResult[3];
     console.log(`302 ---------------- ${newUrl}`);
     return {
       response: {
@@ -558,7 +559,7 @@ function getAnyProxyOptions() {
           console.log(`[⭕️] ${url}`);
           // 为被拦截的域名返回自定义响应
           // let customBody = `AnyProxy: request to ${url} is blocked!`;
-          let customBody = 'blocked';
+          let customBody = ["youtube.com","googlevideo.com"].includes(host) ? Buffer.alloc(0) : "blocked by AnyProxy";
           return {
             response: {
               statusCode: 200,
