@@ -600,7 +600,6 @@ function getAnyProxyOptions() {
           // 为被拦截的域名返回自定义响应
           // let customBody = `AnyProxy: request to ${url} is blocked!`;
           let customBody = ["youtube.com","googlevideo.com"].includes(host) ? Buffer.alloc(0) : "blocked by AnyProxy";
-          customBody = Buffer.alloc(0);
           return {
             response: {
               statusCode: 200,
@@ -624,7 +623,7 @@ function getAnyProxyOptions() {
       },
 
       async beforeSendResponse(requestDetail, responseDetail) {
-        console.log(`↩️ ${requestDetail.url}`);
+        console.log(`[↩️] ${requestDetail.url}`);
         const host = requestDetail.requestOptions.hostname;
         var rewriteResult = await rewriteRuleBeforeResponse(host, requestDetail.url, requestDetail._req, responseDetail.response);
         if (rewriteResult !== false) {
