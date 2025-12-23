@@ -32,6 +32,11 @@ WORKDIR /app
 # 从构建阶段复制文件
 COPY --from=builder --chown=nodeuser:nodejs /app /app
 
+# 复制证书
+COPY cert/rootCA.key /home/nodeuser/.anyproxy/certificates/
+COPY cert/rootCA.crt /home/nodeuser/.anyproxy/certificates/
+
+
 USER nodeuser
 
 EXPOSE 8001 8002 8003
