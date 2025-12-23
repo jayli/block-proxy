@@ -115,9 +115,9 @@ Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" t
 
 得益于 Node 的 流式 `pipe()` 机制，理论上高并发情况下内存几乎无增长。当命中代理规则时，速度会变慢，因为命中规则后代理返回为空，所以快慢无所谓。千兆网基本能跑满。
 
-**高并发测试**：
+**并发测试**：
 
-|直连测速     |代理测速     |
+|直连测试     |代理测试     |
 |:---------:|:----------------:|
 |<img height="500" alt="image" src="https://github.com/user-attachments/assets/8268bc5c-956f-4b67-89c1-cdd5725114b3" />  | <img height="500" alt="image" src="https://github.com/user-attachments/assets/abf4bfa1-c8b8-4907-ba0e-bcc76e8899fa" />|
 
