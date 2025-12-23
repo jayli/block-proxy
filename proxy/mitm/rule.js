@@ -76,7 +76,7 @@ module.exports = {
         const matchResult = url.match(matchRegExp);
         if (matchResult !== null) {
           const newUrl = matchResult[1] + matchResult[3];
-          console.log(`302 ---------------- ${newUrl}`);
+          // console.log(`302 ---------------- ${newUrl}`);
           return {
             response: {
               statusCode: 302,

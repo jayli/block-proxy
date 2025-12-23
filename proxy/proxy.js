@@ -435,8 +435,9 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
   }
 }
 
-// type: beforeSendResponse 和 beforeSendRequest 里的定制化的重写规则
-// 常规的reject直接在后台界面里配就可以
+// Rule 里的匹配规则在这里被依次处理
+// type: beforeSendResponse 和 beforeSendRequest
+// 常规的 reject - 200 直接在后台界面里配就可以，复杂逻辑用 Rule
 async function MITMHandler(type, url, request, response) {
   var responseResult = null;
   var Ms = [];
@@ -446,6 +447,9 @@ async function MITMHandler(type, url, request, response) {
   });
 
   for (const item of Ms) {
+    // type 匹配
+    // 域名匹配
+    // 正则匹配
     if (item['type'].toLowerCase() == type.toLowerCase() &&
             new URL(url).hostname.toLowerCase().endsWith(item['host'].toLowerCase()) &&
             new RegExp(item['regexp']).test(url)) {
@@ -457,6 +461,7 @@ async function MITMHandler(type, url, request, response) {
   }
 
   // 要么是 重写后的 response 对象，要么是 null
+  // beforeSendResponse 中应当返回原 response，应当在 callback 中处理
   return responseResult;
 }
 
@@ -508,7 +513,7 @@ function getAnyProxyOptions() {
   return {
     port: proxyPort,
     rule: {
-      // 只对特定域名启用 HTTPS 拦截
+      // 只对特定域名启用 HTTPS 拦截，无规则时直接四层转发
       async beforeDealHttpsRequest(requestDetail, next) {
         // 如果配置了 vpn_proxy，全部走解密逻辑，仅调试使用
         if (vpn_proxy != "") {
@@ -525,7 +530,7 @@ function getAnyProxyOptions() {
         }
 
         // HTTPS 这里只判断 ip 源和域名
-        // 域名不匹配的就直接转发，不拆 tls，主要是性能考虑
+        // 域名不匹配的就直接转发
         // 域名匹配的情况下，再去看 match_rule 的判断，放到 beforeSendRequest 中
 
         // 如果是裸IP请求，全部放行
@@ -545,7 +550,7 @@ function getAnyProxyOptions() {
         return false; // 不拦截 HTTPS
       },
 
-      // 拦截 HTTP 请求
+      // 拦截 HTTP 请求以及 HTTPS 拆包的请求
       async beforeSendRequest(requestDetail) {
         const { url, requestOptions } = requestDetail;
         const clientIp = requestDetail._req?.sourceIp || '127.0.0.1';
@@ -581,7 +586,7 @@ function getAnyProxyOptions() {
             return rewriteResult;
           } else if (vpn_proxy != "") {
             // 如果配置了 vpn_proxy，不匹配拦截的情况，所有请求都通过 proxy 做七层转发
-            // TODO: 需要调试所有请求转发的失败的情况，按理说所有请求都应该转发成功
+            // TODO: 需要调试所有请求转发的失败的情况，所有请求都应该转发成功
             const { ip, port } = parseAddress(vpn_proxy);
             const result = await forwardViaLocalProxy(url, requestOptions, body, {
               ip: ip, port: port
@@ -595,14 +600,14 @@ function getAnyProxyOptions() {
             };
           } else {
             // 其他情况一律放行
-            console.log("[✅] 1 " + url);
+            /// console.log("[✅] 1 " + url);
             return null;
           }
         }
         // 如果当前 IP 有针对域名和 url 匹配 matchRule 的规则，则拦截
         if (shouldBlockHost(host, blockRules, url)) {
           // 如果是列表中的域名则拦截
-          console.log(`[⭕️] ${url}`);
+          /// console.log(`[⭕️] ${url}`);
           // 为被拦截的域名返回自定义响应
           let customBody = ["youtube.com","googlevideo.com"].includes(host) ? Buffer.alloc(0) : "blocked by AnyProxy";
           return {
@@ -622,13 +627,13 @@ function getAnyProxyOptions() {
         if (rewriteResult !== false) {
           return rewriteResult;
         }
-        console.log("[✅] 2 " + url);
+        /// console.log("[✅] 2 " + url);
         // 如果重写逻辑也不匹配，则请求放行
         return null;
       },
 
       async beforeSendResponse(requestDetail, responseDetail) {
-        console.log(`[↩️] ${requestDetail.url}`);
+        /// console.log(`[↩️] ${requestDetail.url}`);
         const host = requestDetail.requestOptions.hostname;
 
         var _request = { ...requestDetail.requestOptions };
