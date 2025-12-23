@@ -36,6 +36,7 @@ COPY --from=builder --chown=nodeuser:nodejs /app /app
 # 复制证书
 COPY cert/rootCA.key /home/nodeuser/.anyproxy/certificates/
 COPY cert/rootCA.crt /home/nodeuser/.anyproxy/certificates/
+COPY start.js /app/
 
 
 USER nodeuser
