@@ -8,7 +8,7 @@ RUN npm install -g pnpm --registry=https://registry.npmmirror.com
 
 # 复制依赖文件（利用 Docker 缓存）
 COPY package.json pnpm-lock.yaml ./
-COPY start.sh ./
+COPY start.js ./
 
 # 安装依赖
 RUN pnpm install --force --registry=https://registry.npmmirror.com && \
