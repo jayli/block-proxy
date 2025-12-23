@@ -279,7 +279,13 @@ function getWsReqInfo(wsReq) {
 function getSourceIp(req, socketMap) {
   // 如果是 http 请求，则直接是原始 IP
   // 如果是 https 请求，则是127.0.0.1
-  var localIp = req.client.remoteAddress.split(":").pop();
+  var localIp;
+  try {
+    localIp = req.client.remoteAddress.split(":").pop();
+  } catch (e) {
+    console.log(e);
+    localIp = "127.0.0.1";
+  }
   var connectionPort = getConnectionPort(req.socket.server._connectionKey);
   if (localIp != '127.0.0.1' && localIp != '0.0.0.0') {
     return localIp;
