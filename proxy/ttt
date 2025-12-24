@@ -1,0 +1,1000 @@
+stderr: 1<process.argv.length?process.argv[1].replace(/\\/g,"/"):"unknown-program");b.arguments=process.argv.slice(2);"undefined"!==typeof module&&(module.exports=b);process.on("uncaughtException",function(a){if(!(a instanceof y))throw a;});b.inspect=function(){return"[Emscripten Module object]"}}else if(x)b.print||(b.print=print),"undefined"!=typeof printErr&&(b.printErr=printErr),b.read="undefined"!=typeof read?read:function(){throw"no read() available (jsc?)";},b.readBinary=function(a){if("function"===
+stderr:                                                                                                                                                                                                                               ^
+stderr: 
+stderr: Error: write ECONNRESET
+stderr:     at afterWriteDispatched (node:internal/stream_base_commons:160:15)
+stderr:     at writeGeneric (node:internal/stream_base_commons:151:3)
+stderr:     at Socket._writeGeneric (node:net:962:11)
+stderr:     at Socket._write (node:net:974:8)
+stderr:     at writeOrBuffer (node:internal/streams/writable:392:12)
+stderr:     at _write (node:internal/streams/writable:333:10)
+stderr:     at Writable.write (node:internal/streams/writable:337:10)
+stderr:     at /app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:636:23
+stderr:     at new Promise (<anonymous>)
+stderr:     at /app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:633:16
+stderr:     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+stderr: Emitted 'error' event on Socket instance at:
+stderr:     at emitErrorNT (node:internal/streams/destroy:151:8)
+stderr:     at emitErrorCloseNT (node:internal/streams/destroy:116:3)
+stderr:     at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+stderr:   errno: -104,
+stderr:   code: 'ECONNRESET',
+stderr:   syscall: 'write'
+stderr: }
+stderr: 
+stderr: Node.js v18.20.8
+stderr: npm notice
+stderr: npm notice New major version of npm available! 10.8.2 -> 11.7.0
+stderr: npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.7.0
+stderr: npm notice To update run: npm install -g npm@11.7.0
+stderr: npm notice
+stdout: 
+stdout: > block-proxy@0.1.0 start
+stdout: > npm run express
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 express
+stdout: > npm run cp && node ./server/express.js
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 cp
+stdout: > cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/
+stdout: 
+stdout: ✅ 静态服务器运行在 http://localhost:8003
+stdout: Dev server started, starting LocalProxy...
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: Proxy server started on port 8001
+stdout: Web interface available on port 8002
+stdout: Intercepting requests to hosts: [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object]
+stdout: All other requests will be passed through without HTTPS interception
+stdout: Devices updated!
+stdout: local network devices updated!
+stdout: https 拦截 www.baidu.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.baidu.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.baidu.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.baidu.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.baidu.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.baidu.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.baidu.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.baidu.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.baidu.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.baidu.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.baidu.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.baidu.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.baidu.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.baidu.com 接下来判断是否根据 match_rule 进行拦截
+stdout: 
+stdout: > block-proxy@0.1.0 start
+stdout: > npm run express
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 express
+stdout: > npm run cp && node ./server/express.js
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 cp
+stdout: > cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/
+stdout: 
+stdout: ✅ 静态服务器运行在 http://localhost:8003
+stdout: Dev server started, starting LocalProxy...
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: Proxy server started on port 8001
+stdout: Web interface available on port 8002
+stdout: Intercepting requests to hosts: [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object]
+stdout: All other requests will be passed through without HTTPS interception
+stdout: Devices updated!
+stdout: local network devices updated!
+stderr: /app/node_modules/.pnpm/brotli@1.3.3/node_modules/brotli/build/encode.js:3
+stderr: 1<process.argv.length?process.argv[1].replace(/\\/g,"/"):"unknown-program");b.arguments=process.argv.slice(2);"undefined"!==typeof module&&(module.exports=b);process.on("uncaughtException",function(a){if(!(a instanceof y))throw a;});b.inspect=function(){return"[Emscripten Module object]"}}else if(x)b.print||(b.print=print),"undefined"!=typeof printErr&&(b.printErr=printErr),b.read="undefined"!=typeof read?read:function(){throw"no read() available (jsc?)";},b.readBinary=function(a){if("function"===
+stderr:                                                                                                                                                                                                                               ^
+stderr: 
+stderr: Error: write ECONNRESET
+stderr:     at afterWriteDispatched (node:internal/stream_base_commons:160:15)
+stderr:     at writeGeneric (node:internal/stream_base_commons:151:3)
+stderr:     at Socket._writeGeneric (node:net:962:11)
+stderr:     at Socket._write (node:net:974:8)
+stderr:     at writeOrBuffer (node:internal/streams/writable:392:12)
+stderr:     at _write (node:internal/streams/writable:333:10)
+stderr:     at Writable.write (node:internal/streams/writable:337:10)
+stderr:     at /app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:636:23
+stderr:     at new Promise (<anonymous>)
+stderr:     at /app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:633:16
+stderr:     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+stderr: Emitted 'error' event on Socket instance at:
+stderr:     at emitErrorNT (node:internal/streams/destroy:151:8)
+stderr:     at emitErrorCloseNT (node:internal/streams/destroy:116:3)
+stderr:     at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+stderr:   errno: -104,
+stderr:   code: 'ECONNRESET',
+stderr:   syscall: 'write'
+stderr: }
+stderr: 
+stderr: Node.js v18.20.8
+stdout: 
+stdout: > block-proxy@0.1.0 start
+stdout: > npm run express
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 express
+stdout: > npm run cp && node ./server/express.js
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 cp
+stdout: > cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/
+stdout: 
+stdout: ✅ 静态服务器运行在 http://localhost:8003
+stdout: Dev server started, starting LocalProxy...
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: Proxy server started on port 8001
+stdout: Web interface available on port 8002
+stdout: Intercepting requests to hosts: [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object]
+stdout: All other requests will be passed through without HTTPS interception
+stdout: Devices updated!
+stdout: local network devices updated!
+stdout: https 拦截 api5-normal-hl.doubao.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 audio5-normal-hl.doubao.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 api5-normal-hl.doubao.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 api5-normal-hl.doubao.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 api5-normal-hl.doubao.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 api5-normal-hl.doubao.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 api5-normal-hl.doubao.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 wss5-normal-hl.doubao.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 s.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 s.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 s.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 s.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 s.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: Devices updated!
+stdout: Network devices updated automatically every 2 hours
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: Devices updated!
+stdout: Network devices updated automatically every 2 hours
+stdout: 
+stdout: > block-proxy@0.1.0 start
+stdout: > npm run express
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 express
+stdout: > npm run cp && node ./server/express.js
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 cp
+stdout: > cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/
+stdout: 
+stdout: ✅ 静态服务器运行在 http://localhost:8003
+stdout: Dev server started, starting LocalProxy...
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: Proxy server started on port 8001
+stdout: Web interface available on port 8002
+stdout: Intercepting requests to hosts: [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object]
+stdout: All other requests will be passed through without HTTPS interception
+stdout: Devices updated!
+stdout: local network devices updated!
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: Devices updated!
+stdout: Network devices updated automatically every 2 hours
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: Devices updated!
+stdout: Network devices updated automatically every 2 hours
+stderr: /app/node_modules/.pnpm/brotli@1.3.3/node_modules/brotli/build/encode.js:3
+stderr: 1<process.argv.length?process.argv[1].replace(/\\/g,"/"):"unknown-program");b.arguments=process.argv.slice(2);"undefined"!==typeof module&&(module.exports=b);process.on("uncaughtException",function(a){if(!(a instanceof y))throw a;});b.inspect=function(){return"[Emscripten Module object]"}}else if(x)b.print||(b.print=print),"undefined"!=typeof printErr&&(b.printErr=printErr),b.read="undefined"!=typeof read?read:function(){throw"no read() available (jsc?)";},b.readBinary=function(a){if("function"===
+stderr:                                                                                                                                                                                                                               ^
+stderr: 
+stderr: Error: write ECONNRESET
+stderr:     at afterWriteDispatched (node:internal/stream_base_commons:160:15)
+stderr:     at writeGeneric (node:internal/stream_base_commons:151:3)
+stderr:     at Socket._writeGeneric (node:net:962:11)
+stderr:     at Socket._write (node:net:974:8)
+stderr:     at writeOrBuffer (node:internal/streams/writable:392:12)
+stderr:     at _write (node:internal/streams/writable:333:10)
+stderr:     at Writable.write (node:internal/streams/writable:337:10)
+stderr:     at /app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:636:23
+stderr:     at new Promise (<anonymous>)
+stderr:     at /app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:633:16
+stderr:     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+stderr: Emitted 'error' event on Socket instance at:
+stderr:     at emitErrorNT (node:internal/streams/destroy:151:8)
+stderr:     at emitErrorCloseNT (node:internal/streams/destroy:116:3)
+stderr:     at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+stderr:   errno: -104,
+stderr:   code: 'ECONNRESET',
+stderr:   syscall: 'write'
+stderr: }
+stderr: 
+stderr: Node.js v18.20.8
+stdout: 
+stdout: > block-proxy@0.1.0 start
+stdout: > npm run express
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 express
+stdout: > npm run cp && node ./server/express.js
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 cp
+stdout: > cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/
+stdout: 
+stdout: ✅ 静态服务器运行在 http://localhost:8003
+stdout: Dev server started, starting LocalProxy...
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: Proxy server started on port 8001
+stdout: Web interface available on port 8002
+stdout: Intercepting requests to hosts: [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object]
+stdout: All other requests will be passed through without HTTPS interception
+stdout: Devices updated!
+stdout: local network devices updated!
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: Devices updated!
+stdout: Network devices updated automatically every 2 hours
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: Devices updated!
+stdout: Network devices updated automatically every 2 hours
+stdout: 
+stdout: > block-proxy@0.1.0 start
+stdout: > npm run express
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 express
+stdout: > npm run cp && node ./server/express.js
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 cp
+stdout: > cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/
+stdout: 
+stdout: ✅ 静态服务器运行在 http://localhost:8003
+stdout: Dev server started, starting LocalProxy...
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: Proxy server started on port 8001
+stdout: Web interface available on port 8002
+stdout: Intercepting requests to hosts: [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object]
+stdout: All other requests will be passed through without HTTPS interception
+stdout: Devices updated!
+stdout: local network devices updated!
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: 更新设备: 192.168.124.138 (D2:F5:D9:5:8D:CE -> D2:F5:D9:05:8D:CE)
+stdout: Devices updated!
+stdout: Network devices updated automatically every 2 hours
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 accounts.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 accounts.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 accounts.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 accounts.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 www.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 m.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 m.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 m.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 m.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stdout: https 拦截 m.youtube.com 接下来判断是否根据 match_rule 进行拦截
+stderr: /app/node_modules/.pnpm/brotli@1.3.3/node_modules/brotli/build/encode.js:3
+stderr: 1<process.argv.length?process.argv[1].replace(/\\/g,"/"):"unknown-program");b.arguments=process.argv.slice(2);"undefined"!==typeof module&&(module.exports=b);process.on("uncaughtException",function(a){if(!(a instanceof y))throw a;});b.inspect=function(){return"[Emscripten Module object]"}}else if(x)b.print||(b.print=print),"undefined"!=typeof printErr&&(b.printErr=printErr),b.read="undefined"!=typeof read?read:function(){throw"no read() available (jsc?)";},b.readBinary=function(a){if("function"===
+stderr:                                                                                                                                                                                                                               ^
+stderr: 
+stderr: Error: write ECONNRESET
+stderr:     at afterWriteDispatched (node:internal/stream_base_commons:160:15)
+stderr:     at writeGeneric (node:internal/stream_base_commons:151:3)
+stderr:     at Socket._writeGeneric (node:net:962:11)
+stderr:     at Socket._write (node:net:974:8)
+stderr:     at writeOrBuffer (node:internal/streams/writable:392:12)
+stderr:     at _write (node:internal/streams/writable:333:10)
+stderr:     at Writable.write (node:internal/streams/writable:337:10)
+stderr:     at /app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:636:23
+stderr:     at new Promise (<anonymous>)
+stderr:     at /app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:633:16
+stderr:     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+stderr: Emitted 'error' event on Socket instance at:
+stderr:     at emitErrorNT (node:internal/streams/destroy:151:8)
+stderr:     at emitErrorCloseNT (node:internal/streams/destroy:116:3)
+stderr:     at process.processTicksAndRejections (node:internal/process/task_queues:82:21) {
+stderr:   errno: -104,
+stderr:   code: 'ECONNRESET',
+stderr:   syscall: 'write'
+stderr: }
+stderr: 
+stderr: Node.js v18.20.8
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: TypeError: Cannot read properties of undefined (reading 'split')
+stdout:     at getSourceIp (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:284:40)
+stdout:     at Server.<anonymous> (/app/node_modules/.pnpm/anyproxy@4.1.3_react@19.2.0/node_modules/anyproxy/lib/requestHandler.js:338:20)
+stdout:     at Server.emit (node:events:517:28)
+stdout:     at Server.emit (node:domain:489:12)
+stdout:     at parserOnIncoming (node:_http_server:1130:12)
+stdout:     at HTTPParser.parserOnHeadersComplete (node:_http_common:119:17)
+stdout: 
+stdout: > block-proxy@0.1.0 start
+stdout: > npm run express
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 express
+stdout: > npm run cp && node ./server/express.js
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 cp
+stdout: > cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/
+stdout: 
+stdout: ✅ 静态服务器运行在 http://localhost:8003
+stdout: Dev server started, starting LocalProxy...
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: Proxy server started on port 8001
+stdout: Web interface available on port 8002
+stdout: Intercepting requests to hosts: [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object]
+stdout: All other requests will be passed through without HTTPS interception
+stdout: Devices updated!
+stdout: local network devices updated!
+stdout: 
+stdout: > block-proxy@0.1.0 start
+stdout: > npm run express
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 express
+stdout: > npm run cp && node ./server/express.js
+stdout: 
+stdout: 
+stdout: > block-proxy@0.1.0 cp
+stdout: > cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/
+stdout: 
+stdout: ✅ 静态服务器运行在 http://localhost:8003
+stdout: Dev server started, starting LocalProxy...
+stdout: Scanning subnet: 192.168.1.0/24
+stdout: Proxy server started on port 8001
+stdout: Web interface available on port 8002
+stdout: Intercepting requests to hosts: [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object], [object Object]
+stdout: All other requests will be passed through without HTTPS interception
+stdout: Devices updated!
+stdout: local network devices updated!
