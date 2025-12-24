@@ -7,6 +7,16 @@ const appDir = process.cwd(); // 获取当前工作目录，通常是 /app
 
 console.log('Starting initialization script...');
 
+// 在 Node.js 应用逻辑开始前，执行权限修改脚本
+// 只在 Docker 容器内有效，在非 Docker 环境中无效
+try {
+    console.log('Adjusting permissions for /tmp...');
+    execSync('/app/init_permissions.sh', { stdio: 'inherit' }); // stdio: 'inherit' 让脚本输出直接显示在容器日志中
+    console.log('Permissions adjusted successfully.');
+} catch (error) {
+    console.error('当前是非 Docker 环境，不用执行init_permissions.sh');
+}
+
 // 1. 执行 npm run express (作为一个后台进程)
 console.log('Running pre-start script: npm run express (in background)...');
 const expressProcess = spawn('npm', ['run', 'express'], {
