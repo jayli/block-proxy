@@ -3,11 +3,14 @@
 # 脚本名称: start_caddy.sh
 # 功能: 根据操作系统和架构选择并启动 Caddy
 
-# 定义可执行文件名
-MAC_AMD64_FILE="./bin/caddy_darwin_amd64"
-LINUX_ARM64_FILE="./bin/caddy_linux_arm64"
+# 获取脚本所在目录
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# 定义配置文件名
+# 定义可执行文件名，使用脚本目录作为前缀
+MAC_AMD64_FILE="$SCRIPT_DIR/bin/caddy_darwin_amd64"
+LINUX_ARM64_FILE="$SCRIPT_DIR/bin/caddy_linux_arm64"
+
+# 定义配置文件名 (保持不变，或根据需要调整)
 CONFIG_FILE="/tmp/Caddyfile"
 USERNAME="admin"
 # 123456
