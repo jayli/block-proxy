@@ -281,10 +281,15 @@ function getSourceIp(req, socketMap) {
   // 如果是 https 请求，则是127.0.0.1
   var localIp;
   try {
-    localIp = req.client.remoteAddress.split(":").pop();
+    if (req.client.remoteAddress === undefined) {
+      localIp = "255.255.255.254";
+    } else {
+      localIp = req.client.remoteAddress.split(":").pop();
+    }
   } catch (e) {
     console.log(e);
-    localIp = "127.0.0.1";
+    localIp = "255.255.255.254";
+    return localIp;
   }
   var connectionPort = getConnectionPort(req.socket.server._connectionKey);
   if (localIp != '127.0.0.1' && localIp != '0.0.0.0') {
@@ -670,14 +675,8 @@ function getConnectReqHandler(userRule, recorder, httpsServerMgr) {
               // Client likely closed the connection before we could write the full response.
               // This is usually not a problem with the proxy itself.
               logUtil.printLog(`Client prematurely closed connection (EPIPE) for ${req.method} ${req.url}`, logUtil.T_DBG);
-              // Optionally notify the user rule if needed, though often not necessary for EPIPE
-              // co.wrap(function *() {
-              //   try {
-              //     yield userRule.onClientSocketError(requestDetail, error);
-              //   } catch (e) {
-              //     logUtil.printLog(`Error notifying user rule about EPIPE: ${e.message}`, logUtil.T_WARN);
-              //   }
-              // })();
+            }  else if (error.code == "ECONNRESET") {
+              logUtil.printLog(`ECONNRESET---`, logUtil.T_ERR);
             } else {
               // Log other socket errors as errors
               logUtil.printLog(`Socket error for ${req.method} ${req.url}: ${util.collectErrorLog(error)}`, logUtil.T_ERR);
