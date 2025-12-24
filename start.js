@@ -7,54 +7,65 @@ const appDir = process.cwd(); // 获取当前工作目录，通常是 /app
 
 console.log('Starting initialization script...');
 
-// 1. 执行 npm run cp
-console.log('Running pre-start script: npm run cp');
-const cpProcess = exec('npm run cp', { cwd: appDir }, (error, stdout, stderr) => {
-  if (error) {
-    console.error(`Error executing 'npm run cp': ${error.message}`);
-    process.exit(1); // 如果 npm run cp 失败，则退出脚本，导致容器重启或失败
-  }
-  if (stderr) {
-    console.error(`stderr from 'npm run cp': ${stderr}`);
-  }
-  console.log(`stdout from 'npm run cp': ${stdout}`);
-
-  // 2. npm run cp 成功后，启动 PM2
-  console.log('Starting PM2 with ecosystem.config.js');
-  const pm2StartProcess = spawn('npx', ['pm2', 'start', 'ecosystem.config.js'], {
-    cwd: appDir,
-    stdio: ['pipe', 'pipe', 'pipe'] // 继承 stdin, stdout, stderr
-  });
-
-  pm2StartProcess.stdout.on('data', (data) => {
-    console.log(`PM2 Start stdout: ${data.toString()}`);
-  });
-
-  pm2StartProcess.stderr.on('data', (data) => {
-    console.error(`PM2 Start stderr: ${data.toString()}`);
-  });
-
-  pm2StartProcess.on('close', (code) => {
-    if (code !== 0) {
-      console.error(`PM2 start process exited with code ${code}`);
-      // 注意：这里 PM2 启动命令本身可能很快结束（因为它启动了守护进程）
-      // 但我们主要关心的是它是否成功启动了应用实例
-      // 如果 PM2 启动失败，可能需要更复杂的错误处理
-    } else {
-      console.log('PM2 started successfully.');
-    }
-    // PM2 启动命令结束后，继续下一步
-    startPm2LogTailing();
-  });
-
-  pm2StartProcess.on('error', (err) => {
-    console.error('Failed to start PM2 process:', err);
-    process.exit(1);
-  });
+// 1. 执行 npm run express (作为一个后台进程)
+console.log('Running pre-start script: npm run express (in background)...');
+const expressProcess = spawn('npm', ['run', 'express'], {
+  cwd: appDir,
+  stdio: ['pipe', 'pipe', 'pipe'] // 可以根据需要调整 stdio
+  // stdio: 'ignore' // 如果你想完全忽略它的输出，也可以这样设置
 });
 
-cpProcess.on('error', (err) => {
-  console.error('Failed to execute npm run cp:', err);
+// 监听 express 进程的输出（可选，用于调试）
+expressProcess.stdout.on('data', (data) => {
+  console.log(`Express stdout: ${data.toString()}`);
+});
+
+expressProcess.stderr.on('data', (data) => {
+  console.error(`Express stderr: ${data.toString()}`);
+});
+
+expressProcess.on('close', (code) => {
+  console.log(`Express process exited with code ${code}`);
+  // 如果 express 进程意外退出，你可能需要处理这种情况
+  // 例如，记录错误或采取其他措施
+});
+
+expressProcess.on('error', (err) => {
+  console.error('Failed to start npm run express:', err);
+  process.exit(1); // 如果启动失败，则退出脚本
+});
+
+console.log('npm run express started in the background.');
+
+// 2. 立即启动 PM2 (因为 npm run express 已经在后台运行)
+console.log('Starting PM2 with ecosystem.config.js');
+const pm2StartProcess = spawn('npx', ['pm2', 'start', 'ecosystem.config.js'], {
+  cwd: appDir,
+  stdio: ['pipe', 'pipe', 'pipe'] // 继承 stdin, stdout, stderr
+});
+
+pm2StartProcess.stdout.on('data', (data) => {
+  console.log(`PM2 Start stdout: ${data.toString()}`);
+});
+
+pm2StartProcess.stderr.on('data', (data) => {
+  console.error(`PM2 Start stderr: ${data.toString()}`);
+});
+
+pm2StartProcess.on('close', (code) => {
+  if (code !== 0) {
+    console.error(`PM2 start process exited with code ${code}`);
+    // PM2 启动命令本身失败
+    process.exit(1);
+  } else {
+    console.log('PM2 started successfully.');
+  }
+  // PM2 启动命令结束后，继续下一步
+  startPm2LogTailing();
+});
+
+pm2StartProcess.on('error', (err) => {
+  console.error('Failed to start PM2 process:', err);
   process.exit(1);
 });
 
@@ -69,7 +80,6 @@ function startPm2LogTailing() {
   pm2LogsProcess.on('close', (code) => {
     console.error(`PM2 logs process exited with code ${code}`);
     // 如果 PM2 日志进程意外退出，通常意味着 PM2 守护进程有问题
-    // 可以选择退出脚本，让 Docker 容器重启
     process.exit(1);
   });
 
@@ -85,9 +95,10 @@ function startPm2LogTailing() {
 // 可选：处理脚本自身的退出信号，优雅地关闭子进程
 process.on('SIGTERM', () => {
   console.log('Received SIGTERM, shutting down gracefully...');
-  // 可以在这里向子进程发送关闭信号
-  // 例如，可以调用 npx pm2 stop 或 npx pm2 delete
+  // 你可以向 expressProcess 和 pm2StartProcess 发送信号来尝试终止它们
   // 但通常让 Docker 处理进程生命周期即可
+  // 例如：expressProcess.kill('SIGTERM');
+  //       exec('npx pm2 delete ecosystem.config.js', { cwd: appDir }); // 或者 stop
   process.exit(0);
 });
 
@@ -95,4 +106,3 @@ process.on('SIGINT', () => {
   console.log('Received SIGINT, shutting down gracefully...');
   process.exit(0);
 });
-
