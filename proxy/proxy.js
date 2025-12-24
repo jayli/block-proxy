@@ -847,9 +847,11 @@ var LocalProxy = {
   // 代理服务启动，并同时启动定时任务
   init: function() {
     var that = this;
+    console.log('✅ 启动代理服务 LocalProxy.init() ');
     setTimeout(async () => {
       console.log('Dev server started, starting LocalProxy...');
       await that.start(async () => {
+        restartProxyListener();
         await that.updateDevices();
         console.log('local network devices updated!');
 
@@ -863,7 +865,6 @@ var LocalProxy = {
           }
         }, 2 * 60 * 60 * 1000); // 2小时 = 2 * 60 * 60 * 1000 毫秒
       });
-      restartProxyListener();
     }, 100);
   }
 };

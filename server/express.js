@@ -224,5 +224,6 @@ app.listen(PORT, () => {
     });
   }
   // 启动本地代理
+  console.log('✅ -> 启动代理服务 LocalProxy.init() ');
   LocalProxy.init();
 });
