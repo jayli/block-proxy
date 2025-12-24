@@ -1,0 +1,13 @@
+:12345 {
+    # 启用基本认证，要求用户名和密码
+    # 请将 'your_username' 和 'your_password' 替换为你实际想要的用户名和密码
+    basic_auth {
+        # 这里使用了明文密码格式：username password
+        # 注意：这在生产环境中非常不安全，强烈建议使用哈希密码
+        # 生成哈希密码的命令：caddy hash-password
+        admin $2a$14$HqtVcQ0sDNzKTeF4L0M/k.FtKBIUmPNopJ/EIs2EQD4308iXiUga6
+    }
+
+    # 配置反向代理，将所有请求代理到 127.0.0.1:8001
+    reverse_proxy 127.0.0.1:8001
+}
