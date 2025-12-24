@@ -36,11 +36,16 @@ COPY --from=builder --chown=nodeuser:nodejs /app /app
 # 复制证书
 #COPY cert/rootCA.key /home/nodeuser/.anyproxy/certificates/
 #COPY cert/rootCA.crt /home/nodeuser/.anyproxy/certificates/
-COPY start.js /app/
+COPY start.js /app/start.js
 
 USER nodeuser
 
 EXPOSE 8001 8002 8003
 
 #CMD ["npm", "run", "start"]
-CMD ["sh", "-c", "npm run cp && npx pm2 start ecosystem.config.js && tail -f /dev/null"]
+#CMD ["sh", "-c", "npm run cp && npx pm2 start ecosystem.config.js && tail -f /dev/null"]
+# 复制启动脚本
+# 不需要 chmod +x 因为是 js 文件，用 node 执行
+
+# 使用 node 启动脚本作为 CMD
+CMD ["node", "start.js"]
