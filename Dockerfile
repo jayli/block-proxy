@@ -38,9 +38,9 @@ COPY --from=builder --chown=nodeuser:nodejs /app /app
 #COPY cert/rootCA.crt /home/nodeuser/.anyproxy/certificates/
 COPY start.js /app/
 
-
 USER nodeuser
 
 EXPOSE 8001 8002 8003
 
-CMD ["npm", "run", "start"]
+#CMD ["npm", "run", "start"]
+CMD ["sh", "-c", "npm run cp && npx pm2 start ecosystem.config.js && tail -f /dev/null"]
