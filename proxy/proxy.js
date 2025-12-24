@@ -80,6 +80,7 @@ async function loadConfig() {
     } else {
       // 如果配置文件不存在，则创建默认配置文件
       _fs.writeConfig({
+        network_scanning_status:network_scanning_status,
         progress_time_stamp: progress_time_stamp,
         block_hosts: blockHosts,
         proxy_port: proxyPort,
@@ -535,7 +536,7 @@ function restartProxyListener() {
       // 防止重复启动
       if (restartTimer == null) {
         restartTimer = setTimeout(async () => {
-          await LocalProxy.restart();
+          await LocalProxy.restart(() => {});
           restartTimer = null;
         }, 200);
       }
@@ -755,6 +756,10 @@ function getAnyProxyOptions() {
   };
 }
 
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 var LocalProxy = {
   updateDevices: async function() {
     const config = await loadConfig();
@@ -815,13 +820,12 @@ var LocalProxy = {
     // 如果代理服务器已在运行，先停止它
     if (proxyServerInstance && proxyServerInstance.httpProxyServer && proxyServerInstance.httpProxyServer.listening) {
       proxyServerInstance.close();
-      setTimeout(() => {
-        console.log('重新启动代理服务器');
-        startProxyServer();
-        if (typeof callback === 'function') {
-          callback();
-        }
-      }, 1000);
+      await delay(1000);
+      console.log('重新启动代理服务器');
+      startProxyServer();
+      if (typeof callback === 'function') {
+        callback();
+      }
     } else {
       startProxyServer();
       if (typeof callback === 'function') {
@@ -834,10 +838,9 @@ var LocalProxy = {
     if (proxyServerInstance) {
       console.log('Restarting proxy server...');
       proxyServerInstance.close();
-      setTimeout(async () => {
-        console.log('重新启动代理服务器');
-        await this.start(callback);
-      }, 1000); 
+      await delay(1000);
+      console.log('重新启动代理服务器');
+      await this.start(callback);
     } else {
       // 如果没有运行中的实例，直接启动
       await this.start(callback);
@@ -845,27 +848,26 @@ var LocalProxy = {
   },
   
   // 代理服务启动，并同时启动定时任务
-  init: function() {
+  init: async function() {
     var that = this;
     console.log('✅ 启动代理服务 LocalProxy.init() ');
-    setTimeout(async () => {
+    //setTimeout(async () => {
       console.log('Dev server started, starting LocalProxy...');
-      await that.start(async () => {
-        restartProxyListener();
-        await that.updateDevices();
-        console.log('local network devices updated!');
+      await that.start(() => {});
+      restartProxyListener();
+      await that.updateDevices();
+      console.log('local network devices updated!');
 
-        // 设置定时任务，每两小时更新一次设备信息
-        setInterval(async () => {
-          try {
-            await that.updateDevices();
-            console.log('Network devices updated automatically every 2 hours');
-          } catch (error) {
-            console.error('Failed to automatically update network devices:', error);
-          }
-        }, 2 * 60 * 60 * 1000); // 2小时 = 2 * 60 * 60 * 1000 毫秒
-      });
-    }, 100);
+      // 设置定时任务，每两小时更新一次设备信息
+      setInterval(async () => {
+        try {
+          await that.updateDevices();
+          console.log('Network devices updated automatically every 2 hours');
+        } catch (error) {
+          console.error('Failed to automatically update network devices:', error);
+        }
+      }, 2 * 60 * 60 * 1000); // 2小时 = 2 * 60 * 60 * 1000 毫秒
+    // }, 100);
   }
 };
 

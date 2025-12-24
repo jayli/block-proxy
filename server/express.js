@@ -203,7 +203,7 @@ app.get((req, res) => {
 });
 
 // 启动服务器
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`✅ 静态服务器运行在 http://localhost:${PORT}`);
   // 如果是开发环境，则启动SSR服务，开启端口3000
   if (DEV === '1') {
@@ -225,5 +225,5 @@ app.listen(PORT, () => {
   }
   // 启动本地代理
   console.log('✅ -> 启动代理服务 LocalProxy.init() ');
-  LocalProxy.init();
+  await LocalProxy.init();
 });
