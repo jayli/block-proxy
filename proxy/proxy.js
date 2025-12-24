@@ -24,11 +24,13 @@ let proxyPort = 8001;
 let webInterfacePort = 8002;
 let vpn_proxy = "";
 let devices = [];
+let progress_time_stamp = "";
 let localMac = getLocalMacAddress();
 
 // 读取配置文件的函数
 function loadConfig() {
   let config = {
+    progress_time_stamp: progress_time_stamp,
     block_hosts: blockHosts, // 使用全局变量的默认值
     proxy_port: proxyPort,
     web_interface_port: webInterfacePort,
@@ -50,6 +52,9 @@ function loadConfig() {
       // 更新 vpn_proxy
       vpn_proxy = loadedConfig.vpn_proxy;
       config.vpn_proxy = vpn_proxy;
+
+      progress_time_stamp = loadedConfig.progress_time_stamp;
+      config.progress_time_stamp = progress_time_stamp;
       
       if (loadedConfig.proxy_port) {
         proxyPort = loadedConfig.proxy_port;
@@ -70,6 +75,7 @@ function loadConfig() {
     } else {
       // 如果配置文件不存在，则创建默认配置文件
       fs.writeFileSync(configPath, JSON.stringify({
+        progress_time_stamp: progress_time_stamp,
         block_hosts: blockHosts,
         proxy_port: proxyPort,
         web_interface_port: webInterfacePort,
@@ -509,6 +515,28 @@ function shouldMitm(host) {
   return should;
 }
 
+// 监听 progress_time_stamp 是否有变化，有的话就重启代理服务
+var oldTimeStamp = progress_time_stamp;
+var restartTimer = null;
+function restartProxyListener() {
+  fs.watch(configPath, (eventType, filename) => {
+    var newConfig = loadConfig();
+    var newTimeStamp = newConfig.progress_time_stamp;
+    if (newTimeStamp === oldTimeStamp) {
+      return false;
+    } else {
+      // 防止重复启动
+      if (restartTimer == null) {
+        restartTimer = setTimeout(() => {
+          LocalProxy.restart();
+          restartTimer = null;
+        }, 200);
+      }
+      oldTimeStamp = newTimeStamp;
+    }
+  });
+}
+
 function getAnyProxyOptions() {
   return {
     port: proxyPort,
@@ -708,7 +736,6 @@ function getAnyProxyOptions() {
         return null;
       },
 
-
     },
     webInterface: {
       enable: true,
@@ -721,7 +748,7 @@ function getAnyProxyOptions() {
   };
 }
 
-module.exports = {
+var LocalProxy = {
   updateDevices: async function() {
     const config = loadConfig();
     var oldRouterMap = config.devices || []; // 确保旧路由表是数组
@@ -826,6 +853,9 @@ module.exports = {
           }
         }, 2 * 60 * 60 * 1000); // 2小时 = 2 * 60 * 60 * 1000 毫秒
       });
+      restartProxyListener();
     }, 100);
   }
 };
+
+module.exports = LocalProxy;

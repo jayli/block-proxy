@@ -11,6 +11,7 @@ const LocalProxy = require('../proxy/proxy');
 const app = express();
 const PORT = 8003;
 const DEV = process.env.BLOCK_PROXY_DEV || 0;
+const configPath = path.join(__dirname, '../config.json');
 
 // 1. 托管 React build 后的静态文件
 const staticPath = path.join(__dirname, '../build/');
@@ -113,13 +114,27 @@ app.post('/api/update-devices', async (req, res) => {
   }
 });
 
+function sendRestartMessage(callback) {
+  // TODO here
+  const configFileContent = fs.readFileSync(configPath, 'utf-8');
+  const loadedConfig = JSON.parse(configFileContent);
+  loadedConfig.progress_time_stamp = new Date().getTime().toString();
+  fs.writeFileSync(configPath, JSON.stringify(loadedConfig));
+  setTimeout(() => {
+    callback();
+  }, 300);
+}
+
 // 重启代理接口
 app.post('/api/restart', async (req, res) => {
   try {
     // 调用本地代理的重启方法
-    LocalProxy.restart(function() {
+    sendRestartMessage(function() {
       res.status(200).json({ message: 'Proxy restarted successfully' });
     });
+    // LocalProxy.restart(function() {
+    //   res.status(200).json({ message: 'Proxy restarted successfully' });
+    // });
   } catch (error) {
     res.status(500).json({ error: 'Failed to restart proxy: ' + error.message });
   }
