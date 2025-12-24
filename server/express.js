@@ -1,6 +1,7 @@
 // server.js
 const express = require('express');
 const fs = require('fs');
+const _fs = require('../proxy/fs.js');
 const path = require('path');
 const util = require('./util');
 const net = require('net');
@@ -92,7 +93,8 @@ app.post('/api/config', async (req, res) => {
       try {
         const newConfig = JSON.parse(body);
         const configPath = path.join(__dirname, '../config.json');
-        fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
+        // fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
+        _fs.writeConfig(newConfig);
         res.status(200).json({ message: 'Config updated successfully' });
       } catch (err) {
         res.status(400).json({ error: 'Invalid JSON or write error: ' + err.message });
@@ -115,11 +117,11 @@ app.post('/api/update-devices', async (req, res) => {
 });
 
 function sendRestartMessage(callback) {
-  // TODO here
   const configFileContent = fs.readFileSync(configPath, 'utf-8');
   const loadedConfig = JSON.parse(configFileContent);
   loadedConfig.progress_time_stamp = new Date().getTime().toString();
-  fs.writeFileSync(configPath, JSON.stringify(loadedConfig));
+  // fs.writeFileSync(configPath, JSON.stringify(loadedConfig, null, 2));
+  _fs.writeConfig(loadedConfig);
   setTimeout(() => {
     callback();
   }, 300);

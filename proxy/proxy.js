@@ -2,6 +2,7 @@
 
 const AnyProxy = require('anyproxy');
 const fs = require('fs');
+const _fs = require('./fs.js');
 const path = require('path');
 const { start } = require('repl');
 const net = require('net');
@@ -26,10 +27,12 @@ let vpn_proxy = "";
 let devices = [];
 let progress_time_stamp = "";
 let localMac = getLocalMacAddress();
+let network_scanning_status = "0";
 
 // 读取配置文件的函数
-function loadConfig() {
+async function loadConfig() {
   let config = {
+    network_scanning_status: network_scanning_status,
     progress_time_stamp: progress_time_stamp,
     block_hosts: blockHosts, // 使用全局变量的默认值
     proxy_port: proxyPort,
@@ -40,8 +43,7 @@ function loadConfig() {
 
   try {
     if (fs.existsSync(configPath)) {
-      const configFileContent = fs.readFileSync(configPath, 'utf-8');
-      const loadedConfig = JSON.parse(configFileContent);
+      const loadedConfig = await _fs.readConfig();
       
       // 更新全局变量
       if (loadedConfig.block_hosts) {
@@ -55,6 +57,9 @@ function loadConfig() {
 
       progress_time_stamp = loadedConfig.progress_time_stamp;
       config.progress_time_stamp = progress_time_stamp;
+
+      network_scanning_status = loadedConfig.network_scanning_status;
+      config.network_scanning_status = network_scanning_status;
       
       if (loadedConfig.proxy_port) {
         proxyPort = loadedConfig.proxy_port;
@@ -74,13 +79,15 @@ function loadConfig() {
       // console.log('Loaded config from config.json:', config);
     } else {
       // 如果配置文件不存在，则创建默认配置文件
-      fs.writeFileSync(configPath, JSON.stringify({
+      _fs.writeConfig({
         progress_time_stamp: progress_time_stamp,
         block_hosts: blockHosts,
         proxy_port: proxyPort,
         web_interface_port: webInterfacePort,
         vpn_proxy: ""
-      }, null, 2));
+      });
+      // fs.writeFileSync(configPath, JSON.stringify({
+      // }, null, 2));
       console.log('Created default config.json file');
     }
   } catch (err) {
@@ -519,16 +526,16 @@ function shouldMitm(host) {
 var oldTimeStamp = progress_time_stamp;
 var restartTimer = null;
 function restartProxyListener() {
-  fs.watch(configPath, (eventType, filename) => {
-    var newConfig = loadConfig();
+  fs.watch(configPath, async (eventType, filename) => {
+    var newConfig = await loadConfig();
     var newTimeStamp = newConfig.progress_time_stamp;
     if (newTimeStamp === oldTimeStamp) {
       return false;
     } else {
       // 防止重复启动
       if (restartTimer == null) {
-        restartTimer = setTimeout(() => {
-          LocalProxy.restart();
+        restartTimer = setTimeout(async () => {
+          await LocalProxy.restart();
           restartTimer = null;
         }, 200);
       }
@@ -750,7 +757,7 @@ function getAnyProxyOptions() {
 
 var LocalProxy = {
   updateDevices: async function() {
-    const config = loadConfig();
+    const config = await loadConfig();
     var oldRouterMap = config.devices || []; // 确保旧路由表是数组
     var newRouterMap = []
     try {
@@ -791,16 +798,19 @@ var LocalProxy = {
       }
     });
 
-    fs.writeFileSync(configPath, JSON.stringify({
+
+    _fs.writeConfig({
       ...config,
       devices: mergedRouterMap
-    }, null, 2));
+    });
+    // fs.writeFileSync(configPath, JSON.stringify({
+    // }, null, 2));
     devices = mergedRouterMap;
     console.log('Devices updated!');
   },
-  start: function(callback) { 
+  start: async function(callback) { 
     // 每次启动时都重新加载配置
-    const config = loadConfig();
+    const config = await loadConfig();
     
     // 如果代理服务器已在运行，先停止它
     if (proxyServerInstance && proxyServerInstance.httpProxyServer && proxyServerInstance.httpProxyServer.listening) {
@@ -819,27 +829,27 @@ var LocalProxy = {
       }
     }
   },
-  restart: function(callback) { 
+  restart: async function(callback) { 
     // 实现重启功能
     if (proxyServerInstance) {
       console.log('Restarting proxy server...');
       proxyServerInstance.close();
-      setTimeout(() => {
+      setTimeout(async () => {
         console.log('重新启动代理服务器');
-        this.start(callback);
+        await this.start(callback);
       }, 1000); 
     } else {
       // 如果没有运行中的实例，直接启动
-      this.start(callback);
+      await this.start(callback);
     }
   },
   
   // 代理服务启动，并同时启动定时任务
   init: function() {
     var that = this;
-    setTimeout(() => {
+    setTimeout(async () => {
       console.log('Dev server started, starting LocalProxy...');
-      that.start(async () => {
+      await that.start(async () => {
         await that.updateDevices();
         console.log('local network devices updated!');
 

@@ -17,14 +17,18 @@
     "cp": "cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/",
     "craco": "craco start",
     "dev": "BLOCK_PROXY_DEV=1 npm run express",
-    "start": "npm run express",
+    "start": "npm run cp && npx pm2 start ecosystem.config.js",
     "express": "npm run cp && node ./server/express.js",
-    "proxy": "cp ./hack-of-anyproxy/lib/requestHandler.js ./node_modules/anyproxy/lib/ && node proxy/start.js",
+    "proxy": "npm run cp && node proxy/start.js",
     "build": "react-scripts build",
     "docker:build": "npm run build && docker build -t block-proxy .",
     "docker:build_arm": "npm run build && docker buildx build --platform linux/arm64/v8 -t block-proxy .",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "pm2:stop": "npx pm2 stop ecosystem.config.js",
+    "pm2:delete": "npx pm2 delete ecosystem.config.js",
+    "pm2:logs": "npx pm2 logs block-proxy",
+    "pm2:list": "npx pm2 list"
   },
   "devDependencies": {
     "@craco/craco": "^7.1.0",
@@ -33,7 +37,9 @@
     "express": "^5.1.0",
     "http-proxy-agent": "^7.0.2",
     "https-proxy-agent": "^7.0.6",
-    "ping": "^1.0.0"
+    "ping": "^1.0.0",
+    "pm2": "^6.0.14",
+    "proper-lockfile": "^4.1.2"
   },
   "browserslist": {
     "production": [

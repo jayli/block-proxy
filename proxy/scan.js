@@ -1,7 +1,11 @@
 // 扫描当前网络，得到ip和mac的对应表
 const { exec } = require('child_process');
 const os = require('os');
+const fs = require('fs');
+const _fs = require('./fs.js');
+const path = require('path');
 const ping = require('ping'); // 这个包通常镜像里有
+const configPath = path.join(__dirname, '../config.json');
 
 function getLocalSubnet() {
   const nets = os.networkInterfaces();
@@ -47,7 +51,26 @@ function parseArpTable(arpOutput, subnet) {
   return result;
 }
 
-async function scanNetwork() {
+// "0","1"
+function setScanStatus(status) {
+  const configFileContent = fs.readFileSync(configPath, 'utf-8');
+  const loadedConfig = JSON.parse(configFileContent);
+  loadedConfig.network_scanning_status = status.toString();
+  _fs.writeConfig({
+    ...loadedConfig
+  });
+  // fs.writeFileSync(configPath, JSON.stringify({
+  // }, null, 2));
+}
+
+// "0"，"1"
+function getScanStatus() {
+  const configFileContent = fs.readFileSync(configPath, 'utf-8');
+  const loadedConfig = JSON.parse(configFileContent);
+  return loadedConfig.network_scanning_status;
+}
+
+async function doScan() {
   const subnet = getLocalSubnet();
   console.log(`Scanning subnet: ${subnet}.0/24`);
 
@@ -59,13 +82,31 @@ async function scanNetwork() {
   const cmd = process.platform === 'win32' ? 'arp -a' : 'arp -a';
   const arpOutput = await new Promise((resolve, reject) => {
     exec(cmd, (error, stdout) => {
-      if (error) reject(error);
-      else resolve(stdout);
+      if (error) {
+        setScanStatus("0");
+        reject(error);
+      } else {
+        resolve(stdout);
+      }
     });
   });
 
   const devices = parseArpTable(arpOutput, subnet);
   return devices;
+}
+
+var tempDevices = [];
+async function scanNetwork() {
+  var status = getScanStatus();
+  if (status == "1") {
+    return tempDevices;
+  } else {
+    setScanStatus("1");
+    var devices = await doScan();
+    tempDevices = devices;
+    setScanStatus("0");
+    return devices;
+  }
 }
 
 module.exports.scanNetwork = scanNetwork;
