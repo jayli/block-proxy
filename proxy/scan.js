@@ -5,7 +5,7 @@ const fs = require('fs');
 const _fs = require('./fs.js');
 const path = require('path');
 const ping = require('ping'); // 这个包通常镜像里有
-const configPath = path.join(__dirname, '../config.json');
+const configPath = '/tmp/config.json';
 
 function getLocalSubnet() {
   const nets = os.networkInterfaces();
@@ -53,8 +53,9 @@ function parseArpTable(arpOutput, subnet) {
 
 // "0","1"
 function setScanStatus(status) {
-  const configFileContent = fs.readFileSync(configPath, 'utf-8');
-  const loadedConfig = JSON.parse(configFileContent);
+  // const configFileContent = fs.readFileSync(configPath, 'utf-8');
+  // const loadedConfig = JSON.parse(configFileContent);
+  const loadedConfig = _fs.readConfig();
   loadedConfig.network_scanning_status = status.toString();
   _fs.writeConfig({
     ...loadedConfig
@@ -65,8 +66,9 @@ function setScanStatus(status) {
 
 // "0"，"1"
 function getScanStatus() {
-  const configFileContent = fs.readFileSync(configPath, 'utf-8');
-  const loadedConfig = JSON.parse(configFileContent);
+  // const configFileContent = fs.readFileSync(configPath, 'utf-8');
+  // const loadedConfig = JSON.parse(configFileContent);
+  const loadedConfig = _fs.readConfig();
   return loadedConfig.network_scanning_status;
 }
 

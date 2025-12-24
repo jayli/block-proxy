@@ -2,7 +2,8 @@
 const fs = require('fs').promises;
 const path = require('path');
 const lockfile = require('proper-lockfile');
-const CONFIG_FILE_PATH = path.join(__dirname, '../config.json');
+// const CONFIG_FILE_PATH = path.join(__dirname, '../config.json');
+const CONFIG_FILE_PATH = '/tmp/config.json';
 
 // 传入的是对象
 async function writeConfig(newData) {

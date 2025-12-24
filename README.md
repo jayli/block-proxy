@@ -33,11 +33,12 @@
 - 导出tar包到本地：`docker save -o block-proxy.tar block-proxy`
 - 安装包到openwrt：`docker load < block-proxy.tar`
 
-拷贝 tar 到 openwrt 后，启动容器：
+拷贝 tar 到 openwrt 后，`mkdir block-proxy & cd block-proxy`，启动容器：
 
 ```
 docker run --init -d --restart=unless-stopped \
            -e TZ=Asia/Shanghai --network=host \
+           -v $(pwd)/:/tmp/ \
            --log-driver local \
            --log-opt max-size=10m \
            --log-opt max-file=3 \
@@ -51,6 +52,7 @@ docker run --init -d --restart=unless-stopped \
 
 ```
 docker run --init -d --restart=unless-stopped \
+           -v $(pwd)/:/tmp/ \
            -e TZ=Asia/Shanghai -p 8001:8001 -p 8002:8002 -p 8003:8003 \
            --name block-proxy block-proxy
 ```

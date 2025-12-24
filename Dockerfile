@@ -48,4 +48,4 @@ EXPOSE 8001 8002 8003
 # 不需要 chmod +x 因为是 js 文件，用 node 执行
 
 # 使用 node 启动脚本作为 CMD
-CMD ["node", "./proxy/start.js"]
+CMD ["node", "start.js"]
