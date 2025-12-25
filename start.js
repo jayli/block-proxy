@@ -8,6 +8,7 @@ const appDir = process.cwd(); // 获取当前工作目录，通常是 /app
 console.log('Starting initialization script...');
 
 async function startCaddy() {
+  return;
   try {
     // --- 添加执行 caddy.sh 的代码 ---
     console.log('正在启动 Caddy...');
