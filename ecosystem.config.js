@@ -4,8 +4,8 @@ module.exports = {
   apps: [{
     name: 'block-proxy', // 应用名称
     script: './proxy/start.js', // 启动的脚本文件路径
-    instances: '4', // 启动的实例数量，'max' 表示使用所有可用的 CPU 核心
-    exec_mode: 'cluster', // 执行模式，'cluster' 模式启用 Node.js 的集群功能，实现多核负载均衡
+    instances: '1', // 启动的实例数量，'max' 表示使用所有可用的 CPU 核心
+    exec_mode: 'fork', // 执行模式，'cluster' 模式启用 Node.js 的集群功能，实现多核负载均衡
     env: {
       // 环境变量
       NODE_ENV: 'production', // 设置为生产环境
