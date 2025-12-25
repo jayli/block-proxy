@@ -1,13 +1,20 @@
+# 监听所有接口的 12345 端口
 :12345 {
-    # 启用基本认证，要求用户名和密码
-    # 请将 'your_username' 和 'your_password' 替换为你实际想要的用户名和密码
-    basic_auth {
-        # 这里使用了明文密码格式：username password
-        # 注意：这在生产环境中非常不安全，强烈建议使用哈希密码
-        # 生成哈希密码的命令：caddy hash-password
-        admin $2a$14$HqtVcQ0sDNzKTeF4L0M/k.FtKBIUmPNopJ/EIs2EQD4308iXiUga6
+    # 可选：添加基本认证以限制访问
+    # 如果你不需要认证，可以注释掉或删除以下 block
+    # basic_auth {
+    #     admin $2a$14$TzL7qrw.E4ZZaO7Wz2M.Ye7fB0.L0tN7yqQ2M6t0e1p5u4v3r2s1t # admin:123456
+    # }
+
+    # 使用 forward_proxy 模块提供 HTTP/HTTPS 代理功能
+    forward_proxy {
+        # 允许代理到任何主机和端口
+        # 注意：这使得代理完全开放，存在滥用风险
+        hide_ip
+        hide_via
+        probe_resistance # 可选：增加探测难度
     }
 
-    # 配置反向代理，将所有请求代理到 127.0.0.1:8001
-    reverse_proxy 127.0.0.1:8001
+    # 确保所有请求都由 forward_proxy 处理
+    # 不需要 reverse_proxy
 }

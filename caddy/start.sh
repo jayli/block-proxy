@@ -82,6 +82,8 @@ fi
 echo "检测到平台: $OS $ARCH"
 echo "使用配置文件: $CONFIG_FILE"
 echo "启动 Caddy..."
+echo "$CONFIG_FILE"
+cat $CONFIG_FILE
 exec "$EXECUTABLE" run --config "$CONFIG_FILE"
 
 # 如果 exec 失败，脚本会继续到这里
