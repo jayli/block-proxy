@@ -41,11 +41,11 @@ COPY --from=builder --chown=nodeuser:nodejs /app /app
 #COPY cert/rootCA.crt /home/nodeuser/.anyproxy/certificates/
 # COPY init_permissions.sh /app/
 # RUN chmod +x /app/init_permissions.sh
-COPY start.js /app/start.js
+# COPY start.js /app/start.js
 
 USER nodeuser
 
 EXPOSE 8001 8002 8003
 
 # 使用 node 启动脚本作为 CMD
-CMD ["node", "start.js"]
+CMD ["npm", "run", "start"]
