@@ -33,6 +33,8 @@
 - 导出tar包到本地：`docker save -o block-proxy.tar block-proxy`
 - 安装包到openwrt：`docker load < block-proxy.tar`
 
+> 要是打包 docker 空间不够就执行 `docker system prune -a --volumes`
+
 拷贝 tar 到 openwrt 后，`mkdir block-proxy & cd block-proxy`，启动容器：
 
 ```
