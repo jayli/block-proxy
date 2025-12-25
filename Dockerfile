@@ -25,6 +25,7 @@ WORKDIR /app
 
 # 从构建阶段复制文件 (现在复制的是为正确架构构建的 node_modules)
 COPY --from=builder /app /app 
+COPY hack-of-anyproxy/lib/requestHandler.js /app/node_modules/anyproxy/lib/
 # 注意：因为没有 nodeuser，所以移除了 --chown
 
 EXPOSE 8001 8002 8003
