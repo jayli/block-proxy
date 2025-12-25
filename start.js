@@ -7,44 +7,6 @@ const appDir = process.cwd(); // 获取当前工作目录，通常是 /app
 
 console.log('Starting initialization script...');
 
-async function startCaddy() {
-  return;
-  try {
-    // --- 添加执行 caddy.sh 的代码 ---
-    console.log('正在启动 Caddy...');
-
-    // 方法一：使用 spawn (推荐，更适合长时间运行的进程或需要实时输出)
-    const caddyProcess = spawn('./caddy/start.sh', [], {
-      stdio: 'inherit', // 将子进程的 stdin, stdout, stderr 继承到父进程
-      shell: true,      // 使用 shell 执行命令，这样可以处理 shell 脚本
-      cwd: process.cwd() // 或者指定脚本所在的目录，如果不在当前工作目录
-    });
-
-    caddyProcess.on('error', (err) => {
-      console.error('启动 Caddy 脚本时发生错误:', err.message);
-      // 根据需要决定是否退出整个应用
-      // process.exit(1);
-    });
-
-    caddyProcess.on('close', (code) => {
-      console.log(`Caddy 脚本退出，退出码 ${code}`);
-      // 如果 Caddy 是一个长期运行的服务，它不应该轻易退出
-      // 如果它意外退出，你可能需要在这里处理逻辑，比如重启它
-    });
-
-    console.log('Caddy 启动命令已发送。');
-
-    // --- 原有的 AnyProxy 启动逻辑 ---
-    // await startProxyServer(); // 假设这是你启动 AnyProxy 的函数
-    // 或者其他逻辑...
-
-  } catch (error) {
-    console.error('启动过程中发生错误:', error);
-  }
-}
-
-startCaddy();
-
 // 1. 执行 npm run express (作为一个后台进程)
 console.log('Running pre-start script: npm run express (in background)...');
 const expressProcess = spawn('npm', ['run', 'express'], {
