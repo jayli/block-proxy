@@ -19,7 +19,7 @@ const _request = require("./http.js").request;
 const Rule = require("./mitm/rule.js");
 
 // 全局变量存储关键配置参数
-const configPath = '/tmp/config.json';
+const configPath = path.join(__dirname, '../config.json');
 let blockHosts = [];
 let proxyPort = 8001;
 let webInterfacePort = 8002;

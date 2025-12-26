@@ -5,7 +5,7 @@ const fs = require('fs');
 const _fs = require('./fs.js');
 const path = require('path');
 const ping = require('ping'); // 这个包通常镜像里有
-const configPath = '/tmp/config.json';
+const configPath = path.join(__dirname, '../config.json');
 
 function getLocalSubnet() {
   const nets = os.networkInterfaces();

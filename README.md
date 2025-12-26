@@ -38,12 +38,11 @@
 ```
 docker run --init -d --restart=unless-stopped \
            -e TZ=Asia/Shanghai --network=host \
-           -v $(pwd)/:/tmp/ \
            --user=root \
            --log-driver local \
            --log-opt max-size=10m \
            --log-opt max-file=3 \
-           --cpus="3.6" \
+           --cpus="4" \
            --memory 300m \
            --name block-proxy block-proxy
 ```
@@ -54,7 +53,6 @@ docker run --init -d --restart=unless-stopped \
 
 ```
 docker run --init -d --restart=unless-stopped \
-           -v $(pwd)/:/tmp/ \
            -e TZ=Asia/Shanghai -p 8001:8001 -p 8002:8002 -p 8003:8003 \
            --name block-proxy block-proxy
 ```

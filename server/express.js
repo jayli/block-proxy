@@ -12,7 +12,7 @@ const LocalProxy = require('../proxy/proxy');
 const app = express();
 const PORT = 8003;
 const DEV = process.env.BLOCK_PROXY_DEV || 0;
-const configPath = '/tmp/config.json';
+const configPath = path.join(__dirname, '../config.json');
 
 // 1. 托管 React build 后的静态文件
 const staticPath = path.join(__dirname, '../build/');
@@ -70,7 +70,7 @@ app.get('/api/server-ip', async (req, res) => {
 // 获取配置接口
 app.get('/api/config', async (req, res) => {
   try {
-    const configPath = '/tmp/config.json';
+    const configPath = path.join(__dirname, '../config.json');
     if (fs.existsSync(configPath)) {
       const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
       res.status(200).json(config);
@@ -92,7 +92,7 @@ app.post('/api/config', async (req, res) => {
     req.on('end', () => {
       try {
         const newConfig = JSON.parse(body);
-        const configPath = '/tmp/config.json';
+        const configPath = path.join(__dirname, '../config.json');
         // fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
         _fs.writeConfig(newConfig);
         res.status(200).json({ message: 'Config updated successfully' });

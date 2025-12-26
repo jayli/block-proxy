@@ -2,7 +2,8 @@ const fs = require('fs').promises;
 const path = require('path');
 const writeFileAtomic = require('write-file-atomic'); // 引入 write-file-atomic
 
-const CONFIG_FILE_PATH = '/tmp/config.json';
+const configPath = path.join(__dirname, '../config.json');
+const CONFIG_FILE_PATH = configPath;
 
 // 传入的是对象
 async function writeConfig(newData) {
