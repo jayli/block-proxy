@@ -635,13 +635,79 @@ function getConnectReqHandler(userRule, recorder, httpsServerMgr) {
       }
     })
       .then(() => {
-        return new Promise((resolve, reject) => { // 使用 reject
-          // 标记 socket 连接已建立，检测请求协议
+        return new Promise((resolve, reject) => {
+          // 为客户端 socket 添加错误处理
+          cltSocket.on('error', (error) => {
+            // 检查是否是 EPIPE 错误
+            if (error.code === 'EPIPE') {
+              // Client closed the connection before we could write the response.
+              // This is usually not a critical error for the proxy itself.
+              logUtil.printLog(`Client prematurely closed connection (EPIPE) during CONNECT response for ${req.url}`, logUtil.T_DBG);
+              // Resolve the promise to continue the flow, as the connection is already broken.
+              // We can't write anything anymore.
+              resolve(); // Important: Resolve to avoid hanging
+            } else if (error.code === 'ECONNRESET') {
+              // Client reset the connection
+              logUtil.printLog(`Client reset connection (ECONNRESET) during CONNECT response for ${req.url}`, logUtil.T_DBG);
+              resolve(); // Resolve to avoid hanging
+            } else {
+              // Log other errors as errors and reject the promise
+              logUtil.printLog(`Socket error writing CONNECT response to client for ${req.url}: ${util.collectErrorLog(error)}`, logUtil.T_ERR);
+              // Optionally notify user rule if needed, though less common for client socket errors during initial response
+              // co.wrap(function *() {
+              //     try {
+              //         yield userRule.onClientSocketError(requestDetail, error);
+              //     } catch (e) {
+              //         logUtil.printLog(`Error notifying user rule about client socket error: ${e.message}`, logUtil.T_WARN);
+              //     }
+              // })();
+              reject(error); // Reject for non-EPIPE errors if they should fail the flow
+            }
+          });
+
+          // Attempt to write the response
           try {
-            cltSocket.write('HTTP/' + req.httpVersion + ' 200 OK\r\n\r\n', 'UTF-8', resolve);
-          } catch (e) {
-            console.log(e);
-            resolve();
+            cltSocket.write('HTTP/' + req.httpVersion + ' 200 OK\r\n\r\n', 'UTF-8', (writeErr) => {
+              if (writeErr) {
+                // The write callback might also receive the error,
+                // but the 'error' event listener on the socket is the standard place.
+                // If writeErr is EPIPE, the socket 'error' event should have fired.
+                // We don't need special handling here if the socket listener is robust.
+                // However, if for some reason the error *doesn't* fire on the socket event,
+                // this callback might catch it. But relying on the socket 'error' event is better.
+                // For robustness, you *could* check here too, but it's often redundant.
+                // if (writeErr.code === 'EPIPE') {
+                //     logUtil.printLog(`Write EPIPE for ${req.url}`, logUtil.T_DBG);
+                //     resolve(); // Resolve if write failed due to EPIPE
+                //     return;
+                // }
+                // If the socket 'error' event handles it, this callback might not need specific EPIPE logic.
+                // Standard callback handling:
+                if (writeErr) {
+                  // This should ideally not happen if the socket 'error' listener is working,
+                  // but as a last resort, handle it here.
+                  if (writeErr.code === 'EPIPE' || writeErr.code === 'ECONNRESET') {
+                    // If client closed before we finished writing, resolve silently (or with debug log)
+                    logUtil.printLog(`Write failed due to client disconnect (EPIPE/ECONNRESET) for ${req.url}`, logUtil.T_DBG);
+                    resolve(); // Resolve to allow the flow to continue (next steps might not be needed)
+                  } else {
+                    // For other write errors, reject
+                    reject(writeErr);
+                  }
+                } else {
+                  // Write successful
+                  resolve();
+                }
+              } else {
+                // Write successful
+                resolve();
+              }
+            });
+          } catch (syncErr) {
+            // This catch handles synchronous errors during write() call, which is unlikely for EPIPE
+            // but good practice.
+            logUtil.printLog(`Sync error during write for ${req.url}: ${util.collectErrorLog(syncErr)}`, logUtil.T_ERR);
+            reject(syncErr);
           }
         });
       })

@@ -854,10 +854,10 @@ var LocalProxy = {
     //setTimeout(async () => {
       console.log('Dev server started, starting LocalProxy...');
       await that.start(() => {});
-      restartProxyListener();
       await that.updateDevices();
       console.log('local network devices updated!');
-
+      await delay(1000);
+      restartProxyListener();
       // 设置定时任务，每两小时更新一次设备信息
       setInterval(async () => {
         try {
