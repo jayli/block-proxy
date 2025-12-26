@@ -134,8 +134,8 @@
   "proxy_port": 8001,
   "web_interface_port": 8002,
   "vpn_proxy": "",
-  "auth_username": "admin",
-  "auth_password": "password",
+  "auth_username": "aa",
+  "auth_password": "bb",
   "devices": [
     {
       "ip": "192.168.124.1",
@@ -520,6 +520,10 @@
     {
       "ip": "192.168.124.211",
       "mac": "D2:E9:D1:F8:CE:ED"
+    },
+    {
+      "ip": "192.168.124.10",
+      "mac": "66:65:A3:5A:D7:8C"
     }
   ]
 }

@@ -630,6 +630,11 @@ function getAnyProxyOptions() {
         }
         const headers = parseHeaders(req.rawHeaders);
 
+        // googlevideo.com 域名无法处理 http 认证信息，强制验证通过
+        if (headers.host.endsWith('googlevideo.com:443') || headers.host.endsWith('googlevideo.com')) {
+          return true;
+        }
+
         const authHeader = headers['proxy-authorization'];
 
         if (!authHeader || !authHeader.startsWith('Basic ')) {
@@ -687,6 +692,7 @@ function getAnyProxyOptions() {
         }
 
         var authResult = this.checkProxyAuth(requestDetail._req);
+
         if (authResult !== true) {
           // 认证失败，立即发送 407 并关闭连接
           this.send407bySocket(requestDetail._req.socket);
