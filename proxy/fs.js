@@ -11,7 +11,7 @@ async function writeConfig(newData) {
     // 使用 write-file-atomic 进行原子写入
     // 它会在内部创建一个临时文件，写入成功后再重命名为目标文件
     await writeFileAtomic(CONFIG_FILE_PATH, JSON.stringify(newData, null, 2), 'utf8');
-    console.log('Config file written successfully');
+    // console.log('Config file written successfully');
   } catch (error) {
     console.error('Error writing config file:', error.message);
     throw error; // 或者根据需要处理错误
@@ -24,7 +24,6 @@ async function readConfig() {
   try {
     const data = await fs.readFile(CONFIG_FILE_PATH, 'utf8');
     const config = JSON.parse(data);
-    console.log('Config file read successfully');
     return config;
   } catch (error) {
     if (error.code === 'ENOENT') {

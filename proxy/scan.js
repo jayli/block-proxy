@@ -52,10 +52,10 @@ function parseArpTable(arpOutput, subnet) {
 }
 
 // "0","1"
-function setScanStatus(status) {
+async function setScanStatus(status) {
   // const configFileContent = fs.readFileSync(configPath, 'utf-8');
   // const loadedConfig = JSON.parse(configFileContent);
-  const loadedConfig = _fs.readConfig();
+  const loadedConfig = await _fs.readConfig();
   loadedConfig.network_scanning_status = status.toString();
   _fs.writeConfig({
     ...loadedConfig
@@ -65,10 +65,10 @@ function setScanStatus(status) {
 }
 
 // "0"，"1"
-function getScanStatus() {
+async function getScanStatus() {
   // const configFileContent = fs.readFileSync(configPath, 'utf-8');
   // const loadedConfig = JSON.parse(configFileContent);
-  const loadedConfig = _fs.readConfig();
+  const loadedConfig = await _fs.readConfig();
   return loadedConfig.network_scanning_status;
 }
 
@@ -83,9 +83,9 @@ async function doScan() {
   // Read ARP table via system command
   const cmd = process.platform === 'win32' ? 'arp -a' : 'arp -a';
   const arpOutput = await new Promise((resolve, reject) => {
-    exec(cmd, (error, stdout) => {
+    exec(cmd, async (error, stdout) => {
       if (error) {
-        setScanStatus("0");
+        await setScanStatus("0");
         reject(error);
       } else {
         resolve(stdout);
@@ -99,14 +99,15 @@ async function doScan() {
 
 var tempDevices = [];
 async function scanNetwork() {
-  var status = getScanStatus();
+  var status = await getScanStatus();
   if (status == "1") {
+    await setScanStatus("0");
     return tempDevices;
   } else {
-    setScanStatus("1");
+    await setScanStatus("1");
     var devices = await doScan();
     tempDevices = devices;
-    setScanStatus("0");
+    await setScanStatus("0");
     return devices;
   }
 }

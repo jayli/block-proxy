@@ -31,6 +31,26 @@ var network_scanning_status = "0";
 var auth_username = "";
 var auth_password = "";
 
+// 对 Rule 里的正则表达式进行预编译
+function preCompileRuleRegexp() {
+  Object.keys(Rule).forEach(key => {
+    if (Array.isArray(Rule[key])) {
+      Rule[key] = Rule[key].map(item => {
+        if (typeof item.regexp === 'string' && item.regexp.trim() !== '') {
+          try {
+              item.compiledRegexp = new RegExp(item.regexp);
+          } catch (e) {
+              console.error(`Invalid regex in MITM rule: "${item.regexp}", skipping compilation. Error:`, e.message);
+              item.compiledRegexp = /^$/; // 或其他处理方式
+          }
+        }
+        return item;
+      });
+    }
+  });
+}
+
+
 // 读取配置文件的函数
 async function loadConfig() {
   let config = {
@@ -51,8 +71,24 @@ async function loadConfig() {
       
       // 更新全局变量
       if (loadedConfig.block_hosts) {
-        blockHosts = loadedConfig.block_hosts;
-        config.block_hosts = blockHosts;
+        // 原始信息
+        config.block_hosts = [...loadedConfig.block_hosts];
+        // 缓存正则表达式
+        blockHosts = loadedConfig.block_hosts.map(item => {
+          // 如果是对象格式且包含 filter_match_rule，则预编译正则
+          if (typeof item === 'object' && item.filter_match_rule && item.filter_match_rule.trim() !== '') {
+            try {
+              // 预编译正则表达式
+              item.compiledFilterRegexp = new RegExp(item.filter_match_rule);
+            } catch (e) {
+              console.error(`Invalid regex in block rule: "${item.filter_match_rule}", skipping compilation. Error:`, e.message);
+              // 如果正则无效，可以设置一个永远不匹配的正则，或者标记此项无效
+              item.compiledFilterRegexp = /^$/; // 一个永远不匹配非空字符串的正则
+              // 或者 item.compiledFilterRegexp = null; 然后在 shouldBlockHost 中检查 if (!blockItem.compiledFilterRegexp) return false;
+            }
+          }
+          return item;
+        });
       }
 
       // 更新 vpn_proxy
@@ -189,7 +225,7 @@ function shouldBlockHost(host, blockList, url) {
       // 在传入 url 的情况下检查路径名是否匹配（新增功能）
       if (url != "" && blockItem.filter_match_rule && blockItem.filter_match_rule.trim() !== '') {
         // 匹配拦截规则，拦截
-        if (new RegExp(blockItem.filter_match_rule).test(url)) {
+        if (blockItem.compiledFilterRegexp && blockItem.compiledFilterRegexp.test(url)) { // 优化后
           // do nothing
         } else { // 不匹配拦截规则，不拦截
           return false;
@@ -478,7 +514,8 @@ async function MITMHandler(type, url, request, response) {
     // 正则匹配
     if (item['type'].toLowerCase() == type.toLowerCase() &&
             new URL(url).hostname.toLowerCase().endsWith(item['host'].toLowerCase()) &&
-            new RegExp(item['regexp']).test(url)) {
+            item.compiledRegexp.test(url)) {
+            // new RegExp(item['regexp']).test(url)) {
       responseResult = await item.callback(url, request, response);
       break;
     } else {
@@ -582,6 +619,9 @@ function getAnyProxyOptions() {
       // 验证 Proxy-Authorization
       checkProxyAuth(req) {
         const authConfig = getProxyAuthConfig();
+        if (authConfig.auth_username === undefined) {
+          console.log("authConfig.auth_username 为空，检查下 config.json 完整性");
+        }
         const expectedUser = authConfig.auth_username;
         const expectedPass = authConfig.auth_password;
         // 如果 auth_username 为空，则始终验证通过
@@ -700,6 +740,7 @@ function getAnyProxyOptions() {
           return null;
         }
 
+        console.log(url);
         // 这里验证只能处理 HTTP 请求，HTTPs 里 _req 携带的请求头是不包含验证字段的，因为
         // https 内的 header 是五层信息，proxy-Authenticate 信息属于四层，这里看不到
         if (!isHttps) {
@@ -875,8 +916,8 @@ function delay(ms) {
 
 var LocalProxy = {
   updateDevices: async function() {
-    const config = await loadConfig();
-    var oldRouterMap = config.devices || []; // 确保旧路由表是数组
+    var configData = await loadConfig();
+    var oldRouterMap = configData.devices || []; // 确保旧路由表是数组
     var newRouterMap = []
     try {
       newRouterMap = await scanNetwork();
@@ -917,7 +958,7 @@ var LocalProxy = {
     });
 
     _fs.writeConfig({
-      ...config,
+      ...configData,
       devices: mergedRouterMap
     });
     // fs.writeFileSync(configPath, JSON.stringify({
@@ -962,6 +1003,7 @@ var LocalProxy = {
   // 代理服务启动，并同时启动定时任务
   init: async function() {
     var that = this;
+    // 预编译 MITM Rule 的正则
     console.log('启动代理服务 LocalProxy.init() ');
     //setTimeout(async () => {
       console.log('Dev server started, starting LocalProxy...');
@@ -982,5 +1024,9 @@ var LocalProxy = {
     // }, 100);
   }
 };
+
+(function() {
+  preCompileRuleRegexp();
+})();
 
 module.exports = LocalProxy;
