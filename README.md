@@ -54,7 +54,7 @@ docker run --init -d --restart=unless-stopped \
 如果是在 Window/Mac 中，需要手动指定端口绑定（不推荐）：
 
 ```
-docker run --init -d --restart=unless-stopped \
+docker run --init -d --restart=unless-stopped --user=root \
            -e TZ=Asia/Shanghai -p 8001:8001 -p 8002:8002 -p 8003:8003 \
            --name block-proxy block-proxy
 ```
