@@ -131,12 +131,12 @@ function sendRestartMessage(callback) {
 app.post('/api/restart', async (req, res) => {
   try {
     // 调用本地代理的重启方法
-    sendRestartMessage(function() {
-      res.status(200).json({ message: 'Proxy restarted successfully' });
-    });
-    // LocalProxy.restart(function() {
+    // sendRestartMessage(function() {
     //   res.status(200).json({ message: 'Proxy restarted successfully' });
     // });
+    await LocalProxy.restart(function() {
+      res.status(200).json({ message: 'Proxy restarted successfully' });
+    });
   } catch (error) {
     res.status(500).json({ error: 'Failed to restart proxy: ' + error.message });
   }

@@ -1,6 +1,6 @@
 {
   "network_scanning_status": "1",
-  "progress_time_stamp": "1766571511705",
+  "progress_time_stamp": "1766721807618",
   "block_hosts": [
     {
       "filter_host": "bilibili.com",
@@ -130,8 +130,8 @@
   "proxy_port": 8001,
   "web_interface_port": 8002,
   "vpn_proxy": "",
-  "auth_username": "",
-  "auth_password": "",
+  "auth_username": "aa",
+  "auth_password": "bb",
   "devices": [
     {
       "ip": "192.168.124.1",
@@ -351,6 +351,14 @@
     },
     {
       "ip": "30.240.127.41",
+      "mac": "0:0:0:0:4:0"
+    },
+    {
+      "ip": "30.240.127.20",
+      "mac": "0:0:0:0:4:0"
+    },
+    {
+      "ip": "30.240.127.32",
       "mac": "0:0:0:0:4:0"
     }
   ]

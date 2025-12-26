@@ -687,26 +687,31 @@ function getAnyProxyOptions() {
       // 拦截 HTTP 请求以及 HTTPS 拆包的请求
       async beforeSendRequest(requestDetail) {
 
-        
         const { url, requestOptions } = requestDetail;
         const clientIp = requestDetail._req?.sourceIp || '127.0.0.1';
         const host = requestDetail.requestOptions.hostname;
         const blockRules = getBlockRules(clientIp);
         const pathname = requestDetail.requestOptions.path?.split('?')[0];;
         const body = requestDetail.requestData;
+        const isHttps = url.startsWith('https:') ? true : false;
 
         // 如果是裸IP请求，全部放行
         if (net.isIPv4(host) || net.isIPv6(host)) {
           return null;
         }
 
-        var authResult = this.checkProxyAuth(requestDetail._req);
-        if (authResult === true) {
-          // 验证通过，do Nothing
-        } else {
-          // 验证不通过，返回 407
-          return authResult;
+        // 这里验证只能处理 HTTP 请求，HTTPs 里 _req 携带的请求头是不包含验证字段的，因为
+        // https 内的 header 是五层信息，proxy-Authenticate 信息属于四层，这里看不到
+        if (!isHttps) {
+          var authResult = this.checkProxyAuth(requestDetail._req);
+          if (authResult === true) {
+            // 验证通过，do Nothing
+          } else {
+            // 验证不通过，返回 407
+            return authResult;
+          }
         }
+
 
         var _request      = { ...requestDetail.requestOptions };
         _request.host     = requestDetail.requestOptions.hostname;
@@ -964,7 +969,7 @@ var LocalProxy = {
       await that.updateDevices();
       console.log('local network devices updated!');
       await delay(1000);
-      restartProxyListener();
+      // restartProxyListener();
       // 设置定时任务，每两小时更新一次设备信息
       setInterval(async () => {
         try {
