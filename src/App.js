@@ -560,7 +560,7 @@ function App() {
         </div>
         
         <div className="config-section">
-          <h2>端口设置和下游 VPN_Proxy 代理设置</h2>
+          <h2>端口设置，验证信息，下游 VPN_Proxy 代理</h2>
           {/*<p><span>配置页端口默认 8003</span></p> */}
           <div className="setting-row">
             <label>Anyproxy 代理端口:</label>
@@ -579,6 +579,24 @@ function App() {
               onChange={(e) => setConfig({...config, web_interface_port: parseInt(e.target.value) || 8002})}
             />
           </div>
+
+          <div className="setting-row">
+            <label>代理用户名:</label>
+            <input
+              type="string"
+              value={config.auth_username}
+              onChange={(e) => setConfig({...config, auth_username: e.target.value || ""})}
+            />
+          </div>
+          <div className="setting-row">
+            <label>代理密码:&nbsp;&nbsp;&nbsp;&nbsp;</label>
+            <input
+              type="string"
+              value={config.auth_password}
+              onChange={(e) => setConfig({...config, auth_password: e.target.value || ""})}
+            />
+          </div>
+
           <div className="setting-row">
             <label>VPN_PROXY 设置（格式：“127.0.0.1:1087”，仅调试用）:</label>
             <input

@@ -688,16 +688,6 @@ function getAnyProxyOptions() {
       async beforeSendRequest(requestDetail) {
 
         
-        var authResult = this.checkProxyAuth(requestDetail._req);
-        if (authResult === true) {
-          // 验证通过，do Nothing
-        } else {
-          // 验证不通过，直接拦截进入 beforeSendRequest，去返回 407
-          return authResult;
-        }
-
-
-
         const { url, requestOptions } = requestDetail;
         const clientIp = requestDetail._req?.sourceIp || '127.0.0.1';
         const host = requestDetail.requestOptions.hostname;
@@ -705,16 +695,24 @@ function getAnyProxyOptions() {
         const pathname = requestDetail.requestOptions.path?.split('?')[0];;
         const body = requestDetail.requestData;
 
+        // 如果是裸IP请求，全部放行
+        if (net.isIPv4(host) || net.isIPv6(host)) {
+          return null;
+        }
+
+        var authResult = this.checkProxyAuth(requestDetail._req);
+        if (authResult === true) {
+          // 验证通过，do Nothing
+        } else {
+          // 验证不通过，返回 407
+          return authResult;
+        }
+
         var _request      = { ...requestDetail.requestOptions };
         _request.host     = requestDetail.requestOptions.hostname;
         _request.url      = requestDetail.url;
         _request.body     = requestDetail.requestData;
         _request.protocol = requestDetail.protocol;
-
-        // 如果是裸IP请求，全部放行
-        if (net.isIPv4(host) || net.isIPv6(host)) {
-          return null;
-        }
 
         // 如果是 http 请求，说明是直接访问过来的，没有经过 beforeDealHttpsRequest，因此clientIp是真实的
         // 执行逻辑：
