@@ -11,7 +11,7 @@
 - 监控上网记录
 - 顺便过滤广告
 
-### 开发和调试
+### 1）开发和调试
 
 代码 clone 下来后执行`pnpm i`，执行 `npm run dev` 运行本地服务。默认开启三个端口：
 
@@ -20,7 +20,7 @@
 2. 8002: 监控端口
 3. 8003: 配置端口
 
-### Docker 构建和部署
+### 2）Docker 构建和部署
 
 准备工作，构建 docker 包，先启动本地 Docker：
 
@@ -60,7 +60,7 @@ docker run --init -d --restart=unless-stopped --user=root \
 ```
 
 
-### 配置
+### 3）配置
 
 #### 后台配置
 
@@ -87,11 +87,11 @@ ip6tables -I forwarding_rule -m mac --mac-source D2:9E:8D:1B:F1:4E -j REJECT
 
 重启防火墙
 
-### Docker 文件下载
+### 4）Docker 文件下载
 
 Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" target=_blank>block-proxy.tar</a>（右键另存为）
 
-### 使用说明
+### 5）使用说明
 
 #### 应用条件：
 
@@ -143,7 +143,7 @@ Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" t
 
 <img width="544" alt="image" src="https://github.com/user-attachments/assets/67c61e34-67ae-4345-97ca-d266cd35ddf4" />
 
-#### AnyProxy bugfix 记录
+### 6）AnyProxy bugfix 记录
 
 1. `Content-length` 被吞掉的问题：这个是 AnyProxy 的设计缺陷，AnyProxy 定位为 Mock 工具，为了便于修改响应内容，因此AnyProxy 默认不设置 `Content-length`，其实 AnyProxy 应当让开发者自己处理`Content-length`，并给出最佳实践，而不是一刀切，为了规避重写响应后和源报文Length不一致的问题而直接删掉`Content-length`和`Connection`这两个重要字段。
 2. `beforeSendRequest` 中无法获得源 IP。在经过 https 隧道后到达`beforeSendRequest`回调函数时，req 中携带的 socket 不是原始的 socket，得到的 remoteAddress 始终是 `127.0.0.1`。这是代理机制决定的，但 AnyProxy 作为工具箱应当把重要的最初创建隧道时的源 socket 保留下来，以便把关键的原始信息透传给规则回调函数，交给开发者去处理。
