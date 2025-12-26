@@ -112,7 +112,7 @@ Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" t
 
 #### 代理性能
 
-只有域名规则匹配时才会被代理，其他请求直接在第四层转发，无需再去做 https 解包，因此速度是极快的，最终速度受三个因素影响：
+速度受三个因素影响：
 
 1. CPU 处理能力
 2. Wifi 带宽速度
@@ -120,9 +120,18 @@ Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" t
 
 提示：
 
-- 纯拦截：Node 的流式 `pipe()` 机制效率很高，吞吐量不用担心。仅需拦截的 url 命中规则时，直接返回空，避免了网络耗时，相比之下 tls 解包的耗时可以忽略了。千兆网基本能跑满。
-- MITM：需要 MITM 的请求，网络耗时省不了，tls 解包就会增加 RT。因为 Node 的 tls 加解密基于系统的 OpenSSL 被 libuv 调度，耗时基本上取决于 CPU 能力了。Node 也无须以 cluster 运行。
+- 四层转发：Node 的流式 `pipe()` 性能很好，吞吐量不用担心。只要不解包，速度接近原生。
+- 七层拦截：url 命中规则时直接返回空，需要解包，但避免了网络耗时，总体基本不影响速度。
+- MITM：需要 MITM 的请求，既有请求 RT，也有 tls 解包，RT 会增加。因为 Node 的 tls 加解密基于系统的 OpenSSL，速度取决于 CPU 算力，主流软路由基本够用。
 - Openwrt 稳定性：为了避免瞬时的 CPU 打满，最好 docker 里加上 CPU 和内存的限制。实测内存 400M，CPU 50% 足够了。
+
+⚠️ 重要：如果把 block-proxy 部署在 openwrt 网关上，代理地址和网关地址一致，iOS Safari 有一个默认安全限制，不支持带认证的代理和网关 IP 一致，两个解决办法：
+
+1. 不要填代理认证用户名和密码
+2. 给 openwrt 再绑定一个 IP，ios 设备在局域网内绑定这个 IP
+
+<img width="400" alt="image" src="https://github.com/user-attachments/assets/0f46d6b4-00b1-44aa-9be7-fa23a09bb199" />
+
 
 **并发测试**：
 
