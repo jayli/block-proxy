@@ -118,7 +118,11 @@ Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" t
 2. Wifi 带宽速度
 3. TCP 连接并发量
 
-得益于 Node 的 流式 `pipe()` 机制，理论上高并发情况下内存几乎无增长。当命中代理规则时，速度会变慢，因为命中规则后代理返回为空，所以快慢无所谓。千兆网基本能跑满。
+提示：
+
+- 纯拦截：Node 的流式 `pipe()` 机制效率很高，吞吐量不用担心。仅需拦截的 url 命中规则时，直接返回空，避免了网络耗时，相比之下 tls 解包的耗时可以忽略了。千兆网基本能跑满。
+- MITM：需要 MITM 的请求，网络耗时省不了，tls 解包就会增加 RT。因为 Node 的 tls 加解密基于系统的 OpenSSL 被 libuv 调度，耗时基本上取决于 CPU 能力了。Node 也无须以 cluster 运行。
+- Openwrt 稳定性：为了避免瞬时的 CPU 打满，最好 docker 里加上 CPU 和内存的限制。实测内存 400M，CPU 50% 足够了。
 
 **并发测试**：
 
@@ -135,7 +139,7 @@ Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" t
 1. `Content-length` 被吞掉的问题：这个是 AnyProxy 的设计缺陷，AnyProxy 定位为 Mock 工具，为了便于修改响应内容，因此AnyProxy 默认不设置 `Content-length`，其实 AnyProxy 应当让开发者自己处理`Content-length`，并给出最佳实践，而不是一刀切，为了规避重写响应后和源报文Length不一致的问题而直接删掉`Content-length`和`Connection`这两个重要字段。
 2. `beforeSendRequest` 中无法获得源 IP。在经过 https 隧道后到达`beforeSendRequest`回调函数时，req 中携带的 socket 不是原始的 socket，得到的 remoteAddress 始终是 `127.0.0.1`。这是代理机制决定的，但 AnyProxy 作为工具箱应当把重要的最初创建隧道时的源 socket 保留下来，以便把关键的原始信息透传给规则回调函数，交给开发者去处理。
 3. `EPIPE 报错`，这个错误会导致程序崩溃，本来 EPIPE 只是一个小错误，是客户端在收到 AnyProxy 响应之前关闭了隧道，anyproxy 没有很好的处理，我打上了补丁。
-4. `407 验证`：增加了代理的用户名和密码的验证
+4. `407 验证`：增加了代理的用户名和密码的验证。
 
 ### License
 
