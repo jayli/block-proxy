@@ -740,7 +740,6 @@ function getAnyProxyOptions() {
           return null;
         }
 
-        console.log(url);
         // 这里验证只能处理 HTTP 请求，HTTPs 里 _req 携带的请求头是不包含验证字段的，因为
         // https 内的 header 是五层信息，proxy-Authenticate 信息属于四层，这里看不到
         if (!isHttps) {
