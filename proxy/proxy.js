@@ -28,6 +28,8 @@ let devices = [];
 let progress_time_stamp = "";
 let localMac = getLocalMacAddress();
 let network_scanning_status = "0";
+let auth_username = "";
+let auth_password = "";
 
 // 读取配置文件的函数
 async function loadConfig() {
@@ -38,6 +40,8 @@ async function loadConfig() {
     proxy_port: proxyPort,
     web_interface_port: webInterfacePort,
     vpn_proxy:"",
+    auth_username:"",
+    auth_password:"",
     devices: []
   };
 
@@ -54,6 +58,12 @@ async function loadConfig() {
       // 更新 vpn_proxy
       vpn_proxy = loadedConfig.vpn_proxy;
       config.vpn_proxy = vpn_proxy;
+
+      auth_username = loadedConfig.auth_username;
+      config.auth_username = auth_username;
+
+      auth_password = loadedConfig.auth_password;
+      config.auth_password = auth_password;
 
       progress_time_stamp = loadedConfig.progress_time_stamp;
       config.progress_time_stamp = progress_time_stamp;
@@ -85,6 +95,8 @@ async function loadConfig() {
         block_hosts: blockHosts,
         proxy_port: proxyPort,
         web_interface_port: webInterfacePort,
+        auth_password:"",
+        auth_username:"",
         vpn_proxy: ""
       });
       // fs.writeFileSync(configPath, JSON.stringify({
@@ -267,8 +279,8 @@ function startProxyServer() {
     proxyServerInstance = new AnyProxy.ProxyServer(options);
 
     proxyServerInstance.on('ready', () => {
-      console.log(`Proxy server started on port ${proxyPort}`);
-      console.log(`Web interface available on port ${webInterfacePort}`);
+      console.log(`✅ Proxy server started on port ${proxyPort}`);
+      console.log(`✅ Web interface available on port ${webInterfacePort}`);
       console.log('Intercepting requests to hosts:', blockHosts.join(', '));
       console.log('All other requests will be passed through without HTTPS interception');
     });
@@ -620,7 +632,7 @@ function getAnyProxyOptions() {
           var rewriteResult = await rewriteRuleBeforeRequest(host, url, _request);
           if (rewriteResult !== false) {
             return rewriteResult;
-          } else if (vpn_proxy != "") {
+          } else if (vpn_proxy != "" && vpn_proxy !== undefined) {
             // 如果配置了 vpn_proxy，不匹配拦截的情况，所有请求都通过 proxy 做七层转发
             // TODO: 需要调试所有请求转发的失败的情况，所有请求都应该转发成功
             const { ip, port } = parseAddress(vpn_proxy);
@@ -850,7 +862,7 @@ var LocalProxy = {
   // 代理服务启动，并同时启动定时任务
   init: async function() {
     var that = this;
-    console.log('✅ 启动代理服务 LocalProxy.init() ');
+    console.log('启动代理服务 LocalProxy.init() ');
     //setTimeout(async () => {
       console.log('Dev server started, starting LocalProxy...');
       await that.start(() => {});
