@@ -20,16 +20,16 @@ const Rule = require("./mitm/rule.js");
 
 // 全局变量存储关键配置参数
 const configPath = path.join(__dirname, '../config.json');
-let blockHosts = [];
-let proxyPort = 8001;
-let webInterfacePort = 8002;
-let vpn_proxy = "";
-let devices = [];
-let progress_time_stamp = "";
-let localMac = getLocalMacAddress();
-let network_scanning_status = "0";
-let auth_username = "";
-let auth_password = "";
+var blockHosts = [];
+var proxyPort = 8001;
+var webInterfacePort = 8002;
+var vpn_proxy = "";
+var devices = [];
+var progress_time_stamp = "";
+var localMac = getLocalMacAddress();
+var network_scanning_status = "0";
+var auth_username = "";
+var auth_password = "";
 
 // 读取配置文件的函数
 async function loadConfig() {
@@ -557,16 +557,102 @@ function restartProxyListener() {
   });
 }
 
+// 将 rawHeaders 转换为对象的辅助函数
+function parseHeaders(rawHeaders) {
+  const headers = {};
+  for (let i = 0; i < rawHeaders.length; i += 2) {
+    const key = rawHeaders[i].toLowerCase(); // 转换为小写以匹配标准
+    const value = rawHeaders[i + 1];
+    headers[key] = value;
+  }
+  return headers;
+}
+
+function getProxyAuthConfig() {
+  return {
+    auth_username,
+    auth_password
+  };
+}
+
 function getAnyProxyOptions() {
   return {
     port: proxyPort,
     rule: {
+      // 验证 Proxy-Authorization
+      checkProxyAuth(req) {
+        const authConfig = getProxyAuthConfig();
+        const expectedUser = authConfig.auth_username;
+        const expectedPass = authConfig.auth_password;
+        // 如果 auth_username 为空，则始终验证通过
+        if (expectedUser === "") {
+          return true;
+        }
+        const headers = parseHeaders(req.rawHeaders);
+
+        const authHeader = headers['proxy-authorization'];
+
+        if (!authHeader || !authHeader.startsWith('Basic ')) {
+          return this.sendAuthRequired();
+        }
+
+        const credentials = authHeader.substring(6); // 去掉 'Basic ' 前缀
+        let decoded;
+        try {
+          decoded = Buffer.from(credentials, 'base64').toString('utf8');
+        } catch (e) {
+          return this.sendAuthRequired();
+        }
+
+        const [user, pass] = decoded.split(':');
+        if (user !== expectedUser || pass !== expectedPass) {
+          return this.sendAuthRequired();
+        }
+
+        return true; // 验证通过
+      },
+
+      // 返回 407 Proxy Authentication Required
+      sendAuthRequired() {
+        return {
+          response: {
+            statusCode: 407,
+            header: {
+              'Proxy-Authenticate': 'Basic realm="AnyProxy Secure Proxy"'
+            },
+            body: 'Proxy authentication required.'
+          }
+        };
+      },
+
+      send407bySocket(socket) {
+        const response407 = [
+          'HTTP/1.1 407 Proxy Authentication Required',
+          'Proxy-Authenticate: Basic realm="AnyProxy Secure Proxy"',
+          'Content-Type: text/plain; charset=utf-8',
+          'Content-Length: 25', // 'Proxy authentication required.'.length
+          'Connection: close', // 明确指示关闭连接
+          '', // 空行表示头部结束
+          'Proxy authentication required.' // 响应体
+        ].join('\r\n');
+        const clientSocket = socket; // 获取原始客户端 socket
+        clientSocket.write(response407);
+        clientSocket.destroy(); // 立即销毁连接
+      },
       // 只对特定域名启用 HTTPS 拦截，无规则时直接四层转发
       async beforeDealHttpsRequest(requestDetail, next) {
         // 如果配置了 vpn_proxy，全部走解密逻辑，仅调试使用
-        if (vpn_proxy != "") {
+        if (vpn_proxy != "" && vpn_proxy !== undefined) {
           return true;
         }
+
+        var authResult = this.checkProxyAuth(requestDetail._req);
+        if (authResult !== true) {
+          // 认证失败，立即发送 407 并关闭连接
+          this.send407bySocket(requestDetail._req.socket);
+          return false; // 兜底逻辑，阻止调用 beforeSendRequest
+        }
+
         const clientIp = getRemoteAddressFromReq(requestDetail);
         const blockRules = getBlockRules(clientIp);
         // requestDetail.host 是域名+端口的形式
@@ -600,6 +686,18 @@ function getAnyProxyOptions() {
 
       // 拦截 HTTP 请求以及 HTTPS 拆包的请求
       async beforeSendRequest(requestDetail) {
+
+        
+        var authResult = this.checkProxyAuth(requestDetail._req);
+        if (authResult === true) {
+          // 验证通过，do Nothing
+        } else {
+          // 验证不通过，直接拦截进入 beforeSendRequest，去返回 407
+          return authResult;
+        }
+
+
+
         const { url, requestOptions } = requestDetail;
         const clientIp = requestDetail._req?.sourceIp || '127.0.0.1';
         const host = requestDetail.requestOptions.hostname;
@@ -814,7 +912,6 @@ var LocalProxy = {
         console.log(`更新设备: ${newDevice.ip} (${existingDevice.mac} -> ${newDevice.mac})`);
       }
     });
-
 
     _fs.writeConfig({
       ...config,
