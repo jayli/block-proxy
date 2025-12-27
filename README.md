@@ -35,7 +35,7 @@
 
 > 要是打包 docker 空间不够就执行 `docker system prune -a --volumes`
 
-拷贝 tar 到 openwrt 后，`mkdir block-proxy & cd block-proxy`，启动容器：
+拷贝 tar 到 openwrt 后启动容器：
 
 ```
 docker run --init -d --restart=unless-stopped \
