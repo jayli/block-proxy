@@ -813,7 +813,8 @@ function getAnyProxyOptions() {
             // 验证通过，do Nothing
           } else {
             // 验证不通过，返回 407
-            return authResult;
+            this.send407bySocket(requestDetail._req.socket);
+            return authResult; // 兜底逻辑，强制返回
           }
         }
 
