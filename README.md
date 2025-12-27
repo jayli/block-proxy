@@ -41,6 +41,7 @@
 docker run --init -d --restart=unless-stopped \
            -e TZ=Asia/Shanghai --network=host \
            --user=root \
+           --cpuset-cpus="4,5" \
            --log-driver local \
            --log-opt max-size=10m \
            --log-opt max-file=3 \
@@ -49,7 +50,31 @@ docker run --init -d --restart=unless-stopped \
            --name block-proxy block-proxy
 ```
 
-网关里为了方便获取子网机器ip和mac地址，docker 容器和宿主机共享同一个网络，同时指定时区。
+网关里为了方便获取子网机器 ip 和 mac 地址，docker 容器需要和宿主机共享同一个网络，同时指定时区。
+
+⚠️ 如何指定 CPU `--cpuset-cpus="4,5"`
+
+进入 openwrt 运行：
+
+```
+# 查看每个核心当前频率（单位 kHz）
+for i in /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq; do
+  echo "$i: $(cat $i)"
+done
+```
+
+输出：
+
+```
+/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq: 1008000
+/sys/devices/system/cpu/cpu1/cpufreq/scaling_cur_freq: 1008000
+/sys/devices/system/cpu/cpu2/cpufreq/scaling_cur_freq: 1008000
+/sys/devices/system/cpu/cpu3/cpufreq/scaling_cur_freq: 1008000
+/sys/devices/system/cpu/cpu4/cpufreq/scaling_cur_freq: 1416000
+/sys/devices/system/cpu/cpu5/cpufreq/scaling_cur_freq: 1416000
+```
+
+显示 4、5 是最高频的核心。启动后主程序会随机绑定 4 或 5。 
 
 如果是在 Window/Mac 中，需要手动指定端口绑定（不推荐）：
 
@@ -122,13 +147,13 @@ Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" t
 
 - 四层转发：Node 的流式 `pipe()` 性能很好，吞吐量不用担心。只要不解包，速度接近原生。
 - 七层拦截：url 命中规则时直接返回空，需要解包，但避免了网络耗时，总体基本不影响速度。
-- MITM：需要 MITM 的请求，既有请求 RT，也有 tls 解包，RT 会增加。因为 Node 的 tls 加解密基于系统的 OpenSSL，速度取决于 CPU 算力，主流软路由基本够用。
+- MITM：需要 MITM 的请求，既有请求 RT，也有 tls 解包，RT 会增加。因为 tls 加解密基于系统的 OpenSSL，速度取决于 CPU 算力，Node 跑在软路由最快的核心上，做调度层完全够用了。
 - Openwrt 稳定性：为了避免瞬时的 CPU 打满，最好 docker 里加上 CPU 和内存的限制。实测内存 400M，CPU 50% 足够了。
 
-⚠️ 重要：如果把 block-proxy 部署在 openwrt 网关上，代理地址和网关地址一致，iOS Safari 有一个默认安全限制，不支持带认证的代理和网关 IP 一致，两个解决办法：
+⚠️ 提示：如果把 block-proxy 部署在 openwrt 网关上，代理地址和网关地址一致，iOS Safari 有一个默认安全限制，不支持带认证的代理和网关 IP 一致，两个解决办法：
 
 1. 不要填代理认证用户名和密码
-2. 给 openwrt 再绑定一个 IP，ios 设备在局域网内绑定这个 IP
+2. 给 openwrt lan 口再绑定一个 IP，ios 设备在局域网内绑定这个 IP
 
 <img width="400" alt="image" src="https://github.com/user-attachments/assets/0f46d6b4-00b1-44aa-9be7-fa23a09bb199" />
 
