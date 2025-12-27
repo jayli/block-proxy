@@ -41,7 +41,6 @@
 docker run --init -d --restart=unless-stopped \
            -e TZ=Asia/Shanghai --network=host \
            --user=root \
-           --cpuset-cpus="4,5" \
            --log-driver local \
            --log-opt max-size=10m \
            --log-opt max-file=3 \
@@ -51,30 +50,6 @@ docker run --init -d --restart=unless-stopped \
 ```
 
 网关里为了方便获取子网机器 ip 和 mac 地址，docker 容器需要和宿主机共享同一个网络，同时指定时区。
-
-⚠️ 如何指定 CPU `--cpuset-cpus="4,5"`
-
-进入 openwrt 运行：
-
-```
-# 查看每个核心当前频率（单位 kHz）
-for i in /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq; do
-  echo "$i: $(cat $i)"
-done
-```
-
-输出：
-
-```
-/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq: 1008000
-/sys/devices/system/cpu/cpu1/cpufreq/scaling_cur_freq: 1008000
-/sys/devices/system/cpu/cpu2/cpufreq/scaling_cur_freq: 1008000
-/sys/devices/system/cpu/cpu3/cpufreq/scaling_cur_freq: 1008000
-/sys/devices/system/cpu/cpu4/cpufreq/scaling_cur_freq: 1416000
-/sys/devices/system/cpu/cpu5/cpufreq/scaling_cur_freq: 1416000
-```
-
-显示 4、5 是最高频的核心。启动后主程序会随机绑定 4 或 5。 
 
 如果是在 Window/Mac 中，需要手动指定端口绑定（不推荐）：
 
