@@ -618,7 +618,8 @@ function getProxyAuthConfig() {
 // host 可能携带端口：a.com:443
 function authPass(protocol, host, url) {
   const passHosts = [
-    "googlevideo.com" // Toutube 视频流
+    "googlevideo.com", // Toutube 视频流
+    "dns.weixin.qq.com.cn" // 微信的 dns 预解析
   ];
   //  基于 http 传输的流
   const passUrl = [
