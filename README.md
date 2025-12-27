@@ -101,6 +101,10 @@ docker run --init -d --restart=unless-stopped --user=root \
 1. 代理设置：iPhone/iPad 为例：设置 → 无线局域网 → 点击当前网络 → HTTP代理/配置代理，设置服务器和端口。
 2. 证书设置：打开anproxy监控地址（8002端口），扫码安装证书，在手机设置中安装该证书，同时配置完全信任：设置→通用→关于本机→证书信任设置→打开对AnyProxy的完全信任
 
+小朋友的设备里把 Mac 固定下来：
+
+<img width="350" alt="image" src="https://github.com/user-attachments/assets/f9bfab89-7194-4a72-b1ae-5cca27911bc9" />
+
 #### 禁掉设备直连
 
 防止小朋友修改网Wifi连接，只允许设备通过代理访问，把直连上网权限关掉。网关里配置防火墙规则：
