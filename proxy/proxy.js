@@ -55,7 +55,7 @@ async function loadConfig() {
   let config = {
     network_scanning_status: network_scanning_status,
     progress_time_stamp: progress_time_stamp,
-    block_hosts: blockHosts, // 使用全局变量的默认值
+    block_hosts: blockHosts,
     proxy_port: proxyPort,
     web_interface_port: webInterfacePort,
     vpn_proxy:"",
@@ -90,7 +90,6 @@ async function loadConfig() {
         });
       }
 
-      // 更新 vpn_proxy
       vpn_proxy = loadedConfig.vpn_proxy;
       config.vpn_proxy = vpn_proxy;
 
@@ -121,7 +120,6 @@ async function loadConfig() {
         config.devices = devices;
       }
       
-      // console.log('Loaded config from config.json:', config);
     } else {
       // 如果配置文件不存在，则创建默认配置文件
       _fs.writeConfig({
@@ -857,7 +855,9 @@ function getAnyProxyOptions() {
           // 如果是列表中的域名则拦截
           /// console.log(`[⭕️] ${url}`);
           // 为被拦截的域名返回自定义响应
-          let customBody = ["youtube.com","googlevideo.com"].includes(host) ? Buffer.alloc(0) : "blocked by AnyProxy";
+          let customHosts = ["youtube.com","googlevideo.com"];
+          let customBody = customHosts.some(domain => host.endsWith(domain) || host === domain) ?
+                                           Buffer.alloc(0) : "blocked by AnyProxy";
           return {
             response: {
               statusCode: 200,
