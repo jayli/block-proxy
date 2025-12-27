@@ -428,7 +428,6 @@ function getUserReqHandler(userRule, recorder) {
       }
 
       // set proxy-connection
-      console.log(responseInfo.statusCode === 407);
       if (connection) {
         resHeader['x-anyproxy-origin-connection'] = connection;
         if (responseInfo.statusCode === 407) {

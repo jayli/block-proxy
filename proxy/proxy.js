@@ -17,6 +17,7 @@ const { HttpProxyAgent } = require('http-proxy-agent');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const _request = require("./http.js").request;
 const Rule = require("./mitm/rule.js");
+const attacker = require('./attacker.js');
 
 // 全局变量存储关键配置参数
 const configPath = path.join(__dirname, '../config.json');
@@ -669,7 +670,7 @@ function getAnyProxyOptions() {
       // protocol: http, https
       // req: 原始的 Request
       // url: 拆包后的 URL，如果是 Connect 环节校验则为 null
-      checkProxyAuth(protocol, req, url) {
+      checkProxyAuth(protocol, req, sourceIp, url) {
         const authConfig = getProxyAuthConfig();
         if (authConfig.auth_username === undefined) {
           console.log("authConfig.auth_username 为空，检查下 config.json 完整性");
@@ -680,10 +681,21 @@ function getAnyProxyOptions() {
         if (expectedUser === "") {
           return true;
         }
+
+        // 恶意扫描 IP 始终拒绝
+        if (sourceIp != "127.0.0.1" &&
+          sourceIp != "255.255.255.254" &&
+          !sourceIp.startsWith("192.168.") &&
+          attacker.isBadGuy(sourceIp)) {
+          console.log('[🚫]>> 拦截 badguy', sourceIp);
+          return this.sendAuthRequired();
+        }
+
         const headers = parseHeaders(req.rawHeaders);
 
         // 对于一些特殊情况需要放行的
         if (authPass(protocol, headers.host, url)) {
+          attacker.setGoodGuy(sourceIp);
           return true;
         }
 
@@ -706,6 +718,7 @@ function getAnyProxyOptions() {
           return this.sendAuthRequired();
         }
 
+        attacker.setGoodGuy(sourceIp);
         return true; // 验证通过
       },
 
@@ -725,7 +738,10 @@ function getAnyProxyOptions() {
         };
       },
 
-      send407bySocket(socket) {
+      send407bySocket(socket, sourceIp) {
+        // 拒绝一次记录一次
+        var counter = attacker.countIPAccess(sourceIp);
+
         var body = "Proxy authentication required.";
         const response407 = [
           'HTTP/1.1 407 Proxy Authentication Required',
@@ -745,20 +761,20 @@ function getAnyProxyOptions() {
       },
       // 只对特定域名启用 HTTPS 拦截，无规则时直接四层转发
       async beforeDealHttpsRequest(requestDetail, next) {
+        const clientIp = getRemoteAddressFromReq(requestDetail);
         // 如果配置了 vpn_proxy，全部走解密逻辑，仅调试使用
         if (vpn_proxy != "" && vpn_proxy !== undefined) {
           return true;
         }
 
-        var authResult = this.checkProxyAuth('https', requestDetail._req, null);
+        var authResult = this.checkProxyAuth('https', requestDetail._req, clientIp, null);
 
         if (authResult !== true) {
           // 认证失败，立即发送 407 并关闭连接
-          this.send407bySocket(requestDetail._req.socket);
+          this.send407bySocket(requestDetail._req.socket, clientIp);
           return false; // 兜底逻辑，阻止调用 beforeSendRequest
         }
 
-        const clientIp = getRemoteAddressFromReq(requestDetail);
         const blockRules = getBlockRules(clientIp);
         // requestDetail.host 是域名+端口的形式
         const host = requestDetail.host.split(":")[0];
@@ -808,12 +824,12 @@ function getAnyProxyOptions() {
         // 这里验证只能处理 HTTP 请求，HTTPs 里 _req 携带的请求头是不包含验证字段的，因为
         // https 内的 header 是五层信息，proxy-Authenticate 信息属于四层，这里看不到
         if (isHttp) {
-          var authResult = this.checkProxyAuth('http',requestDetail._req, url);
+          var authResult = this.checkProxyAuth('http',requestDetail._req, clientIp, url);
           if (authResult === true) {
             // 验证通过，do Nothing
           } else {
             // 验证不通过，返回 407
-            this.send407bySocket(requestDetail._req.socket);
+            this.send407bySocket(requestDetail._req.socket, clientIp);
             return authResult; // 兜底逻辑，强制返回
           }
         }
@@ -1087,6 +1103,11 @@ var LocalProxy = {
           console.error('Failed to automatically update network devices:', error);
         }
       }, 2 * 60 * 60 * 1000); // 2小时 = 2 * 60 * 60 * 1000 毫秒
+
+      // 设置定时任务，每2分钟清理一次超过 10 分钟未活动的攻击 IP
+      setInterval(async () => {
+        attacker.cleanupInactiveIPs();
+      }, 2 * 60 * 1000);
     // }, 100);
   }
 };
