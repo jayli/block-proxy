@@ -134,8 +134,8 @@
   "proxy_port": 8001,
   "web_interface_port": 8002,
   "vpn_proxy": "",
-  "auth_username": "aa",
-  "auth_password": "bb",
+  "auth_username": "lijing",
+  "auth_password": "lijing",
   "devices": [
     {
       "ip": "192.168.124.1",
