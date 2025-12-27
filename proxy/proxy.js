@@ -711,13 +711,16 @@ function getAnyProxyOptions() {
 
       // 返回 407 Proxy Authentication Required
       sendAuthRequired() {
+        var body = "Proxy authentication required..";
         return {
           response: {
             statusCode: 407,
             header: {
-              'Proxy-Authenticate': 'Basic realm="AnyProxy Secure Proxy"'
+              'Proxy-Authenticate': 'Basic realm="AnyProxy Secure Proxy"',
+              'Connection': 'close',
+              'Content-Length': getContentLength(body)
             },
-            body: 'Proxy authentication required..'
+            body: body
           }
         };
       },
@@ -734,8 +737,11 @@ function getAnyProxyOptions() {
           body // 响应体
         ].join('\r\n');
         const clientSocket = socket; // 获取原始客户端 socket
-        clientSocket.write(response407);
-        clientSocket.destroy(); // 立即销毁连接
+        // clientSocket.write(response407);
+        // clientSocket.destroy(); // 立即销毁连接
+        clientSocket.write(response407, () => {
+          clientSocket.destroy(); // 确保 write 完成后再关闭
+        });
       },
       // 只对特定域名启用 HTTPS 拦截，无规则时直接四层转发
       async beforeDealHttpsRequest(requestDetail, next) {
