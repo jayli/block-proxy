@@ -428,10 +428,15 @@ function getUserReqHandler(userRule, recorder) {
       }
 
       // set proxy-connection
+      console.log(responseInfo.statusCode === 407);
       if (connection) {
         resHeader['x-anyproxy-origin-connection'] = connection;
-        delete resHeader.connection;
-        delete resHeader.Connection;
+        if (responseInfo.statusCode === 407) {
+          // do nothing
+        } else {
+          delete resHeader.connection;
+          delete resHeader.Connection;
+        }
       }
 
       if (!responseInfo) {
