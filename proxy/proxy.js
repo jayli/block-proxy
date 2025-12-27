@@ -793,6 +793,7 @@ function getAnyProxyOptions() {
         const pathname = requestDetail.requestOptions.path?.split('?')[0];;
         const body = requestDetail.requestData;
         const isHttps = url.startsWith('https:') ? true : false;
+        const isHttp = !isHttps;
 
         // 如果是裸IP请求，全部放行
         if (net.isIPv4(host) || net.isIPv6(host)) {
@@ -801,7 +802,7 @@ function getAnyProxyOptions() {
 
         // 这里验证只能处理 HTTP 请求，HTTPs 里 _req 携带的请求头是不包含验证字段的，因为
         // https 内的 header 是五层信息，proxy-Authenticate 信息属于四层，这里看不到
-        if (!isHttps) {
+        if (isHttp) {
           var authResult = this.checkProxyAuth('http',requestDetail._req, url);
           if (authResult === true) {
             // 验证通过，do Nothing
