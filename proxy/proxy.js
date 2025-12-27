@@ -50,7 +50,6 @@ function preCompileRuleRegexp() {
   });
 }
 
-
 // 读取配置文件的函数
 async function loadConfig() {
   let config = {
@@ -549,7 +548,12 @@ async function rewriteRuleBeforeRequest(host, url, request) {
 }
 
 // 需要强制拆包的域名从 Rule 里获得
+// host: a.com
+//       a.com:443
 function shouldMitm(host) {
+  if (/:\d+$/.test(host)) {
+    host = host.split(":")[0];
+  }
   var should = false;
   var mitm_list = [];
   Object.keys(Rule).forEach(key => {
@@ -612,12 +616,61 @@ function getProxyAuthConfig() {
   };
 }
 
+// 对于一些流媒体的链接不支持 407 的情况要排除验证
+// host 可能携带端口：a.com:443
+function authPass(protocol, host, url) {
+  const passHosts = [
+    "googlevideo.com" // Toutube 视频流
+  ];
+  //  基于 http 传输的流
+  const passUrl = [
+    /\.(m3u8|mp4|mpd|ts|webm|avi|mkv)$/i
+  ];
+
+  if (/:\d+$/.test(host)) {
+    host = host.split(":")[0];
+  }
+
+  var pass = false;
+
+  // 检查流媒体域名的排除项
+  passHosts.some(function(item) {
+    if (host.toLowerCase().endsWith(item.toLowerCase())) {
+      pass = true;
+      return true;
+    } else {
+      return false;
+    }
+  });
+
+  if (pass) {
+    return pass;
+  }
+
+  // 检查流媒体类型的排除项
+  if (url != null) {
+    passUrl.some(function(item) {
+      if (item.test(url)) {
+        pass = true;
+        return true;
+      } else {
+        return false;
+      }
+    });
+  }
+
+  return pass;
+}
+
 function getAnyProxyOptions() {
   return {
     port: proxyPort,
     rule: {
       // 验证 Proxy-Authorization
-      checkProxyAuth(req) {
+      // protocol: http, https
+      // req: 原始的 Request
+      // url: 拆包后的 URL，如果是 Connect 环节校验则为 null
+      checkProxyAuth(protocol, req, url) {
         const authConfig = getProxyAuthConfig();
         if (authConfig.auth_username === undefined) {
           console.log("authConfig.auth_username 为空，检查下 config.json 完整性");
@@ -630,8 +683,8 @@ function getAnyProxyOptions() {
         }
         const headers = parseHeaders(req.rawHeaders);
 
-        // googlevideo.com 域名无法处理 http 认证信息，强制验证通过
-        if (headers.host.endsWith('googlevideo.com:443') || headers.host.endsWith('googlevideo.com')) {
+        // 对于一些特殊情况需要放行的
+        if (authPass(protocol, headers.host, url)) {
           return true;
         }
 
@@ -665,20 +718,21 @@ function getAnyProxyOptions() {
             header: {
               'Proxy-Authenticate': 'Basic realm="AnyProxy Secure Proxy"'
             },
-            body: 'Proxy authentication required.'
+            body: 'Proxy authentication required..'
           }
         };
       },
 
       send407bySocket(socket) {
+        var body = "Proxy authentication required.";
         const response407 = [
           'HTTP/1.1 407 Proxy Authentication Required',
           'Proxy-Authenticate: Basic realm="AnyProxy Secure Proxy"',
           'Content-Type: text/plain; charset=utf-8',
-          'Content-Length: 25', // 'Proxy authentication required.'.length
+          'Content-Length: ' + getContentLength(body), // 'Proxy authentication required.'.length
           'Connection: close', // 明确指示关闭连接
           '', // 空行表示头部结束
-          'Proxy authentication required.' // 响应体
+          body // 响应体
         ].join('\r\n');
         const clientSocket = socket; // 获取原始客户端 socket
         clientSocket.write(response407);
@@ -691,7 +745,7 @@ function getAnyProxyOptions() {
           return true;
         }
 
-        var authResult = this.checkProxyAuth(requestDetail._req);
+        var authResult = this.checkProxyAuth('https', requestDetail._req, null);
 
         if (authResult !== true) {
           // 认证失败，立即发送 407 并关闭连接
@@ -732,7 +786,6 @@ function getAnyProxyOptions() {
 
       // 拦截 HTTP 请求以及 HTTPS 拆包的请求
       async beforeSendRequest(requestDetail) {
-
         const { url, requestOptions } = requestDetail;
         const clientIp = requestDetail._req?.sourceIp || '127.0.0.1';
         const host = requestDetail.requestOptions.hostname;
@@ -749,7 +802,7 @@ function getAnyProxyOptions() {
         // 这里验证只能处理 HTTP 请求，HTTPs 里 _req 携带的请求头是不包含验证字段的，因为
         // https 内的 header 是五层信息，proxy-Authenticate 信息属于四层，这里看不到
         if (!isHttps) {
-          var authResult = this.checkProxyAuth(requestDetail._req);
+          var authResult = this.checkProxyAuth('http',requestDetail._req, url);
           if (authResult === true) {
             // 验证通过，do Nothing
           } else {
@@ -758,14 +811,13 @@ function getAnyProxyOptions() {
           }
         }
 
-
         var _request      = { ...requestDetail.requestOptions };
         _request.host     = requestDetail.requestOptions.hostname;
         _request.url      = requestDetail.url;
         _request.body     = requestDetail.requestData;
         _request.protocol = requestDetail.protocol;
 
-        // 如果是 http 请求，说明是直接访问过来的，没有经过 beforeDealHttpsRequest，因此clientIp是真实的
+        // 如果是 http 请求，则没有经过 beforeDealHttpsRequest，因此clientIp是真实的
         // 执行逻辑：
         //  1. http 协议请求到这里
         //  2. https 协议根据域名需要拦截，转发到这里，到这里已经完成了拆包
