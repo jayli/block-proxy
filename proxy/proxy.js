@@ -7,6 +7,7 @@ const { start } = require('repl');
 const net = require('net');
 const scanNetwork = require("./scan").scanNetwork;
 const util = require('util');
+const _util = require('../server/util.js');
 const os = require('os');
 const http = require("http");
 const https = require('https');
@@ -35,6 +36,8 @@ var auth_username = "";
 var auth_password = "";
 var your_domain = "yui.cool";
 var yui_cool_ip = "0.0.0.0";
+var is_running_in_docker = false;
+var docker_host_IP = '';
 
 // 对 Rule 里的正则表达式进行预编译
 function preCompileRuleRegexp() {
@@ -858,7 +861,9 @@ function getAnyProxyOptions() {
         // 如果请求的目的是自己，防止代理回环
         // 这里没办法穷举，只能约定防火墙里绑定的转发端口和 AnyProxy 的代理端口保持一致
         // 只要不绑定其他端口，就绝对不会陷入回环问题
-        if ((requestOptions.hostname == localIp && requestOptions.port == proxyPort.toString()) ||
+        const isDocker = is_running_in_docker;
+        var myIp = isDocker ? docker_host_IP : localIp;
+        if ((requestOptions.hostname == myIp && requestOptions.port == proxyPort.toString()) ||
           (requestOptions.hostname == your_domain && requestOptions.port == proxyPort.toString()) ||
           (requestOptions.hostname == yui_cool_ip && requestOptions.port == proxyPort.toString())
         ) {
@@ -1155,6 +1160,14 @@ var LocalProxy = {
     var that = this;
     console.log('启动代理服务 LocalProxy.init() ');
     console.log('Dev server started, starting LocalProxy...');
+    is_running_in_docker = _util.isRunningInDocker();
+    if (is_running_in_docker) {
+      try {
+        docker_host_IP = _util.getDockerHostIP();
+      } catch (e) {
+        docker_host_IP = getLocalIp();
+      }
+    }
     await that.start(() => {});
     await that.updateDevices();
     console.log('local network devices updated!');

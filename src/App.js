@@ -439,17 +439,9 @@ function App() {
                 </ul>
                 
                 {/* 显示宿主机IP信息 */}
-                {isDocker && hostIPs.length > 0 && (
+                {isDocker && (
                   <div className="host-ip-info">
-                    <p><strong>宿主机IP地址:</strong></p>
-                    <ul className="host-ip-list">
-                      {hostIPs.map((hostIP, index) => (
-                        <li key={index} className="host-ip-item">
-                          <span className="method-name">{hostIP.method}:</span>
-                          <span className="host-ip-address">{hostIP.ip}</span>
-                        </li>
-                      ))}
-                    </ul>
+                    <p><strong>宿主机IP地址:</strong>{hostIPs}</p>
                   </div>
                 )}
               </div>
