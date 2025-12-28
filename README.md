@@ -49,7 +49,7 @@ docker run --init -d --restart=unless-stopped \
            --name block-proxy block-proxy
 ```
 
-> 如果在 1G 内存的机器上，可以修改好参数后，然后只启动 `npm run proxy`。
+> block-proxy 物理内存使用平均在 200M，如果在 1G 内存的机器上，可以配置好参数后，只启动 `npm run proxy`，运行内存则将至 100M。
 
 网关里为了方便获取子网机器 ip 和 mac 地址，docker 容器需要和宿主机共享同一个网络，同时指定时区。
 
