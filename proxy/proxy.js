@@ -17,6 +17,8 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const _request = require("./http.js").request;
 const Rule = require("./mitm/rule.js");
 const attacker = require('./attacker.js');
+const monitor = require('./monitor.js');
+const domain = require('./domain.js');
 
 // 全局参数
 const configPath = path.join(__dirname, '../config.json');
@@ -27,9 +29,12 @@ var vpn_proxy = "";
 var devices = [];
 var progress_time_stamp = "";
 var localMac = getLocalMacAddress();
+var localIp = getLocalIp();
 var network_scanning_status = "0";
 var auth_username = "";
 var auth_password = "";
+var your_domain = "yui.cool";
+var yui_cool_ip = "0.0.0.0";
 
 // 对 Rule 里的正则表达式进行预编译
 function preCompileRuleRegexp() {
@@ -141,6 +146,17 @@ async function loadConfig() {
   }
   
   return config;
+}
+
+async function updateYuiCoolIp() {
+  var ips = await domain.getDomainIP(your_domain);
+  var ip;
+  if (ips !== null) {
+    ip = ips[0];
+  } else {
+    ip = "0.0.0.0";
+  }
+  yui_cool_ip = ip;
 }
 
 // F4:6B:8c:90:29:5  ->  f4:6b:8c:90:29:05
@@ -277,6 +293,19 @@ function getLocalMacAddress() {
     }
   }
   return null;
+}
+
+function getLocalIp() {
+    const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      // 跳过 IPv6 和内部回环地址
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return '127.0.0.1'; // fallback
 }
 
 function getMacByIp(ipAddress) {
@@ -825,6 +854,23 @@ function getAnyProxyOptions() {
         const isHttps = url.startsWith('https:') ? true : false;
         const isHttp = !isHttps;
 
+        // 如果直接访问当前 IP 的代理端口
+        // 如果请求的目的是自己，防止代理回环
+        // 这里没办法穷举，只能约定防火墙里绑定的转发端口和 AnyProxy 的代理端口保持一致
+        // 只要不绑定其他端口，就绝对不会陷入回环问题
+        if ((requestOptions.hostname == localIp && requestOptions.port == proxyPort.toString()) ||
+          (requestOptions.hostname == your_domain && requestOptions.port == proxyPort.toString()) ||
+          (requestOptions.hostname == yui_cool_ip && requestOptions.port == proxyPort.toString())
+        ) {
+          return {
+            response: {
+              statusCode: 200,
+              header: { 'Content-Type': 'text/plain; charset=utf-8' },
+              body: await monitor.getSystemMonitorInfo(proxyPort)
+            }
+          };
+        }
+
         // 如果是裸IP请求，全部放行
         if (net.isIPv4(host) || net.isIPv6(host)) {
           return null;
@@ -1122,6 +1168,7 @@ var LocalProxy = {
       } catch (error) {
         console.error('Failed to automatically update network devices:', error);
       }
+      await updateYuiCoolIp();
     }, 2 * 60 * 60 * 1000); // 2小时 = 2 * 60 * 60 * 1000 毫秒
 
     // 设置定时任务，每2分钟清理一次超过 10 分钟未活动的攻击 IP
