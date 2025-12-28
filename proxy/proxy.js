@@ -688,6 +688,7 @@ function getAnyProxyOptions() {
           !sourceIp.startsWith("192.168.") &&
           attacker.isBadGuy(sourceIp)) {
           console.log('[🚫]>> 拦截 badguy', sourceIp);
+          console.log(222);
           return this.sendAuthRequired();
         }
 
@@ -700,6 +701,11 @@ function getAnyProxyOptions() {
         }
 
         const authHeader = headers['proxy-authorization'];
+
+        // 有一些App对于域名带端口的情况，不会二次请求带上authentication，统一过滤掉
+        if (/:\d+$/ig.test(headers['host'])) {
+          return true;
+        }
 
         if (!authHeader || !authHeader.startsWith('Basic ')) {
           return this.sendAuthRequired();
