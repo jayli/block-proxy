@@ -1,5 +1,4 @@
 // 文件名: proxy.js
-
 const AnyProxy = require('anyproxy');
 const fs = require('fs');
 const _fs = require('./fs.js');
@@ -19,7 +18,7 @@ const _request = require("./http.js").request;
 const Rule = require("./mitm/rule.js");
 const attacker = require('./attacker.js');
 
-// 全局变量存储关键配置参数
+// 全局参数
 const configPath = path.join(__dirname, '../config.json');
 var blockHosts = [];
 var proxyPort = 8001;
@@ -251,6 +250,7 @@ function shouldBlockHost(host, blockList, url) {
   });
 }
 
+// 获得 body 的长度，入参可以是Buffer也可以是字符串
 function getContentLength(body) {
   let contentLength = 0;
   if (Buffer.isBuffer(body)) {
@@ -264,6 +264,7 @@ function getContentLength(body) {
   return contentLength;
 }
 
+// 得到本机 Mac 地址
 function getLocalMacAddress() {
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
@@ -357,6 +358,7 @@ function normalizeIP(rawIP) {
   return ip.replace(/^::ffff:/i, '');
 }
 
+// 暂时只支持 IPv4
 function getRemoteAddressFromReq(requestDetail) {
   var rawIP = requestDetail?._req?.client?.remoteAddress;
   if (rawIP === undefined) {
@@ -366,6 +368,7 @@ function getRemoteAddressFromReq(requestDetail) {
   }
 }
 
+// 获得 Symbol 实例的属性
 function getSymbolProperty(obj, symbolDescription) {
   if (typeof obj !== 'object' || obj === null) {
     return undefined;
@@ -380,6 +383,7 @@ function getSymbolProperty(obj, symbolDescription) {
   return undefined;
 }
 
+// "192.168.1.1:8001" → { ip, port }
 function parseAddress(str) {
   const [ip, portStr] = str.split(':');
   const port = portStr ? parseInt(portStr, 10) : null;
@@ -521,7 +525,7 @@ async function MITMHandler(type, url, request, response) {
     }
   }
 
-  // 要么是 重写后的 response 对象，要么是 null
+  // 要么是重写后的 response 对象，要么是 null
   // beforeSendResponse 中应当返回原 response，应当在 callback 中处理
   return responseResult;
 }
@@ -701,7 +705,9 @@ function getAnyProxyOptions() {
 
         const authHeader = headers['proxy-authorization'];
 
-        // 有一些App对于域名带端口的情况，不会二次请求带上authentication，统一过滤掉
+        // Hack:
+        // xiaohongshu.com:443，小红书App和知乎 App 里发起带端口的请求，收到 407 后第二次
+        // 请求不会带上authentication，这是 App 的 bug，为了避免功能不可用，这里统一 Hack 掉。
         if (/:\d+$/ig.test(headers['host'])) {
           return true;
         }
@@ -758,8 +764,6 @@ function getAnyProxyOptions() {
           body // 响应体
         ].join('\r\n');
         const clientSocket = socket; // 获取原始客户端 socket
-        // clientSocket.write(response407);
-        // clientSocket.destroy(); // 立即销毁连接
         clientSocket.write(response407, () => {
           clientSocket.destroy(); // 确保 write 完成后再关闭
         });
@@ -845,7 +849,7 @@ function getAnyProxyOptions() {
         _request.body     = requestDetail.requestData;
         _request.protocol = requestDetail.protocol;
 
-        // 如果是 http 请求，则没有经过 beforeDealHttpsRequest，因此clientIp是真实的
+        // 如果是 http 请求，没有经过 beforeDealHttpsRequest，因此clientIp是真实的
         // 执行逻辑：
         //  1. http 协议请求到这里
         //  2. https 协议根据域名需要拦截，转发到这里，到这里已经完成了拆包
@@ -886,7 +890,7 @@ function getAnyProxyOptions() {
           // 为被拦截的域名返回自定义响应
           let customHosts = ["youtube.com","googlevideo.com"];
           let customBody = customHosts.some(domain => host.endsWith(domain) || host === domain) ?
-                                           Buffer.alloc(0) : "blocked by AnyProxy";
+                                           Buffer.alloc(0) : "Blocked by AnyProxy";
           return {
             response: {
               statusCode: 200,
@@ -1103,33 +1107,31 @@ var LocalProxy = {
   // 代理服务启动，并同时启动定时任务
   init: async function() {
     var that = this;
-    // 预编译 MITM Rule 的正则
     console.log('启动代理服务 LocalProxy.init() ');
-    //setTimeout(async () => {
-      console.log('Dev server started, starting LocalProxy...');
-      await that.start(() => {});
-      await that.updateDevices();
-      console.log('local network devices updated!');
-      await delay(1000);
-      // restartProxyListener();
-      // 设置定时任务，每两小时更新一次设备信息
-      setInterval(async () => {
-        try {
-          await that.updateDevices();
-          console.log('Network devices updated automatically every 2 hours');
-        } catch (error) {
-          console.error('Failed to automatically update network devices:', error);
-        }
-      }, 2 * 60 * 60 * 1000); // 2小时 = 2 * 60 * 60 * 1000 毫秒
+    console.log('Dev server started, starting LocalProxy...');
+    await that.start(() => {});
+    await that.updateDevices();
+    console.log('local network devices updated!');
+    await delay(1000);
+    // restartProxyListener();
+    // 设置定时任务，每两小时更新一次设备信息
+    setInterval(async () => {
+      try {
+        await that.updateDevices();
+        console.log('Network devices updated automatically every 2 hours');
+      } catch (error) {
+        console.error('Failed to automatically update network devices:', error);
+      }
+    }, 2 * 60 * 60 * 1000); // 2小时 = 2 * 60 * 60 * 1000 毫秒
 
-      // 设置定时任务，每2分钟清理一次超过 10 分钟未活动的攻击 IP
-      setInterval(async () => {
-        attacker.cleanupInactiveIPs();
-      }, 2 * 60 * 1000);
-    // }, 100);
+    // 设置定时任务，每2分钟清理一次超过 10 分钟未活动的攻击 IP
+    setInterval(async () => {
+      attacker.cleanupInactiveIPs();
+    }, 2 * 60 * 1000);
   }
 };
 
+// 预编译 MITM Rule 的正则
 (function() {
   preCompileRuleRegexp();
 })();
