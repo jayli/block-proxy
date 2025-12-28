@@ -688,7 +688,6 @@ function getAnyProxyOptions() {
           !sourceIp.startsWith("192.168.") &&
           attacker.isBadGuy(sourceIp)) {
           console.log('[🚫]>> 拦截 badguy', sourceIp);
-          console.log(222);
           return this.sendAuthRequired();
         }
 
