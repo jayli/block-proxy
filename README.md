@@ -45,7 +45,7 @@ docker run --init -d --restart=unless-stopped \
            --log-opt max-size=10m \
            --log-opt max-file=3 \
            --cpus="4" \
-           --memory 350m \
+           --memory 250m \
            --name block-proxy block-proxy
 ```
 
