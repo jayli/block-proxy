@@ -947,7 +947,7 @@ function getAnyProxyOptions() {
                 'Connection': 'close',
                 'x-blockproxy-errorcode':"ENOTFOUND"
               },
-              body: ''
+              body: 'DNS_PROBE_FINISHED_NXDOMAIN, DNS lookup error.'
             }
           };
         } else if (error.code =="HPE_INVALID_VERSION") {
