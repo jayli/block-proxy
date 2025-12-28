@@ -430,7 +430,9 @@ function getUserReqHandler(userRule, recorder) {
       // set proxy-connection
       if (connection) {
         resHeader['x-anyproxy-origin-connection'] = connection;
-        if (responseInfo.statusCode === 407) {
+        // 如果是 407 响应，把 Connection: close 透传下去
+        // 如果是 200 响应，把 Connection: keep-alive 透传下去
+        if (responseInfo.statusCode === 407 || responseInfo.statusCode === 200) {
           // do nothing
         } else {
           delete resHeader.connection;
