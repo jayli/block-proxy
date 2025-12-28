@@ -49,6 +49,8 @@ docker run --init -d --restart=unless-stopped \
            --name block-proxy block-proxy
 ```
 
+> 如果在 1G 内存的机器上，修改好参数后，然后只启动 `npm run proxy`。
+
 网关里为了方便获取子网机器 ip 和 mac 地址，docker 容器需要和宿主机共享同一个网络，同时指定时区。
 
 如果是在 Window/Mac 中，需要手动指定端口绑定（不推荐）：
