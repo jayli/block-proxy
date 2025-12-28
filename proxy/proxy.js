@@ -937,6 +937,19 @@ function getAnyProxyOptions() {
               body: `AnyProxy Error: ${error.code}`
             }
           };
+        } else if (error.code == "ENOTFOUND") {
+          // DNS 请求出错
+          return {
+            response: {
+              statusCode: 502,
+              header: {
+                'Content-Type': 'text/plain; charset=utf-8',
+                'Connection': 'close',
+                'x-blockproxy-errorcode':"ENOTFOUND"
+              },
+              body: ''
+            }
+          };
         } else if (error.code =="HPE_INVALID_VERSION") {
           // 请求的返回是http 0.0版本：
           // HTTP/0.0 307 Temporary Redirect\r\n
