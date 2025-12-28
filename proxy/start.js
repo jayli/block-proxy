@@ -2,5 +2,5 @@
 const LocalProxy = require('./proxy');
 
 (async () => {
-  await LocalProxy.start(() => {});
+  await LocalProxy.init();
 })();
