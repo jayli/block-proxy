@@ -23,6 +23,7 @@ const domain = require('./domain.js');
 
 // 全局参数
 const configPath = path.join(__dirname, '../config.json');
+var anyproxy_started = false;
 var blockHosts = [];
 var proxyPort = 8001;
 var webInterfacePort = 8002;
@@ -1158,6 +1159,11 @@ var LocalProxy = {
   // 代理服务启动，并同时启动定时任务
   init: async function() {
     var that = this;
+    if (anyproxy_started === true) {
+      console.log('代理服务已经启动，跳过 LocalProxy.init() ');
+      return;
+    }
+
     console.log('启动代理服务 LocalProxy.init() ');
     console.log('Dev server started, starting LocalProxy...');
     is_running_in_docker = _util.isRunningInDocker();
@@ -1188,6 +1194,8 @@ var LocalProxy = {
     setInterval(async () => {
       attacker.cleanupInactiveIPs();
     }, 2 * 60 * 1000);
+
+    anyproxy_started = true;
   }
 };
 
