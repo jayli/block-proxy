@@ -42,33 +42,6 @@ var is_running_in_docker = false;
 var docker_host_IP = '';
 var enable_express = ""; // "0", "1"
 
-// 将 exec 转换为 Promise 形式，便于异步处理
-const execAsync = util.promisify(exec);
-
-// 重启Docker容器
-async function restartDockerContainer(containerName) {
-  const command = `docker restart ${containerName}`;
-
-  try {
-    console.log(`正在执行: ${command}`);
-    // 执行命令
-    const { stdout, stderr } = await execAsync(command);
-
-    // 注意：如果 JS 程序就在要重启的容器内，下面的 console.log 可能来不及执行
-    console.log(`容器 ${containerName} 重启命令执行成功。`);
-    console.log('stdout:', stdout); // 通常重启命令没有标准输出
-    if (stderr) {
-      console.error('stderr (可能包含警告):', stderr); // 检查是否有警告信息
-    }
-
-  } catch (error) {
-    // 如果命令执行失败（例如容器不存在），会进入这里
-    console.error(`执行命令失败: ${error.message}`);
-    console.error('stderr:', error.stderr);
-    console.error('stdout:', error.stdout);
-  }
-}
-
 // 对 Rule 里的正则表达式进行预编译
 function preCompileRuleRegexp() {
   Object.keys(Rule).forEach(key => {
@@ -912,18 +885,18 @@ function getAnyProxyOptions() {
               }
             };
           } else if (pathname == "/restart_docker") {
-            // 重启 Docker，只支持以 Docker 启动的形式
             if (isDocker) {
-              await restartDockerContainer("block-proxy");
+              var msg = "请手动重启 Docker 容器。";
             } else {
-              return {
-                response: {
-                  statusCode: 200,
-                  header: { 'Content-Type': 'text/plain; charset=utf-8' },
-                  body: "当前不在 Docker 容器内，无法完成重启，请在终端终止程序后再 npm run start 启动。"
-                }
-              };
+              var msg = "当前程序不在 Docker 容器内，请在终端终止程序后再 npm run start 启动。";
             }
+            return {
+              response: {
+                statusCode: 200,
+                header: { 'Content-Type': 'text/plain; charset=utf-8' },
+                body: msg
+              }
+            };
           } else if (pathname == "/enable_express") {
             var configData = await _fs.readConfig();
             _fs.writeConfig({
