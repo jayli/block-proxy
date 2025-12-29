@@ -33,9 +33,13 @@ async function getSystemMonitorInfo() {
     // === 1. 主机名 & 系统信息 ===
     const hostname = os.hostname();
     const platform = os.type(); // e.g., "Linux"
+    const machine = os.machine();
     const release = os.release(); // e.g., kernel version
+    const osVersion = os.version();
     output += `主机名：${hostname}\n`;
-    output += `系统名称和类型：${platform} ${release}\n\n`;
+    output += `系统架构：${machine}\n`;
+    output += `系统名称和类型：${platform} ${release}\n`;
+    output += `系统版本：${osVersion}\n\n`;
 
     // === 2. CPU ===
     const cpuCores = os.cpus().length;
@@ -161,11 +165,13 @@ async function getSystemMonitorInfo() {
     const hostname = os.hostname();
     // os.type() 返回 "Darwin"，os.release() 返回 XNU 内核版本
     const platform = os.type(); // "Darwin"
+    const machine = os.machine();
     const release = os.release(); // e.g., "23.5.0"
     output += `主机名：${hostname}\n`;
     // 为了更贴近 macOS 用户习惯，可以显示 "macOS" 而非 "Darwin"
     const osInfo = await promisifyExec('sw_vers -productName').catch(() => 'macOS');
     const osVersion = await promisifyExec('sw_vers -productVersion').catch(() => release);
+    output += `系统型号：${machine}\n`;
     output += `系统名称和类型：${osInfo} ${osVersion}\n\n`; // 也可以用 ${platform} ${release} 来保持与 Linux 类似的格式
 
     // === 2. CPU ===
