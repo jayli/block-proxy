@@ -1,5 +1,6 @@
 // 文件名: proxy.js
 const AnyProxy = require('anyproxy');
+const { exec } = require('child_process');
 const fs = require('fs');
 const _fs = require('./fs.js');
 const path = require('path');
@@ -39,6 +40,34 @@ var your_domain = "yui.cool";
 var yui_cool_ip = "0.0.0.0";
 var is_running_in_docker = false;
 var docker_host_IP = '';
+var enable_express = ""; // "0", "1"
+
+// 将 exec 转换为 Promise 形式，便于异步处理
+const execAsync = util.promisify(exec);
+
+// 重启Docker容器
+async function restartDockerContainer(containerName) {
+  const command = `docker restart ${containerName}`;
+
+  try {
+    console.log(`正在执行: ${command}`);
+    // 执行命令
+    const { stdout, stderr } = await execAsync(command);
+
+    // 注意：如果 JS 程序就在要重启的容器内，下面的 console.log 可能来不及执行
+    console.log(`容器 ${containerName} 重启命令执行成功。`);
+    console.log('stdout:', stdout); // 通常重启命令没有标准输出
+    if (stderr) {
+      console.error('stderr (可能包含警告):', stderr); // 检查是否有警告信息
+    }
+
+  } catch (error) {
+    // 如果命令执行失败（例如容器不存在），会进入这里
+    console.error(`执行命令失败: ${error.message}`);
+    console.error('stderr:', error.stderr);
+    console.error('stdout:', error.stdout);
+  }
+}
 
 // 对 Rule 里的正则表达式进行预编译
 function preCompileRuleRegexp() {
@@ -70,6 +99,7 @@ async function loadConfig() {
     vpn_proxy:"",
     auth_username:"",
     auth_password:"",
+    enable_express:"1",
     devices: []
   };
 
@@ -113,6 +143,9 @@ async function loadConfig() {
 
       network_scanning_status = loadedConfig.network_scanning_status;
       config.network_scanning_status = network_scanning_status;
+
+      enable_express = loadedConfig.enable_express;
+      config.enable_express = enable_express;
       
       if (loadedConfig.proxy_port) {
         proxyPort = loadedConfig.proxy_port;
@@ -139,6 +172,7 @@ async function loadConfig() {
         web_interface_port: webInterfacePort,
         auth_password:"",
         auth_username:"",
+        enable_express: enable_express,
         vpn_proxy: ""
       });
       // fs.writeFileSync(configPath, JSON.stringify({
@@ -870,13 +904,61 @@ function getAnyProxyOptions() {
           // 如果这里收到了 localhost 或 127.0.0.1 的访问，一定是本机访问，其他机器访问 localhost 是不会走远端代理的
           (host == "localhost" || host == "127.0.0.1") 
         ) {
-          return {
-            response: {
-              statusCode: 200,
-              header: { 'Content-Type': 'text/plain; charset=utf-8' },
-              body: await monitor.getSystemMonitorInfo(proxyPort)
+          if (pathname === "/favicon.ico") {
+            return {
+              response:{
+                statusCode:200,
+                body: Buffer.alloc(0)
+              }
+            };
+          } else if (pathname == "/restart_docker") {
+            // 重启 Docker，只支持以 Docker 启动的形式
+            if (isDocker) {
+              await restartDockerContainer("block-proxy");
+            } else {
+              return {
+                response: {
+                  statusCode: 200,
+                  header: { 'Content-Type': 'text/plain; charset=utf-8' },
+                  body: "当前不在 Docker 容器内，无法完成重启，请在终端终止程序后再 npm run start 启动。"
+                }
+              };
             }
-          };
+          } else if (pathname == "/enable_express") {
+            var configData = await _fs.readConfig();
+            _fs.writeConfig({
+              ...configData,
+              enable_express: "1"
+            });
+            return {
+              response: {
+                statusCode: 200,
+                header: { 'Content-Type': 'text/plain; charset=utf-8' },
+                body: "开启 express 后台设置成功，请重启 Docker。"
+              }
+            };
+          } else if (pathname == "/disable_express") {
+            var configData = await _fs.readConfig();
+            _fs.writeConfig({
+              ...configData,
+              enable_express: "0"
+            });
+            return {
+              response: {
+                statusCode: 200,
+                header: { 'Content-Type': 'text/plain; charset=utf-8' },
+                body: "关闭 express 后台设置成功，请重启 Docker。"
+              }
+            };
+          } else {
+            return {
+              response: {
+                statusCode: 200,
+                header: { 'Content-Type': 'text/html; charset=utf-8' },
+                body: '<pre>' + await monitor.getSystemMonitorInfo(proxyPort) + '</pre>'
+              }
+            };
+          }
         }
 
         // 如果是裸IP请求，全部放行

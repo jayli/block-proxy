@@ -136,6 +136,7 @@
   "vpn_proxy": "",
   "auth_username": "lijing",
   "auth_password": "lijing",
+  "enable_express": "1",
   "devices": [
     {
       "ip": "192.168.124.1",

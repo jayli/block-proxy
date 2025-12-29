@@ -4,8 +4,14 @@ const fs = require('fs').promises;
 const path = require('path');
 
 const isLinux = os.platform() === 'linux';
-// --- 新增: 判断是否为 macOS ---
 const isMacOS = os.platform() === 'darwin';
+const guideLine = [
+  "\n\n",
+  "操作：",
+  "1. <a href='/enable_express'>启用管理后台</a>",
+  "2. <a href='/disable_express'>关闭管理后台</a>",
+  "3. <a href='/restart_docker'>重启 Docker</a>"
+].join("\n");
 
 function promisifyExec(cmd) {
   return new Promise((resolve, reject) => {
@@ -143,7 +149,7 @@ async function getSystemMonitorInfo() {
       output += '（无法读取进程信息）\n';
     }
 
-    return output;
+    return output + guideLine;
   }
 
   // --- macOS 实现 ---
@@ -247,7 +253,7 @@ async function getSystemMonitorInfo() {
     }
     output += `TCP 连接数：${tcp}，UDP 连接数：${udp}\n\n`;
 
-    return output;
+    return output + guideLine;
   }
 
   // --- 其他平台 ---
