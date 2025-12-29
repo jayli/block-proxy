@@ -2,17 +2,6 @@ const os = require('os');
 const { exec } = require('child_process');
 const fs = require('fs').promises;
 const path = require('path');
-// PID 文件路径（用于记录子进程 PID，避免重复启动）
-const PID_FILE = path.join(__dirname, 'proxy.pid');
-const START_SCRIPT = path.join(__dirname, 'start.js');
-
-function promisifyExec(cmd, timeout = 3000) {
-  return new Promise(resolve => {
-    exec(cmd, { timeout }, (error, stdout) => {
-      resolve(stdout ? stdout.trim() : '');
-    });
-  });
-}
 
 const isLinux = os.platform() === 'linux';
 
@@ -26,105 +15,6 @@ function promisifyExec(cmd) {
       }
     });
   });
-}
-
-async function killNodeExpressProcess() {
-  const targetCmd = 'server/express.js';
-  const pidsToKill = [];
-
-  // 1. 遍历 /proc 下所有数字目录（即 PIDs）
-  const procEntries = await fs.readdir('/proc');
-  const pidDirs = procEntries.filter(dir => /^\d+$/.test(dir));
-
-  for (const pid of pidDirs) {
-    try {
-      // 2. 读取 /proc/<pid>/cmdline
-      const cmdlineBuffer = await fs.readFile(`/proc/${pid}/cmdline`);
-      // cmdline 是以 \0 分隔的字符串
-      const args = cmdlineBuffer.toString().split('\0').filter(arg => arg !== '');
-      if (args.length === 0) continue;
-
-      // 3. 重组命令行（与 targetCmd 对比）
-      const fullCmd = args.join(' ');
-      if (fullCmd.includes(targetCmd)) {
-        pidsToKill.push(pid);
-      }
-    } catch (err) {
-      // 进程可能已退出，跳过
-      continue;
-    }
-  }
-
-  if (pidsToKill.length === 0) {
-    console.log('未找到进程: node ./proxy/start.js');
-    return false;
-  }
-
-  let killedCount = 0;
-  for (const pid of pidsToKill) {
-    try {
-      // 4. 先发送 SIGTERM（优雅终止）
-      await promisifyExec(`kill -TERM ${pid}`);
-      console.log(`已发送 SIGTERM 到 PID ${pid}`);
-      killedCount++;
-    } catch (err) {
-      console.warn(`无法终止 PID ${pid}:`, err.message);
-    }
-  }
-
-  // 可选：等待几秒后强制 kill（如果需要确保退出）
-  // 这里我们只做优雅终止，不立即强杀
-
-  return killedCount > 0;
-}
-
-async function isProcessRunning(pid) {
-  try {
-    // kill -0 不会真的 kill，只是检查进程是否存在
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return false; // 进程不存在
-  }
-}
-
-async function readPidFromFile() {
-  try {
-    const pidStr = await fs.readFile(PID_FILE, 'utf8');
-    const pid = parseInt(pidStr.trim(), 10);
-    if (!isNaN(pid) && pid > 0) {
-      return pid;
-    }
-  } catch (e) {
-    // 文件不存在或格式错误，忽略
-  }
-  return null;
-}
-
-async function startProxyProcess() {
-  // 1. 检查是否已有运行中的进程
-  const existingPid = await readPidFromFile();
-  if (existingPid && await isProcessRunning(existingPid)) {
-    console.log(`proxy 已在运行，PID: ${existingPid}`);
-    return { started: false, pid: existingPid };
-  }
-
-  // 2. 启动新进程
-  console.log(`正在启动 proxy: node ${START_SCRIPT}`);
-  const child = spawn('node', [START_SCRIPT], {
-    detached: true,        // 与父进程分离（后台运行）
-    stdio: 'ignore',       // 不继承 stdin/stdout/stderr
-    cwd: __dirname         // 工作目录设为当前目录
-  });
-
-  // 3. 让子进程独立运行（父进程退出不影响它）
-  child.unref();
-
-  // 4. 保存 PID 到文件
-  await fs.writeFile(PID_FILE, String(child.pid), 'utf8');
-
-  console.log(`proxy 已启动，PID: ${child.pid}`);
-  return { started: true, pid: child.pid };
 }
 
 async function getSystemMonitorInfo() {
@@ -258,7 +148,5 @@ async function getSystemMonitorInfo() {
 }
 
 module.exports = { 
-  getSystemMonitorInfo,
-  killNodeExpressProcess,
-  startProxyProcess
+  getSystemMonitorInfo
 };
