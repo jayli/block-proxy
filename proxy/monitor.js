@@ -121,6 +121,24 @@ async function getSystemMonitorInfo() {
     output += '所有 node 进程的 CPU 占比和内存占用：\n';
 
     try {
+      // 预先获取所有进程的 pid -> rss 映射（兼容 BusyBox ps）
+      let allPidRss = new Map();
+      try {
+        const psOutput = await promisifyExec('ps -o pid,rss --no-headers 2>/dev/null');
+        psOutput.split('\n').forEach(line => {
+          const parts = line.trim().split(/\s+/);
+          if (parts.length >= 2) {
+            const pidNum = parseInt(parts[0], 10);
+            const rssKB = parseInt(parts[1], 10) || 0;
+            if (!isNaN(pidNum) && !isNaN(rssKB)) {
+              allPidRss.set(pidNum, rssKB);
+            }
+          }
+        });
+      } catch (e) {
+        // 忽略 ps 错误，后续 fallback 到 /proc
+      }
+
       const pids = (await fs.readdir('/proc')).filter(pid => /^\d+$/.test(pid));
       let hasNode = false;
 
@@ -136,11 +154,25 @@ async function getSystemMonitorInfo() {
         if (!cmdline || !cmdline.startsWith('node')) continue;
 
         hasNode = true;
-        const rssKB = await promisifyExec(`awk '/VmRSS/ {print $2}' /proc/${pid}/status 2>/dev/null`);
-        const cpuPerc = await promisifyExec(`ps -p ${pid} -o %cpu= 2>/dev/null`);
 
-        const memoryMB = rssKB ? Math.round(parseInt(rssKB) / 1024) : 0;
-        const cpuPercent = cpuPerc ? parseFloat(cpuPerc.trim()) || 0 : 0;
+        // 尝试从 ps 获取 RSS
+        let rssKB = allPidRss.get(parseInt(pid, 10)) || 0;
+
+        // 如果没拿到，fallback 到 /proc/${pid}/status
+        if (rssKB === 0) {
+          try {
+            const statusContent = await fs.readFile(`/proc/${pid}/status`, 'utf8');
+            const match = statusContent.match(/VmRSS:\s*(\d+)/);
+            if (match) {
+              rssKB = parseInt(match[1], 10) || 0;
+            }
+          } catch (e) {
+            rssKB = 0;
+          }
+        }
+
+        const memoryMB = rssKB ? Math.round(rssKB / 1024) : 0;
+        const cpuPercent = 0; // ps -p 不可用，暂时无法获取 CPU%
 
         output += `PID ${pid}: ${cmdline}\n`;
         output += `  CPU: ${cpuPercent.toFixed(1)}%, 内存: ${memoryMB} MB\n`;
