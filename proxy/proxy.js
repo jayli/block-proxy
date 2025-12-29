@@ -866,7 +866,9 @@ function getAnyProxyOptions() {
         var myIp = isDocker ? docker_host_IP : localIp;
         if ((myIp.includes(requestOptions.hostname) && requestOptions.port == proxyPort.toString()) ||
           (requestOptions.hostname == your_domain && requestOptions.port == proxyPort.toString()) ||
-          (requestOptions.hostname == yui_cool_ip && requestOptions.port == proxyPort.toString())
+          (requestOptions.hostname == yui_cool_ip && requestOptions.port == proxyPort.toString()) ||
+          // 如果这里收到了 localhost 或 127.0.0.1 的访问，一定是本机访问，其他机器访问 localhost 是不会走远端代理的
+          (host == "localhost" || host == "127.0.0.1") 
         ) {
           return {
             response: {
