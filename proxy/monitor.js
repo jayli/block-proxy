@@ -1,10 +1,10 @@
 const os = require('os');
 const { exec } = require('child_process');
 const fs = require('fs').promises;
-const path = require('path');
 
 const isLinux = os.platform() === 'linux';
 const isMacOS = os.platform() === 'darwin';
+
 const guideLine = [
   "\n\n",
   "操作：",
@@ -26,15 +26,14 @@ function promisifyExec(cmd) {
 }
 
 async function getSystemMonitorInfo() {
-  // --- Linux 实现保持不变 ---
   if (isLinux) {
     let output = '';
 
     // === 1. 主机名 & 系统信息 ===
     const hostname = os.hostname();
-    const platform = os.type(); // e.g., "Linux"
+    const platform = os.type();
     const machine = os.machine();
-    const release = os.release(); // e.g., kernel version
+    const release = os.release();
     const osVersion = os.version();
     output += `主机名：${hostname}\n`;
     output += `系统架构：${machine}\n`;
@@ -61,20 +60,20 @@ async function getSystemMonitorInfo() {
     ));
     output += `CPU 核数：${cpuCores}，使用占比：${Math.round(cpuUsage)}%\n`;
 
-    // === 新增：CPU 负载（Load Average）===
+    // === CPU 负载 ===
     const [load1, load5, load15] = os.loadavg();
     output += `CPU 负载：${load1.toFixed(2)}, ${load5.toFixed(2)}, ${load15.toFixed(2)}\n`;
 
-    // === 新增：CPU 温度 ===
+    // === CPU 温度 ===
     let cpuTemp = 'N/A';
     const tempPaths = [
       '/sys/class/thermal/thermal_zone0/temp',
       '/sys/class/hwmon/hwmon0/temp1_input',
       '/sys/class/hwmon/hwmon1/temp1_input'
     ];
-    for (const path of tempPaths) {
+    for (const p of tempPaths) {
       try {
-        const tempStr = await fs.readFile(path, 'utf8');
+        const tempStr = await fs.readFile(p, 'utf8');
         const tempRaw = parseInt(tempStr.trim(), 10);
         if (!isNaN(tempRaw)) {
           const celsius = Math.round(tempRaw / 1000);
@@ -100,7 +99,7 @@ async function getSystemMonitorInfo() {
     let diskUsedGB = 'N/A', diskTotalGB = 'N/A', diskPerc = 'N/A';
     try {
       const dfLine = await promisifyExec(`df / | awk 'NR==2 {print $2,$3,$5}'`);
-      const [totalKB, usedKB, percStr] = dfLine.split(' ');
+      const [totalKB, usedKB, percStr] = dfLine.split(/\s+/);
       if (totalKB && usedKB && percStr) {
         diskUsedGB = Math.round(parseInt(usedKB) / 1024 / 1024);
         diskTotalGB = Math.round(parseInt(totalKB) / 1024 / 1024);
@@ -117,11 +116,10 @@ async function getSystemMonitorInfo() {
     } catch (e) {}
     output += `TCP 连接数：${tcp}，UDP 连接数：${udp}\n\n`;
 
-    // === 6. 所有 node 进程 ===
+    // === 6. 所有 node 进程（含真实 CPU%）===
     output += '所有 node 进程的 CPU 占比和内存占用：\n';
 
     try {
-      // 预先获取所有进程的 pid -> rss 映射（兼容 BusyBox ps）
       let allPidRss = new Map();
       try {
         const psOutput = await promisifyExec('ps -o pid,rss --no-headers 2>/dev/null');
@@ -135,12 +133,12 @@ async function getSystemMonitorInfo() {
             }
           }
         });
-      } catch (e) {
-        // 忽略 ps 错误，后续 fallback 到 /proc
-      }
+      } catch (e) {}
 
       const pids = (await fs.readdir('/proc')).filter(pid => /^\d+$/.test(pid));
       let hasNode = false;
+      const ticksPerSec = 100; // standard on most Linux systems
+      const cpuCores = os.cpus().length;
 
       for (const pid of pids) {
         let cmdline = '';
@@ -152,27 +150,42 @@ async function getSystemMonitorInfo() {
         }
 
         if (!cmdline || !cmdline.startsWith('node')) continue;
-
         hasNode = true;
 
-        // 尝试从 ps 获取 RSS
+        // --- Memory ---
         let rssKB = allPidRss.get(parseInt(pid, 10)) || 0;
-
-        // 如果没拿到，fallback 到 /proc/${pid}/status
         if (rssKB === 0) {
           try {
             const statusContent = await fs.readFile(`/proc/${pid}/status`, 'utf8');
             const match = statusContent.match(/VmRSS:\s*(\d+)/);
-            if (match) {
-              rssKB = parseInt(match[1], 10) || 0;
-            }
+            if (match) rssKB = parseInt(match[1], 10) || 0;
           } catch (e) {
             rssKB = 0;
           }
         }
-
         const memoryMB = rssKB ? Math.round(rssKB / 1024) : 0;
-        const cpuPercent = 0; // ps -p 不可用，暂时无法获取 CPU%
+
+        // --- CPU % via /proc/pid/stat ---
+        let cpuPercent = 0;
+        try {
+          const stat1 = await fs.readFile(`/proc/${pid}/stat`, 'utf8');
+          const fields1 = stat1.trim().split(/\s+/);
+          const utime1 = parseInt(fields1[13], 10) || 0;
+          const stime1 = parseInt(fields1[14], 10) || 0;
+
+          await new Promise(r => setTimeout(r, 500));
+
+          const stat2 = await fs.readFile(`/proc/${pid}/stat`, 'utf8');
+          const fields2 = stat2.trim().split(/\s+/);
+          const utime2 = parseInt(fields2[13], 10) || 0;
+          const stime2 = parseInt(fields2[14], 10) || 0;
+
+          const deltaTicks = (utime2 + stime2) - (utime1 + stime1);
+          const cpuUsageSingleCore = (deltaTicks / ticksPerSec) / 0.5 * 100; // over 0.5 seconds
+          cpuPercent = Math.min(100 * cpuCores, Math.max(0, cpuUsageSingleCore));
+        } catch (e) {
+          cpuPercent = 0;
+        }
 
         output += `PID ${pid}: ${cmdline}\n`;
         output += `  CPU: ${cpuPercent.toFixed(1)}%, 内存: ${memoryMB} MB\n`;
@@ -192,112 +205,74 @@ async function getSystemMonitorInfo() {
   if (isMacOS) {
     let output = '';
 
-    // === 1. 主机名 & 系统信息 ===
-    // os.hostname() 在 macOS 上也能工作
     const hostname = os.hostname();
-    // os.type() 返回 "Darwin"，os.release() 返回 XNU 内核版本
-    const platform = os.type(); // "Darwin"
     const machine = os.machine();
-    const release = os.release(); // e.g., "23.5.0"
-    output += `主机名：${hostname}\n`;
-    // 为了更贴近 macOS 用户习惯，可以显示 "macOS" 而非 "Darwin"
     const osInfo = await promisifyExec('sw_vers -productName').catch(() => 'macOS');
-    const osVersion = await promisifyExec('sw_vers -productVersion').catch(() => release);
+    const osVersion = await promisifyExec('sw_vers -productVersion').catch(() => os.release());
+    output += `主机名：${hostname}\n`;
     output += `系统型号：${machine}\n`;
-    output += `系统名称和类型：${osInfo} ${osVersion}\n\n`; // 也可以用 ${platform} ${release} 来保持与 Linux 类似的格式
+    output += `系统名称和类型：${osInfo} ${osVersion}\n\n`;
 
-    // === 2. CPU ===
     const cpuCores = os.cpus().length;
     let cpuUsage = 0;
-
-    // macOS 获取 CPU 使用率需要使用 `top` 或 `iostat` 等命令
     try {
-      const topOutput = await promisifyExec('top -l 2 -n 0 | grep -E "^CPU" | tail -1'); // 运行两次 top，取最后一次
-      // top 输出示例: "CPU usage: 5.25% user, 6.75% sys, 88.00% idle"
+      const topOutput = await promisifyExec('top -l 2 -n 0 | grep -E "^CPU" | tail -1');
       const match = topOutput.match(/(\d+\.\d+)%\s+idle/);
-      if (match) {
-        const idlePercent = parseFloat(match[1]);
-        cpuUsage = 100 - idlePercent;
-      }
+      if (match) cpuUsage = 100 - parseFloat(match[1]);
     } catch (e) {
-      console.error("Error getting CPU usage on macOS:", e);
-      cpuUsage = 0; // 设置默认值
+      cpuUsage = 0;
     }
     output += `CPU 核数：${cpuCores}，使用占比：${Math.round(cpuUsage)}%\n`;
 
-    // === CPU 负载（Load Average）===
     const [load1, load5, load15] = os.loadavg();
     output += `CPU 负载：${load1.toFixed(2)}, ${load5.toFixed(2)}, ${load15.toFixed(2)}\n`;
 
-    // === CPU 温度 ===
-    // macOS 本身不提供标准接口，需要第三方工具如 osx-cpu-temp 或 iStat Menus 的 CLI
-    // 这里模拟一个获取方式，如果未安装相关工具，则返回 N/A
     let cpuTemp = 'N/A';
     try {
-      // 尝试使用 osx-cpu-temp (需要预先安装: brew install osx-cpu-temp)
       const tempOutput = await promisifyExec('osx-cpu-temp 2>/dev/null || echo "N/A"');
       if (tempOutput && !tempOutput.includes('N/A') && !tempOutput.includes('command not found')) {
-        // osx-cpu-temp 输出格式通常是 "45.2°C" 或 "45.2"
-        const tempMatch = tempOutput.match(/(\d+\.?\d*)/);
-        if (tempMatch) {
-          const tempValue = parseFloat(tempMatch[1]);
-          if (!isNaN(tempValue) && tempValue > 0 && tempValue < 120) {
-             cpuTemp = `${tempValue}°C`;
-          }
+        const match = tempOutput.match(/(\d+\.?\d*)/);
+        if (match) {
+          const t = parseFloat(match[1]);
+          if (!isNaN(t) && t > 0 && t < 120) cpuTemp = `${t}°C`;
         }
       }
-    } catch (e) {
-      // 忽略错误，保持 N/A
-    }
-    output += `CPU 温度：${cpuTemp}\n`; // 即使是 N/A 也按格式输出
+    } catch (e) {}
+    output += `CPU 温度：${cpuTemp}\n`;
 
-    // === 3. Memory ===
     const totalMem = os.totalmem();
-    const freeMem = os.freemem(); // 注意：os.freemem() 在 macOS 上可能不准确，它返回的是 "free" 内存，不包含 "inactive"
-    // 更准确的可用内存计算可能需要使用 `vm_stat` 或其他命令
-    // 这里先使用 os.freemem() 计算已用内存，与 Linux 逻辑保持一致
+    const freeMem = os.freemem();
     const usedMem = totalMem - freeMem;
     const memTotalMB = Math.round(totalMem / 1024 / 1024);
     const memUsedMB = Math.round(usedMem / 1024 / 1024);
     const memPercent = Math.round((usedMem / totalMem) * 100);
     output += `内存总数：${memTotalMB} MB，使用数量：${memUsedMB} MB，使用占比：${memPercent}%\n`;
 
-    // === 4. Disk ===
     let diskUsedGB = 'N/A', diskTotalGB = 'N/A', diskPerc = 'N/A';
     try {
-      // macOS 上 df 命令同样可用
-      const dfLine = await promisifyExec(`df -g / | awk 'NR==2 {print $2,$3,$5}'`); // -g 以 GB 为单位
+      const dfLine = await promisifyExec(`df -g / | awk 'NR==2 {print $2,$3,$5}'`);
       const [totalGB, usedGB, percStr] = dfLine.split(/\s+/);
       if (totalGB && usedGB && percStr) {
         diskUsedGB = Math.round(parseFloat(usedGB));
         diskTotalGB = Math.round(parseFloat(totalGB));
         diskPerc = percStr.replace('%', '');
       }
-    } catch (e) {
-      console.error("Error getting disk usage on macOS:", e);
-    }
+    } catch (e) {}
     output += `硬盘总数：${diskTotalGB} GB，使用数量：${diskUsedGB} GB，使用占比：${diskPerc}%\n`;
 
-    // === 5. TCP / UDP Connections ===
     let tcp = 0, udp = 0;
     try {
-      // macOS 使用 netstat 命令
-      tcp = (await promisifyExec("netstat -an -p tcp | grep -E '^tcp' | wc -l")).trim();
-      udp = (await promisifyExec("netstat -an -p udp | grep -E '^udp' | wc -l")).trim();
-      tcp = parseInt(tcp, 10) || 0; // 确保是数字
-      udp = parseInt(udp, 10) || 0;
-    } catch (e) {
-      console.error("Error getting network connections on macOS:", e);
-    }
+      tcp = parseInt((await promisifyExec("netstat -an -p tcp | grep -E '^tcp' | wc -l")).trim(), 10) || 0;
+      udp = parseInt((await promisifyExec("netstat -an -p udp | grep -E '^udp' | wc -l")).trim(), 10) || 0;
+    } catch (e) {}
     output += `TCP 连接数：${tcp}，UDP 连接数：${udp}\n\n`;
+
+    output += '（macOS 不支持单独列出 node 进程的 CPU/内存）\n';
 
     return output + guideLine;
   }
 
-  // --- 其他平台 ---
   return 'Platform not supported for system monitoring.';
 }
 
-module.exports = { 
-  getSystemMonitorInfo
-};
+module.exports = { getSystemMonitorInfo };
