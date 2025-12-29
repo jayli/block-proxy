@@ -590,6 +590,16 @@ function App() {
           </div>
 
           <div className="setting-row">
+            <label>公网域名:</label>
+            <div>如果要公网可访问，OpenWRT 配置相同的端口转发到 AnyProxy 代理端口，这里写公网域名<br />（仅在浏览器通过公网域名+端口查看系统水位时防止回环）</div>
+            <input
+              type="text"
+              value={config.your_domain}
+              onChange={(e) => setConfig({...config, your_domain: e.target.value || ""})}
+            />
+          </div>
+
+          <div className="setting-row">
             <label>VPN_PROXY 设置（格式：“127.0.0.1:1087”，仅调试用）:</label>
             <input
               type="text"

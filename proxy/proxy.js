@@ -21,6 +21,7 @@ const Rule = require("./mitm/rule.js");
 const attacker = require('./attacker.js');
 const monitor = require('./monitor.js');
 const domain = require('./domain.js');
+const wanip = require('./wanip.js');
 
 // 全局参数
 const configPath = path.join(__dirname, '../config.json');
@@ -36,8 +37,8 @@ var localIp = getLocalIp();
 var network_scanning_status = "0";
 var auth_username = "";
 var auth_password = "";
-var your_domain = "yui.cool";
-var yui_cool_ip = "0.0.0.0";
+var your_domain = "";
+var wan_ip = "0.0.0.0";
 var is_running_in_docker = false;
 var docker_host_IP = '';
 var enable_express = ""; // "0", "1"
@@ -69,6 +70,7 @@ async function loadConfig() {
     block_hosts: blockHosts,
     proxy_port: proxyPort,
     web_interface_port: webInterfacePort,
+    your_domain: your_domain,
     vpn_proxy:"",
     auth_username:"",
     auth_password:"",
@@ -119,6 +121,9 @@ async function loadConfig() {
 
       enable_express = loadedConfig.enable_express;
       config.enable_express = enable_express;
+
+      your_domain = loadedConfig.your_domain;
+      config.your_domain = your_domain;
       
       if (loadedConfig.proxy_port) {
         proxyPort = loadedConfig.proxy_port;
@@ -146,6 +151,7 @@ async function loadConfig() {
         auth_password:"",
         auth_username:"",
         enable_express: enable_express,
+        your_domain: your_domain,
         vpn_proxy: ""
       });
       // fs.writeFileSync(configPath, JSON.stringify({
@@ -159,15 +165,13 @@ async function loadConfig() {
   return config;
 }
 
-async function updateYuiCoolIp() {
-  var ips = await domain.getDomainIP(your_domain);
-  var ip;
-  if (ips !== null) {
-    ip = ips[0];
-  } else {
+async function updateWanIp() {
+  // var ips = await domain.getDomainIP(your_domain);
+  var ip = await wanip.getPublicIp();
+  if (ip === null) {
     ip = "0.0.0.0";
   }
-  yui_cool_ip = ip;
+  wan_ip = ip;
 }
 
 // F4:6B:8c:90:29:5  ->  f4:6b:8c:90:29:05
@@ -873,7 +877,7 @@ function getAnyProxyOptions() {
         var myIp = isDocker ? docker_host_IP : localIp;
         if ((myIp.includes(requestOptions.hostname) && requestOptions.port == proxyPort.toString()) ||
           (requestOptions.hostname == your_domain && requestOptions.port == proxyPort.toString()) ||
-          (requestOptions.hostname == yui_cool_ip && requestOptions.port == proxyPort.toString()) ||
+          (requestOptions.hostname == wan_ip && requestOptions.port == proxyPort.toString()) ||
           // 如果这里收到了 localhost 或 127.0.0.1 的访问，一定是本机访问，其他机器访问 localhost 是不会走远端代理的
           (host == "localhost" || host == "127.0.0.1") 
         ) {
@@ -1244,7 +1248,7 @@ var LocalProxy = {
       } catch (error) {
         console.error('Failed to automatically update network devices:', error);
       }
-      await updateYuiCoolIp();
+      await updateWanIp();
     }, 2 * 60 * 60 * 1000); // 2小时 = 2 * 60 * 60 * 1000 毫秒
 
     // 设置定时任务，每2分钟清理一次超过 10 分钟未活动的攻击 IP
