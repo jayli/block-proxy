@@ -16,50 +16,43 @@ function hexToIP(hex) {
 }
 
 
+function isPrivateIPv4(ip) {
+  if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) return false;
+  const [a, b, c, d] = ip.split('.').map(Number);
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16
+  if (a === 10) return true;               // 10.0.0.0/8
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+  return false;
+}
+
+// 可能返回多个局域网IP，逗号分隔
 function getHostLanIP() {
   const interfaces = os.networkInterfaces();
-  let fallbackIP = '127.0.0.1';
+  const lanIPs = new Set(); // 自动去重
 
-  // 先尝试找 br-lan（OpenWrt/软路由常见）
-  if (interfaces['br-lan']) {
-    for (const net of interfaces['br-lan']) {
-      if (net.family === 'IPv4' && !net.internal && !net.address.startsWith('127.')) {
-        return net.address; // 优先返回 br-lan 的 IP
-      }
-    }
-  }
-
-  // 如果没有 br-lan，再遍历其他非虚拟接口
   for (const name of Object.keys(interfaces)) {
-    // 只跳过明确不需要的
-    if (
-      name === 'lo' ||
-      name.startsWith('veth') ||          // Docker 虚拟对端
-      name === 'docker0' ||               // Docker 默认网桥
-      name.startsWith('pppoe') ||         // PPPoE 是外网，通常不需要作为“局域网 IP”
-      name.startsWith('vap-')             // 你的 vap-lan 是虚拟 AP，可选跳过
-    ) {
-      continue;
-    }
+    // 跳过回环接口（lo）
+    if (name === 'lo') continue;
 
     const nets = interfaces[name];
     for (const net of nets) {
       if (net.family === 'IPv4' && !net.internal) {
         const addr = net.address;
-        // 排除回环和链路本地
-        if (!addr.startsWith('127.') && !addr.startsWith('169.254.')) {
-          // 优先选择 192.168.x.x 或 10.x.x.x 等私有地址
-          if (addr.startsWith('192.168.') || addr.startsWith('10.') || addr.startsWith('172.16.') || addr.startsWith('172.17.') || addr.startsWith('172.18.') || addr.startsWith('172.19.') || addr.startsWith('172.20.') || addr.startsWith('172.21.') || addr.startsWith('172.22.') || addr.startsWith('172.23.') || addr.startsWith('172.24.') || addr.startsWith('172.25.') || addr.startsWith('172.26.') || addr.startsWith('172.27.') || addr.startsWith('172.28.') || addr.startsWith('172.29.') || addr.startsWith('172.30.') || addr.startsWith('172.31.')) {
-            return addr;
-          }
-          fallbackIP = addr;
+        if (isPrivateIPv4(addr)) {
+          lanIPs.add(addr);
         }
       }
     }
   }
 
-  return fallbackIP;
+  // 如果没找到私有 IP，fallback 到 127.0.0.1
+  if (lanIPs.size === 0) {
+    return '127.0.0.1';
+  }
+
+  return Array.from(lanIPs).sort().join(',');
 }
+
 
 // 使用
 // const hostIP = getHostLanIP();

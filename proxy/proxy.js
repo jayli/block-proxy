@@ -863,7 +863,7 @@ function getAnyProxyOptions() {
         // 只要不绑定其他端口，就绝对不会陷入回环问题
         const isDocker = is_running_in_docker;
         var myIp = isDocker ? docker_host_IP : localIp;
-        if ((requestOptions.hostname == myIp && requestOptions.port == proxyPort.toString()) ||
+        if ((myIp.includes(requestOptions.hostname) && requestOptions.port == proxyPort.toString()) ||
           (requestOptions.hostname == your_domain && requestOptions.port == proxyPort.toString()) ||
           (requestOptions.hostname == yui_cool_ip && requestOptions.port == proxyPort.toString())
         ) {
