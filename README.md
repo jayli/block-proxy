@@ -95,7 +95,8 @@ ip6tables -I forwarding_rule -m mac --mac-source D2:9E:8D:1B:F1:4E -j REJECT
 
 ### 4）Docker 文件下载
 
-Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy.tar" target=_blank>block-proxy.tar</a>（右键另存为）
+- Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/arm/block-proxy.tar" target=_blank>block-proxy-arm.tar</a>
+- X86 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/x86/block-proxy.tar" target=_blank>block-proxy-x86.tar</a>
 
 ### 5）使用说明
 
