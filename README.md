@@ -117,6 +117,10 @@ ip6tables -I forwarding_rule -m mac --mac-source D2:9E:8D:1B:F1:4E -j REJECT
 
 另外两条规则在这里：<https://github.com/jayli/block-proxy/blob/main/proxy/mitm/rule.js>（手工添加上面四条规则就够了）
 
+#### 有道词典会员
+
+done！
+
 #### 代理性能
 
 速度受三个因素影响：

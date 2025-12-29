@@ -1,4 +1,7 @@
+// rule.js
+
 const YoutubeResponse = require('./youtube/youtube.response.js');
+const YDCD = require('./ydcd/ydcd.js');
 
 function getContentLength(body) {
   let contentLength = 0;
@@ -24,6 +27,40 @@ function getContentLength(body) {
   return contentLength;
 }
 
+// 统一劫持 Response 的方法
+function hijackResponse(url, request, response, RuleMojo) {
+  return new Promise((resolve, reject) => {
+    var responseResult = null;
+    RuleMojo.injection({
+      callback: function(obj) {
+        // console.log('💙💙💙',response);
+        var contentLength = 0;
+        if (obj.hasOwnProperty('body')) {
+          contentLength = getContentLength(obj.body);
+        } else {
+          contentLength = getContentLength(response.body);
+        }
+        response.header['Content-Length'] = String(contentLength);
+        responseResult = {
+          response: {
+            statusCode: response.statusCode,
+            status: response.statusCode,
+            header: response.header,
+            body: obj.hasOwnProperty('body') ? obj.body : response.body
+          }
+        }
+        // console.log('>>>>>>>>>>>>>>>>>', request)
+        resolve(responseResult);
+      },
+      url: url,
+      response: response,
+      request: request
+    });
+    RuleMojo.main();
+  }); // -- promise
+}
+
+
 // 这里增加规则即可，不用修改 proxy.js
 // callback 被 MITMHandler 调用
 // callback 返回值是一个包含 response 的对象，如果不做处理则返回原 response 里的内容
@@ -35,35 +72,7 @@ module.exports = {
       'host': 'youtubei.googleapis.com',
       'regexp': "\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch)",
       'callback': async function(url, request, response) {
-        return new Promise((resolve, reject) => {
-          var responseResult = null;
-          YoutubeResponse.injection({
-            callback: function(obj) {
-              // console.log('💙💙💙',response);
-              var contentLength = 0;
-              if (obj.hasOwnProperty('body')) {
-                contentLength = getContentLength(obj.body);
-              } else {
-                contentLength = getContentLength(response.body);
-              }
-              response.header['Content-Length'] = String(contentLength);
-              responseResult = {
-                response: {
-                  statusCode: response.statusCode,
-                  status: response.statusCode,
-                  header: response.header,
-                  body: obj.hasOwnProperty('body') ? obj.body : response.body
-                }
-              }
-              // console.log('>>>>>>>>>>>>>>>>>', request)
-              resolve(responseResult);
-            },
-            url: url,
-            response: response,
-            request: request
-          });
-          YoutubeResponse.main();
-        }); // -- promise
+        return await hijackResponse(url, request, response, YoutubeResponse);
       } // -- callback
     },
     // Rule2...
@@ -91,6 +100,17 @@ module.exports = {
           return null;
         }
       } // -- callback
+    },
+  ],
+  // 有道词典
+  YDCD: [
+    {
+      type: "beforeSendResponse",
+      host: "dict.youdao.com",
+      regexp: "^https:\/\/dict\.youdao\.com\/vip\/user\/status",
+      callback: async function(url, request, response) {
+        return await hijackResponse(url, request, response, YDCD);
+      }
     }
   ]
 };
