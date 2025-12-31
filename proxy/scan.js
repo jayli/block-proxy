@@ -74,6 +74,10 @@ async function getScanStatus() {
 
 async function doScan() {
   const subnet = getLocalSubnet();
+  // 如果是 30 网段，直接返回空
+  if (subnet.startsWith("30.")) {
+    return []
+  }
   console.log(`Scanning subnet: ${subnet}.0/24`);
 
   // Ping all IPs to populate ARP cache
