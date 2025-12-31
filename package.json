@@ -18,6 +18,7 @@
     "craco": "craco start",
     "dev": "BLOCK_PROXY_DEV=1 npm run express",
     "start": "npm run express",
+    "socks5": "node ./socks5/server.js",
     "express": "npm run cp && node ./server/start.js",
     "proxy": "npm run cp && node ./proxy/start.js",
     "build": "react-scripts build",
