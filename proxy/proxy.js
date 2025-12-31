@@ -1,4 +1,4 @@
-// 文件名: proxy.js
+// 文件名: proxy/proxy.js
 const AnyProxy = require('anyproxy');
 const { exec } = require('child_process');
 const fs = require('fs');
@@ -1190,6 +1190,7 @@ var LocalProxy = {
     // 如果代理服务器已在运行，先停止它
     if (proxyServerInstance && proxyServerInstance.httpProxyServer && proxyServerInstance.httpProxyServer.listening) {
       proxyServerInstance.close();
+      proxyServerInstance = null;
       await delay(1000);
       console.log('重新启动代理服务器');
       startProxyServer();

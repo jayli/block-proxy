@@ -1,4 +1,4 @@
-// requestNoValidationSync.js
+// proxy/http.js
 const net = require('net');
 
 /**
@@ -210,7 +210,9 @@ function requestNoValidationSync(options) {
     });
 
     socket.on('close', (hadError) => {
-      if (hadError && !responseParsed) {
+      if (!responseParsed) {
+        reject(new Error('Socket closed before response'));
+      } else if (hadError && !responseParsed) {
         reject(new Error('Socket closed unexpectedly'));
       }
     });

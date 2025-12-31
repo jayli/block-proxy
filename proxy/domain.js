@@ -1,3 +1,4 @@
+// proxy/domain.js
 const { lookup, resolve4 } = require('dns');
 const { promisify } = require('util');
 

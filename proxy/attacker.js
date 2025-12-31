@@ -1,3 +1,4 @@
+// proxy/attacker.js
 // 存储每个 IP 的访问信息
 const ipAccessLog = new Map(); 
 // value: { timestamps: number[], isBad: boolean, lastSeen: number, goodUntil: number | null }
@@ -112,6 +113,16 @@ function cleanupInactiveIPs() {
       if (recent.length !== record.timestamps.length) {
         ipAccessLog.set(ip, { ...record, timestamps: recent });
       }
+    }
+  }
+
+  // 在 countIPAccess 中增加硬上限（例如最多保留 10,000 个 IP）
+  if (ipAccessLog.size > 10000) {
+    // 按 lastSeen 排序，删除最旧的一批
+    const sorted = Array.from(ipAccessLog.entries())
+      .sort((a, b) => a[1].lastSeen - b[1].lastSeen);
+    for (let i = 0; i < 1000; i++) {
+      ipAccessLog.delete(sorted[i][0]);
     }
   }
 }

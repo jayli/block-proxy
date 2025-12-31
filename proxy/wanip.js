@@ -1,4 +1,5 @@
 const https = require('https');
+// /proxy/wanip.js
 
 /**
  * 从 ipip.net 获取当前公网 IP 地址

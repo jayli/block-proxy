@@ -1,4 +1,5 @@
 // 扫描当前网络，得到ip和mac的对应表
+// /proxy/scan.js
 const { exec } = require('child_process');
 const os = require('os');
 const fs = require('fs');

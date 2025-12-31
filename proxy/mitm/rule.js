@@ -1,4 +1,4 @@
-// rule.js
+// proxy/mitm/rule.js
 
 const YoutubeResponse = require('./youtube/youtube.response.js');
 const YDCD = require('./ydcd/ydcd.js');
