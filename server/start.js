@@ -5,6 +5,11 @@ const _fs = require('../proxy/fs.js');
 
 (async function() {
   const config = await _fs.readConfig();
+  if (config.enable_socks5 && config.enable_socks5 == "1") {
+    console.log("启动Socks5");
+    const Socks5 = require("../socks5/server.js");
+    Socks5.init();
+  }
   if (config.enable_express && config.enable_express == "1") {
     console.log("启动express");
     const ExpressServer = require("./express.js");

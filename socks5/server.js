@@ -5,16 +5,17 @@ const _fs = require('../proxy/fs.js');
 const { pipeline } = require('stream');
 
 // ===== 配置 =====
-const LISTEN_PORT = 8004;
 const DOWNSTREAM_HTTP_PROXY_HOST = '127.0.0.1';
 
-(async function() {
+async function init() {
   const loadedConfig = await _fs.readConfig();
+  
   const DOWNSTREAM_HTTP_PROXY_PORT = loadedConfig.proxy_port;
+  const LISTEN_PORT = loadedConfig.socks5_port;
   // 认证凭据（可替换为数据库/配置文件）
   const AUTH_CREDENTIALS = {
-    username: "user",
-    password: 'pass'
+    username: loadedConfig.auth_username,
+    password: loadedConfig.auth_password 
   };
 
   // 工具函数：解析地址（IPv4 / IPv6 / 域名）
@@ -188,6 +189,6 @@ const DOWNSTREAM_HTTP_PROXY_HOST = '127.0.0.1';
     console.log(`➡️  UDP → direct relay`);
   });
 
-})();
+};
 
-
+module.exports.init = init;

@@ -10,7 +10,7 @@ const { exec, execSync } = require('child_process');
 const LocalProxy = require('../proxy/proxy');
 
 const app = express();
-const PORT = 8003;
+const PORT = 8004;
 const DEV = process.env.BLOCK_PROXY_DEV || 0;
 const configPath = path.join(__dirname, '../config.json');
 

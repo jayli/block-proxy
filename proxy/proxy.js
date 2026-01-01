@@ -27,8 +27,9 @@ const wanip = require('./wanip.js');
 const configPath = path.join(__dirname, '../config.json');
 var anyproxy_started = false;
 var blockHosts = [];
-var proxyPort = 8001;
-var webInterfacePort = 8002;
+var proxyPort = 8001; // http 代理端口
+var socks5Port = 8002; // socks5 端口
+var webInterfacePort = 8003; // anyproxy 监控端口
 var vpn_proxy = "";
 var devices = [];
 var progress_time_stamp = "";
@@ -41,7 +42,8 @@ var your_domain = "";
 var wan_ip = "0.0.0.0";
 var is_running_in_docker = false;
 var docker_host_IP = '';
-var enable_express = ""; // "0", "1"
+var enable_express = "1"; // "0", "1"
+var enable_socks5 = "1";
 
 // 对 Rule 里的正则表达式进行预编译
 function preCompileRuleRegexp() {
@@ -74,7 +76,9 @@ async function loadConfig() {
     vpn_proxy:"",
     auth_username:"",
     auth_password:"",
-    enable_express:"1",
+    enable_express: enable_express,
+    enable_socks5: enable_socks5,
+    socks5_port: socks5Port,
     devices: []
   };
 
@@ -122,6 +126,12 @@ async function loadConfig() {
       enable_express = loadedConfig.enable_express;
       config.enable_express = enable_express;
 
+      enable_socks5 = loadedConfig.enable_socks5;
+      config.enable_socks5 = enable_socks5;
+
+      socks5Port = loadedConfig.socks5_port;
+      config.socks5_port = socks5Port;
+
       your_domain = loadedConfig.your_domain;
       config.your_domain = your_domain;
       
@@ -152,6 +162,8 @@ async function loadConfig() {
         auth_username:"",
         enable_express: enable_express,
         your_domain: your_domain,
+        socks5_port: socks5Port,
+        enable_socks5: enable_socks5,
         vpn_proxy: ""
       });
       // fs.writeFileSync(configPath, JSON.stringify({
@@ -719,6 +731,15 @@ function getAnyProxyOptions() {
       // req: 原始的 Request
       // url: 拆包后的 URL，如果是 Connect 环节校验则为 null
       checkProxyAuth(protocol, req, sourceIp, url) {
+        // TODO here ---------------------
+        // console.log(sourceIp, protocol, req, url);
+
+        // 如果是 Socks 端口转发的请求，一律放行，身份校验在 Socks 代理做了
+        // 这里不用在做一次身份校验了
+        if (sourceIp === "127.0.0.1") {
+          return true;
+        }
+
         const authConfig = getProxyAuthConfig();
         if (authConfig.auth_username === undefined) {
           console.log("authConfig.auth_username 为空，检查下 config.json 完整性");
@@ -925,6 +946,32 @@ function getAnyProxyOptions() {
                 statusCode: 200,
                 header: { 'Content-Type': 'text/plain; charset=utf-8' },
                 body: "关闭 express 后台设置成功，请重启 Docker。"
+              }
+            };
+          } else if (pathname == "/enable_socks5") {
+            var configData = await _fs.readConfig();
+            _fs.writeConfig({
+              ...configData,
+              enable_socks5: "1"
+            });
+            return {
+              response: {
+                statusCode: 200,
+                header: { 'Content-Type': 'text/plain; charset=utf-8' },
+                body: "开启 socks5 成功，请重启 Docker。"
+              }
+            };
+          } else if (pathname == "/disable_socks5") {
+            var configData = await _fs.readConfig();
+            _fs.writeConfig({
+              ...configData,
+              enable_socks5: "0"
+            });
+            return {
+              response: {
+                statusCode: 200,
+                header: { 'Content-Type': 'text/plain; charset=utf-8' },
+                body: "关闭 socks5 成功，请重启 Docker。"
               }
             };
           } else {

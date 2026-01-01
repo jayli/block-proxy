@@ -11,7 +11,9 @@ const guideLine = [
   "操作：",
   "1. <a href='/enable_express'>启用管理后台</a>",
   "2. <a href='/disable_express'>关闭管理后台</a>",
-  "3. <a href='/restart_docker'>重启 Docker</a>"
+  "3. <a href='/enable_socks5'>启用Socks5代理</a>",
+  "4. <a href='/disable_socks5'>关闭Socks5代理</a>",
+  "5. <a href='/restart_docker'>重启 Docker</a>"
 ].join("\n");
 
 function promisifyExec(cmd) {

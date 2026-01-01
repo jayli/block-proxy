@@ -18,7 +18,10 @@ function App() {
   const [config, setConfig] = useState({
     block_hosts: [],
     proxy_port: 8001,
-    web_interface_port: 8002
+    socks5_port:8002,
+    web_interface_port: 8003,
+    auth_username: "",
+    auth_password: "",
   });
   
   const [newHost, setNewHost] = useState('');
@@ -552,14 +555,22 @@ function App() {
         </div>
         
         <div className="config-section">
-          <h2>端口设置，验证信息，下游 VPN_Proxy 代理</h2>
-          {/*<p><span>配置页端口默认 8003</span></p> */}
+          <h2>HTTP/Socks5 端口设置，验证信息，下游 VPN_Proxy 代理</h2>
+          {/*<p><span>配置页端口默认 8004</span></p> */}
           <div className="setting-row">
-            <label>Anyproxy 代理端口:</label>
+            <label>Anyproxy HTTP 代理端口:</label>
             <input
               type="number"
               value={config.proxy_port}
               onChange={(e) => setConfig({...config, proxy_port: parseInt(e.target.value) || 8001})}
+            />
+          </div>
+          <div className="setting-row">
+            <label>Socks5 代理端口:</label>
+            <input
+              type="number"
+              value={config.socks5_port}
+              onChange={(e) => setConfig({...config, socks5_port: parseInt(e.target.value) || 8002})}
             />
           </div>
           
@@ -568,7 +579,7 @@ function App() {
             <input
               type="number"
               value={config.web_interface_port}
-              onChange={(e) => setConfig({...config, web_interface_port: parseInt(e.target.value) || 8002})}
+              onChange={(e) => setConfig({...config, web_interface_port: parseInt(e.target.value) || 8003})}
             />
           </div>
 
@@ -600,7 +611,8 @@ function App() {
           </div>
 
           <div className="setting-row">
-            <label>VPN_PROXY 设置（格式：“127.0.0.1:1087”，仅调试用）:</label>
+            <label>VPN_PROXY 设置（留空）:</label>
+            <div>（格式：“127.0.0.1:1087”，仅调试用）</div>
             <input
               type="text"
               value={config.vpn_proxy}
