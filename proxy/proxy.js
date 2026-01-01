@@ -1168,7 +1168,8 @@ function getAnyProxyOptions() {
     throttle: 800 * 1024 * 1024, // 800 Mbps
     forceProxyHttps: false, // 关闭全局 HTTPS 拦截
     wsIntercept: false,
-    silent: true
+    silent: true,
+    timeout: 60 * 1000 // 60秒
   };
 }
 
