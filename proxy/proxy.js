@@ -680,7 +680,8 @@ function getProxyAuthConfig() {
 function authPass(protocol, host, url) {
   const passHosts = [
     "googlevideo.com", // Toutube 视频流
-    "dns.weixin.qq.com.cn" // 微信的 dns 预解析
+    "dns.weixin.qq.com.cn", // 微信的 dns 预解析
+    "weixin.qq.com"
   ];
   //  基于 http 传输的流
   const passUrl = [
