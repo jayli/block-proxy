@@ -731,9 +731,6 @@ function getAnyProxyOptions() {
       // req: 原始的 Request
       // url: 拆包后的 URL，如果是 Connect 环节校验则为 null
       checkProxyAuth(protocol, req, sourceIp, url) {
-        // TODO here ---------------------
-        // console.log(sourceIp, protocol, req, url);
-
         // 如果是 Socks 端口转发的请求，一律放行，身份校验在 Socks 代理做了
         // 这里不用在做一次身份校验了
         if (sourceIp === "127.0.0.1") {

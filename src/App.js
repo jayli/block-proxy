@@ -652,7 +652,7 @@ function App() {
           <p>
             <img src="/iphone-proxy-setting.jpg" alt="iPhone Proxy Setting"
                  style={{ float: 'right', marginLeft: '10px', width: '166px' }} />
-            <b>服务器：</b>
+            <b>代理服务器：</b>
             {serverIPs.length > 0 ? (
               <span>
                 {getIpAddress()}
@@ -665,14 +665,34 @@ function App() {
             )}
           </p>
           <p>
-            <b>端口：</b><span>{config.proxy_port}</span>
+            <b>HTTP 代理端口：</b><span>{config.proxy_port}</span> &nbsp;<span>开启</span>
+          </p>
+          <p>
+            <b>Socks5 代理端口：</b><span>{config.socks5_port}</span> &nbsp;
+            <span>{
+              config.enable_socks5 === "1" ? "开启" : "关闭"
+            }</span>
+          </p>
+          <p>
+            <b>用户名</b>：{config.auth_username === "" ? (
+              <span>无</span>
+            ) : (
+              config.auth_username
+            )}
+          </p>
+          <p>
+            <b>密码</b>：{config.auth_password === "" ? (
+              <span>无</span>
+            ) : (
+              config.auth_password
+            )}
           </p>
           <p>
             <b>监控地址：</b>
             {serverIPs.length > 0 ? (
               <span>
                 <a href={`http://${getIpAddress()}:${config.web_interface_port}`} target="_blank" rel="noopener noreferrer">
-                  监控地址
+                  {`http://${getIpAddress()}:${config.web_interface_port}`}
                 </a>
               </span>
             ) : (
@@ -687,7 +707,15 @@ function App() {
             <p><b>拦截配置</b>：</p>
             <p>1. 不写 Mac 地址则拦截内网所有设备。</p>
             <p>2. 路径留空则该域名下所有请求都拦截</p>
-            <p>3. 路径处可以写部分匹配</p>
+            <p>3. 路径处写正则表达式</p>
+          </div>
+          <div>
+            <p>
+              运维信息：
+              <a href={`http://${getIpAddress()}:${config.proxy_port}`} target="_blank">
+                {`http://${getIpAddress()}:${config.proxy_port}`}
+              </a>
+            </p>
           </div>
         </div>
 
