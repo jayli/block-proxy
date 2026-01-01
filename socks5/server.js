@@ -1,194 +1,292 @@
 // socks5-proxy.js
+const path = require('path');
 const net = require('net');
 const dgram = require('dgram');
+const tls = require('tls');
+const fs = require('fs');
 const _fs = require('../proxy/fs.js');
 const { pipeline } = require('stream');
 
-// ===== 配置 =====
+// 固定下游 HTTP 代理地址（可改为配置项）
 const DOWNSTREAM_HTTP_PROXY_HOST = '127.0.0.1';
+const keyFile = path.join(__dirname, '../cert/rootCA.key');
+const crtFile = path.join(__dirname, '../cert/rootCA.crt');
 
 async function init() {
-  const loadedConfig = await _fs.readConfig();
-  
-  const DOWNSTREAM_HTTP_PROXY_PORT = loadedConfig.proxy_port;
-  const LISTEN_PORT = loadedConfig.socks5_port;
-  // 认证凭据（可替换为数据库/配置文件）
-  const AUTH_CREDENTIALS = {
-    username: loadedConfig.auth_username,
-    password: loadedConfig.auth_password 
-  };
+  try {
+    const loadedConfig = await _fs.readConfig();
 
-  // 工具函数：解析地址（IPv4 / IPv6 / 域名）
-  function parseAddress(buf, offset) {
-    const atyp = buf[offset];
-    let host, port, nextOffset;
+    const DOWNSTREAM_HTTP_PROXY_PORT = loadedConfig.proxy_port;
+    const LISTEN_PORT = loadedConfig.socks5_port;
 
-    if (atyp === 0x01) {
-      // IPv4 (4 bytes)
-      host = buf.slice(offset + 1, offset + 5).join('.');
-      port = buf.readUInt16BE(offset + 5);
-      nextOffset = offset + 7;
-    } else if (atyp === 0x03) {
-      // Domain name
-      const len = buf[offset + 1];
-      host = buf.slice(offset + 2, offset + 2 + len).toString();
-      port = buf.readUInt16BE(offset + 2 + len);
-      nextOffset = offset + 2 + len + 2;
-    } else if (atyp === 0x04) {
-      // IPv6 (16 bytes) — 简化处理，实际需格式化
-      host = `[${buf.slice(offset + 1, offset + 17).toString('hex')}]`;
-      port = buf.readUInt16BE(offset + 17);
-      nextOffset = offset + 19;
-    } else {
-      throw new Error('Unsupported address type');
+    // 从配置加载 TLS 证书和密钥路径
+    const certPath = crtFile;
+    const keyPath = keyFile;
+
+    if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+      console.error(`❌ TLS 证书或私钥文件不存在: cert=${certPath}, key=${keyPath}`);
+      process.exit(1);
     }
 
-    return { host, port, nextOffset };
-  }
+    const TLS_CERT = fs.readFileSync(certPath);
+    const TLS_KEY = fs.readFileSync(keyPath);
 
-  // 发送 SOCKS5 响应
-  function sendResponse(socket, status, atyp = 0x01, bindAddr = '0.0.0.0', bindPort = 0) {
-    const resp = Buffer.alloc(10);
-    resp[0] = 0x05; // VER
-    resp[1] = status; // REP
-    resp[2] = 0x00; // RSV
-    resp[3] = atyp; // ATYP
+    const AUTH_CREDENTIALS = {
+      username: loadedConfig.auth_username,
+      password: loadedConfig.auth_password,
+    };
 
-    if (atyp === 0x01) {
-      resp[4] = 0;
-      resp[5] = 0;
-      resp[6] = 0;
-      resp[7] = 0;
+    // 工具函数：解析目标地址（IPv4 / 域名 / IPv6）
+    function parseAddress(buf, offset) {
+      const atyp = buf[offset];
+      let host, port, nextOffset;
+
+      if (atyp === 0x01) {
+        // IPv4
+        host = buf.slice(offset + 1, offset + 5).join('.');
+        port = buf.readUInt16BE(offset + 5);
+        nextOffset = offset + 7;
+      } else if (atyp === 0x03) {
+        // Domain name
+        const len = buf[offset + 1];
+        host = buf.slice(offset + 2, offset + 2 + len).toString();
+        port = buf.readUInt16BE(offset + 2 + len);
+        nextOffset = offset + 2 + len + 2;
+      } else if (atyp === 0x04) {
+        // IPv6 (简化表示)
+        const ipv6Bytes = buf.slice(offset + 1, offset + 17);
+        host = '[' + ipv6Bytes.reduce((acc, byte, i) => {
+          if (i % 2 === 0 && i > 0) acc += ':';
+          return acc + byte.toString(16).padStart(2, '0');
+        }, '').replace(/00/g, '0').replace(/(^|:)0+([0-9a-f]+)/g, '$1$2') + ']';
+        port = buf.readUInt16BE(offset + 17);
+        nextOffset = offset + 19;
+      } else {
+        throw new Error('Unsupported address type: ' + atyp);
+      }
+
+      return { host, port, nextOffset };
     }
-    resp.writeUInt16BE(bindPort, 8);
-    socket.write(resp.slice(0, 10));
-  }
 
-  // ===== SOCKS5 服务器 =====
-  const server = net.createServer(async (socket) => {
-    try {
-      // Step 1: 协商认证方法
-      const authMethodsBuf = await new Promise((resolve) => {
-        socket.once('data', resolve);
+    // 发送 SOCKS5 响应包
+    function sendResponse(socket, status, atyp = 0x01, bindAddr = '0.0.0.0', bindPort = 0) {
+      const resp = Buffer.alloc(10);
+      resp[0] = 0x05; // VER
+      resp[1] = status; // REP
+      resp[2] = 0x00; // RSV
+      resp[3] = atyp; // ATYP
+
+      if (atyp === 0x01) {
+        // IPv4: 0.0.0.0
+        resp[4] = 0;
+        resp[5] = 0;
+        resp[6] = 0;
+        resp[7] = 0;
+      } else if (atyp === 0x03) {
+        // 域名（此处不使用）
+        resp[4] = 0;
+      } else if (atyp === 0x04) {
+        // IPv6: :: (16 bytes of 0)
+        resp.fill(0, 4, 20);
+      }
+
+      resp.writeUInt16BE(bindPort, atyp === 0x01 ? 8 : (atyp === 0x03 ? 5 : 20));
+      const len = atyp === 0x01 ? 10 : (atyp === 0x03 ? 5 + resp[4] + 2 : 22);
+      socket.write(resp.slice(0, len));
+    }
+
+    // 处理 TCP CONNECT 请求（转发到下游 HTTP 代理）
+    function handleTcpRequest(clientSocket, targetHost, targetPort) {
+      const proxySocket = net.connect(DOWNSTREAM_HTTP_PROXY_PORT, DOWNSTREAM_HTTP_PROXY_HOST, () => {
+        const connectReq = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n\r\n`;
+        proxySocket.write(connectReq);
+
+        let buffer = '';
+        const onProxyData = (chunk) => {
+          buffer += chunk.toString();
+          if (buffer.includes('\r\n\r\n')) {
+            proxySocket.removeListener('data', onProxyData);
+            if (!buffer.match(/^HTTP\/1\.[01] 200/)) {
+              clientSocket.destroy();
+              proxySocket.destroy();
+              return;
+            }
+            // 隧道建立成功
+            sendResponse(clientSocket, 0x00); // Success
+            // 双向管道
+            pipeline(clientSocket, proxySocket, (err) => {
+              clientSocket.destroy();
+              proxySocket.destroy();
+            });
+            pipeline(proxySocket, clientSocket, () => {});
+          }
+        };
+        proxySocket.on('data', onProxyData);
       });
-      const nmethods = authMethodsBuf[1];
-      if (authMethodsBuf.length !== 2 + nmethods) {
-        socket.destroy();
-        return;
-      }
 
-      let method = 0xff; // 无支持方法
-      for (let i = 0; i < nmethods; i++) {
-        const m = authMethodsBuf[2 + i];
-        if (m === 0x02) method = 0x02; // 用户名/密码认证
-        if (m === 0x00 && method === 0xff) method = 0x00; // 匿名（可选）
-      }
+      proxySocket.on('error', (err) => {
+        console.warn(`Proxy connection error to ${targetHost}:${targetPort}`, err.message);
+        sendResponse(clientSocket, 0x05); // Connection refused
+        clientSocket.destroy();
+      });
 
-      // 回复支持的认证方式
-      socket.write(Buffer.from([0x05, method]));
+      clientSocket.on('error', () => proxySocket.destroy());
+    }
 
-      // Step 2: 执行认证（如果需要）
-      if (method === 0x02) {
-        const authData = await new Promise((resolve) => {
+    // 处理 UDP ASSOCIATE（本地 UDP 中继）
+    function handleUdpAssociate(clientSocket) {
+      const udpRelay = dgram.createSocket('udp4');
+      udpRelay.on('message', (msg, rinfo) => {
+        // 注意：标准 SOCKS5 UDP 包含 header，但此处简化直接回传（适用于 DNS 等）
+        // 生产环境建议按 RFC 1928 封装/解封装
+        clientSocket.write(msg);
+      });
+
+      udpRelay.on('error', (err) => {
+        console.error('UDP relay error:', err);
+        clientSocket.destroy();
+      });
+
+      const localAddr = udpRelay.address();
+      // 告诉客户端 UDP 中继地址（返回 127.0.0.1 + 端口）
+      sendResponse(clientSocket, 0x00, 0x01, '127.0.0.1', localAddr.port);
+
+      // 清理
+      clientSocket.on('close', () => udpRelay.close());
+      clientSocket.on('error', () => udpRelay.close());
+    }
+
+    // TLS 服务器选项
+    const tlsOptions = {
+      key: TLS_KEY,
+      cert: TLS_CERT,
+      minVersion: 'TLSv1.2',
+      // 可选：启用 ALPN（非必需）
+      // ALPNProtocols: ['http/1.1'],
+    };
+
+    // 创建 TLS 封装的 SOCKS5 服务器
+    const server = tls.createServer(tlsOptions, async (socket) => {
+      try {
+        // Step 1: 协商认证方法
+        const authMethodsBuf = await new Promise((resolve) => {
           socket.once('data', resolve);
         });
-        const ulen = authData[1];
-        const username = authData.slice(2, 2 + ulen).toString();
-        const plen = authData[2 + ulen];
-        const password = authData.slice(2 + ulen + 1, 2 + ulen + 1 + plen).toString();
 
-        if (username !== AUTH_CREDENTIALS.username || password !== AUTH_CREDENTIALS.password) {
-          socket.write(Buffer.from([0x01, 0xff])); // 认证失败
+        if (authMethodsBuf.length < 2) {
           socket.destroy();
           return;
         }
-        socket.write(Buffer.from([0x01, 0x00])); // 认证成功
-      }
 
-      // Step 3: 接收请求
-      const requestBuf = await new Promise((resolve) => {
-        socket.once('data', resolve);
-      });
-      const cmd = requestBuf[1];
-      const { host, port } = parseAddress(requestBuf, 3);
+        const nmethods = authMethodsBuf[1];
+        if (authMethodsBuf.length !== 2 + nmethods) {
+          socket.destroy();
+          return;
+        }
 
-      if (cmd === 0x01) {
-        // CONNECT 命令（TCP）
-        handleTcpRequest(socket, host, port);
-      } else if (cmd === 0x03) {
-        // UDP ASSOCIATE（简化：直接绑定本地 UDP）
-        handleUdpAssociate(socket);
-      } else {
-        sendResponse(socket, 0x07); // Command not supported
-        socket.destroy();
-      }
-    } catch (err) {
-      console.error('SOCKS5 error:', err.message);
-      socket.destroy();
-    }
-  });
+        let method = 0xff; // 不支持任何方法
+        for (let i = 0; i < nmethods; i++) {
+          const m = authMethodsBuf[2 + i];
+          if (m === 0x02) method = 0x02; // 用户名/密码
+          if (m === 0x00 && method === 0xff) method = 0x00; // 匿名
+        }
 
-  // 处理 TCP 请求（转发到下游 HTTP 代理）
-  function handleTcpRequest(clientSocket, targetHost, targetPort) {
-    const proxySocket = net.connect(DOWNSTREAM_HTTP_PROXY_PORT, DOWNSTREAM_HTTP_PROXY_HOST, () => {
-      // 发送 HTTP CONNECT 请求
-      const connectReq = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n\r\n`;
-      proxySocket.write(connectReq);
+        socket.write(Buffer.from([0x05, method]));
 
-      // 等待代理响应
-      let buffer = '';
-      const onProxyData = (chunk) => {
-        buffer += chunk.toString();
-        if (buffer.includes('\r\n\r\n')) {
-          proxySocket.removeListener('data', onProxyData);
-          if (!buffer.startsWith('HTTP/1.1 200')) {
-            clientSocket.destroy();
-            proxySocket.destroy();
+        // Step 2: 执行认证
+        if (method === 0x02) {
+          const authData = await new Promise((resolve) => {
+            socket.once('data', resolve);
+          });
+
+          if (authData.length < 2) {
+            socket.write(Buffer.from([0x01, 0xff]));
+            socket.destroy();
             return;
           }
-          // 隧道建立成功，双向转发
-          sendResponse(clientSocket, 0x00); // Success
-          pipeline(clientSocket, proxySocket, (err) => {
-            clientSocket.destroy();
-            proxySocket.destroy();
-          });
-          pipeline(proxySocket, clientSocket, () => {});
+
+          const ulen = authData[1];
+          if (authData.length < 2 + ulen + 1) {
+            socket.write(Buffer.from([0x01, 0xff]));
+            socket.destroy();
+            return;
+          }
+
+          const username = authData.slice(2, 2 + ulen).toString();
+          const plen = authData[2 + ulen];
+          if (authData.length < 2 + ulen + 1 + plen) {
+            socket.write(Buffer.from([0x01, 0xff]));
+            socket.destroy();
+            return;
+          }
+
+          const password = authData.slice(2 + ulen + 1, 2 + ulen + 1 + plen).toString();
+
+          if (username !== AUTH_CREDENTIALS.username || password !== AUTH_CREDENTIALS.password) {
+            socket.write(Buffer.from([0x01, 0xff])); // 认证失败
+            socket.destroy();
+            return;
+          }
+          socket.write(Buffer.from([0x01, 0x00])); // 成功
         }
-      };
-      proxySocket.on('data', onProxyData);
+
+        // Step 3: 处理请求
+        const requestBuf = await new Promise((resolve) => {
+          socket.once('data', resolve);
+        });
+
+        if (requestBuf.length < 4) {
+          socket.destroy();
+          return;
+        }
+
+        const cmd = requestBuf[1];
+        let target;
+        try {
+          target = parseAddress(requestBuf, 3);
+        } catch (e) {
+          sendResponse(socket, 0x08); // Address type not supported
+          socket.destroy();
+          return;
+        }
+
+        if (cmd === 0x01) {
+          // CONNECT
+          handleTcpRequest(socket, target.host, target.port);
+        } else if (cmd === 0x03) {
+          // UDP ASSOCIATE
+          handleUdpAssociate(socket);
+        } else {
+          sendResponse(socket, 0x07); // Command not supported
+          socket.destroy();
+        }
+      } catch (err) {
+        console.error('SOCKS5 over TLS session error:', err.message);
+        socket.destroy();
+      }
     });
 
-    proxySocket.on('error', () => {
-      sendResponse(clientSocket, 0x05); // Connection refused
-      clientSocket.destroy();
+    // 错误处理
+    server.on('tlsClientError', (err, tlsSocket) => {
+      console.warn('TLS handshake failed:', err.message);
+      tlsSocket?.destroy();
     });
+
+    server.on('error', (err) => {
+      console.error('SOCKS5 TLS server error:', err);
+    });
+
+    // 启动监听
+    server.listen(LISTEN_PORT, () => {
+      console.log(`✅ SOCKS5 over TLS server started on port ${LISTEN_PORT}`);
+      console.log(`🔒 Credentials and traffic are encrypted via TLS`);
+      console.log(`➡️  TCP → downstream HTTP proxy at ${DOWNSTREAM_HTTP_PROXY_HOST}:${DOWNSTREAM_HTTP_PROXY_PORT}`);
+      console.log(`➡️  UDP → direct local relay`);
+    });
+  } catch (err) {
+    console.error('Failed to initialize SOCKS5-TLS proxy:', err);
+    process.exit(1);
   }
-
-  // 处理 UDP ASSOCIATE（直接本地 UDP 转发）
-  function handleUdpAssociate(clientSocket) {
-    const udpRelay = dgram.createSocket('udp4');
-    const localPort = udpRelay.address().port;
-
-    udpRelay.on('message', (msg, rinfo) => {
-      // 构造 SOCKS5 UDP 响应包（此处简化：直接回传）
-      // 实际需按 RFC 1928 格式封装，但多数客户端只用于 DNS，可简化
-      clientSocket.write(msg);
-    });
-
-    // 告诉客户端 UDP 中继地址（这里返回本机）
-    sendResponse(clientSocket, 0x00, 0x01, '127.0.0.1', localPort);
-
-    // 客户端关闭时清理
-    clientSocket.on('close', () => udpRelay.close());
-  }
-
-  // 启动服务器
-  server.listen(LISTEN_PORT, () => {
-    console.log(`✅ SOCKS5 proxy with auth running on port ${LISTEN_PORT}`);
-    console.log(`➡️  TCP → HTTP proxy at ${DOWNSTREAM_HTTP_PROXY_HOST}:${DOWNSTREAM_HTTP_PROXY_PORT}`);
-    console.log(`➡️  UDP → direct relay`);
-  });
-
-};
+}
 
 module.exports.init = init;

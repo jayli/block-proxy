@@ -668,7 +668,7 @@ function App() {
             <b>HTTP 代理端口：</b><span>{config.proxy_port}</span> &nbsp;<span>开启</span>
           </p>
           <p>
-            <b>Socks5 代理端口：</b><span>{config.socks5_port}</span> &nbsp;
+            <b>Socks5（Over TLS）代理端口：</b><span>{config.socks5_port}</span> &nbsp;
             <span>{
               config.enable_socks5 === "1" ? "开启" : "关闭"
             }</span>

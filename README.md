@@ -10,6 +10,7 @@
 - 设定日期和时间段
 - 监控上网记录
 - 顺便过滤广告
+- 提供 HTTP 和 Socks5 over TLS 两种代理
 
 ### 1）开发和调试
 
@@ -17,7 +18,7 @@
 
 0. 3000: 调试端口（仅开发调试用）
 1. 8001: HTTP 代理端口
-2. 8002: Socks5 代理端口
+2. 8002: Socks5（over TLS）代理端口
 3. 8003: 监控端口
 4. 8004: 配置端口
 
@@ -67,9 +68,11 @@ docker run --init -d --restart=unless-stopped --user=root \
 
 #### 代理端口
 
-默认开启两个代理端口：HTTP 8001 和 Socks5 8002。
+默认开启两个代理端口：HTTP 8001 和 Socks5（over TLS） 8002。
 
 ⚠️ Socks5 代理不支持对 Mac 地址的定向拦截，Mac 地址的拦截只对局域网内的 HTTP 代理绑定生效。建议局域网绑定 http 代理，公网绑定 Socks5 代理。
+
+⚠️ 使用小火箭的 Socks5 over TLS 代理，TLS 选项里勾选“允许不安全”
 
 #### 后台配置
 
@@ -112,7 +115,7 @@ ip6tables -I forwarding_rule -m mac --mac-source D2:9E:8D:1B:F1:4E -j REJECT
 1. MITM 跑在 anyproxy 的规则定义里，所以客户端设备必须要安装 AnyProxy 的证书。
 2. 服务需要根据 ip 反查 mac 地址，需要代理服务工作在对子网有扫描权限的节点，最好是部署在 openwrt 网关，可以`arp -a`看下是否可以扫描完全。
 3. 服务会自动更新路由表，每 2 个小时更新一次，对于新入网的设备，最好在后台手动刷新并重启代理，以免拦截规则不能立即生效。
-4. 所有规则都在 HTTP 代理中生效，Socks5 是指向 AnyProxy 的反向代理，内网 Mac 地址的拦截只对直接绑定 HTTP 代理的情况生效。因此建议优先使用 HTTP 代理。
+4. 所有规则都在 HTTP 代理中生效，Socks5 是指向 AnyProxy 的反向代理，且默认开启了 TLS 加密，内网 Mac 地址的拦截只对直接绑定 HTTP 代理的情况生效。因此建议优先使用 HTTP 代理。
 
 #### Youtube 去广告
 
@@ -143,6 +146,7 @@ done！
 - 七层拦截：url 命中规则时直接返回空，需要解包，但避免了网络耗时，总体基本不影响速度。
 - MITM：需要 MITM 的请求，RT 会增加。因为 tls 加解密基于系统的 OpenSSL，速度取决于 CPU 算力。
 - Openwrt 稳定性：为了避免瞬时的 CPU 打满，最好 docker 里加上 CPU 和内存的限制。实测内存 250M，CPU 50% 足够了。
+- Socks5代理：我没提供裸奔的 Socks5 代理，而是 over TLS 的 Socks5，在小火箭里配置。没有小火箭就只能配置 HTTP 代理。
 
 ⚠️ 提示：如果把 block-proxy 部署在 openwrt 网关上，代理地址和网关地址一致，iOS Safari 有一个默认安全限制，不支持带认证的代理和网关 IP 一致，两个解决办法：
 
@@ -168,7 +172,7 @@ done！
 2. `beforeSendRequest` 中无法获得源 IP。在经过 https 隧道后到达`beforeSendRequest`回调函数时，req 中携带的 socket 不是原始的 socket，得到的 remoteAddress 始终是 `127.0.0.1`。这是代理机制决定的，但 AnyProxy 作为工具箱应当把重要的最初创建隧道时的源 socket 保留下来，以便把关键的原始信息透传给规则回调函数，交给开发者去处理。
 3. `EPIPE 报错`，这个错误会导致程序崩溃，本来 EPIPE 只是一个小错误，是客户端在收到 AnyProxy 响应之前关闭了隧道，anyproxy 没有很好的处理，我打上了补丁。
 4. `407 验证`：增加了代理的用户名和密码的验证，包括防暴力破解。
-5. 增加 Socks5 代理
+5. 增加 Socks5 over TLS 代理
 
 ### License
 
