@@ -435,8 +435,9 @@ function getUserReqHandler(userRule, recorder) {
         if (responseInfo.statusCode === 407 || responseInfo.statusCode === 200) {
           // do nothing
         } else {
-          delete resHeader.connection;
-          delete resHeader.Connection;
+          // modified at 2026-1-2 彻底把connection状态打开，原封不动的透传下去
+          // delete resHeader.connection;
+          // delete resHeader.Connection;
         }
       }
 
@@ -551,6 +552,10 @@ function getUserReqHandler(userRule, recorder) {
 
       .catch(co.wrap(function *(error) {
         logUtil.printLog(util.collectErrorLog(error), logUtil.T_ERR);
+
+        // jayli
+        // console.log('----------------------');
+        // console.log(error, /*requestDetail.requestOptions*/);
 
         let errorResponse = getErrorResponse(error, fullUrl);
 
