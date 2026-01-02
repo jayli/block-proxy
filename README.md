@@ -11,9 +11,19 @@
 - 监控上网记录
 - 顺便过滤广告
 
-### 1）开发和调试
+### 1）使用方法
 
-代码 clone 下来后执行`pnpm i`，执行 `npm run dev` 运行本地服务。默认开启 4 个端口：
+1. 下载 Docker 文件
+   - Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/arm/block-proxy.tar" target=_blank>block-proxy-arm.tar</a>
+   - X86 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/x86/block-proxy-x86.tar" target=_blank>block-proxy-x86.tar</a>
+2. 导入：`docker load < block-proxy.tar`
+3. 启动：参照下文 Docker 部署
+4. 服务端配置：配置面板 <http://ip:8004>，关闭、启用配置面板：<http://ip:8001>
+5. 客户端配置：http 代理直接在 iphone wifi 详细里手动配置，socks5 代理只支持 socks5 over TLS，用小火箭配置。
+
+### 2）开发和调试
+
+代码 clone 下来后执行`pnpm i`，执行 `npm run dev` 运行本地服务。默认开启 5 个端口：
 
 0. 3000: 调试端口（仅开发调试用）
 1. 8001: HTTP 代理端口
@@ -21,7 +31,7 @@
 3. 8003: 监控端口
 4. 8004: 配置端口
 
-### 2）Docker 构建和部署
+### 3）Docker 构建和部署
 
 准备工作，构建 docker 包，先启动本地 Docker：
 
@@ -50,7 +60,7 @@ docker run --init -d --restart=unless-stopped \
            --name block-proxy block-proxy
 ```
 
-> block-proxy 物理内存使用平均在 200M，如果在 1G 内存的机器上，可以只启动 proxy 不启动后台，运行内存下降至 90M，访问 http://代理IP:8001 根据提示操作。
+> block-proxy 物理内存使用平均在 200M，如果在 1G 内存的机器上，可以只启动 proxy 不启动后台面板，运行内存下降至 90M，访问 http://代理IP:8001 根据提示操作。
 
 网关里为了方便获取子网机器 ip 和 mac 地址，docker 容器需要和宿主机共享同一个网络，同时指定时区。
 
@@ -63,7 +73,7 @@ docker run --init -d --restart=unless-stopped --user=root \
 ```
 
 
-### 3）配置
+### 4）配置说明
 
 #### 代理端口
 
@@ -102,10 +112,7 @@ ip6tables -I forwarding_rule -m mac --mac-source D2:9E:8D:1B:F1:4E -j REJECT
 
 重启防火墙
 
-### 4）Docker 文件下载
 
-- Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/arm/block-proxy.tar" target=_blank>block-proxy-arm.tar</a>
-- X86 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/x86/block-proxy-x86.tar" target=_blank>block-proxy-x86.tar</a>
 
 ### 5）使用说明
 
@@ -154,7 +161,6 @@ done！
 
 <img width="400" alt="image" src="https://github.com/user-attachments/assets/0f46d6b4-00b1-44aa-9be7-fa23a09bb199" />
 
-
 **并发测试**：
 
 |直连测试     |代理测试     |
@@ -164,14 +170,6 @@ done！
 **网速测试**：
 
 <img width="544" alt="image" src="https://github.com/user-attachments/assets/67c61e34-67ae-4345-97ca-d266cd35ddf4" />
-
-### 6）AnyProxy bugfix 记录
-
-1. `Content-length`和`Connection` 被吞掉的问题：这个是 AnyProxy 的设计缺陷，AnyProxy 定位为 Mock 工具，为了便于修改响应内容，因此AnyProxy 默认不设置 `Content-length`，其实 AnyProxy 应当让开发者自己处理`Content-length`，并给出最佳实践，而不是一刀切，为了规避重写响应后和源报文Length不一致的问题而直接删掉`Content-length`和`Connection`这两个重要字段。
-2. `beforeSendRequest` 中无法获得源 IP。在经过 https 隧道后到达`beforeSendRequest`回调函数时，req 中携带的 socket 不是原始的 socket，得到的 remoteAddress 始终是 `127.0.0.1`。这是代理机制决定的，但 AnyProxy 作为工具箱应当把重要的最初创建隧道时的源 socket 保留下来，以便把关键的原始信息透传给规则回调函数，交给开发者去处理。
-3. `EPIPE 报错`，这个错误会导致程序崩溃，本来 EPIPE 只是一个小错误，是客户端在收到 AnyProxy 响应之前关闭了隧道，anyproxy 没有很好的处理，我打上了补丁。
-4. `407 验证`：增加了代理的用户名和密码的验证，包括防暴力破解。
-5. 增加 Socks5 over TLS 代理
 
 ### License
 
