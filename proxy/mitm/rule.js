@@ -70,7 +70,7 @@ module.exports = {
     {
       'type': 'beforeSendResponse',
       'host': 'youtubei.googleapis.com',
-      'regexp': "\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch)",
+      'regexp': "/youtubei/v1/(browse|next|player|search|reel/reel_watch_sequence|guide|account/get_setting|get_watch)",
       'callback': async function(url, request, response) {
         return await hijackResponse(url, request, response, YoutubeResponse);
       } // -- callback
@@ -79,7 +79,7 @@ module.exports = {
     {
       type: "beforeSendRequest",
       host: "googlevideo.com",
-      regexp: "(^https?:\/\/[\\w-]+\.googlevideo\.com\/.+)(ctier=L)(&.+)",
+      regexp: "(^https?://[\\w-]+\.googlevideo\.com/.+)(ctier=L)(&.+)",
       callback: async function(url, request, response) {
         const matchRegExp = new RegExp(this.regexp);
         const matchResult = url.match(matchRegExp);
