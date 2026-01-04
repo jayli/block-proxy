@@ -19,7 +19,7 @@
 2. 导入：`docker load < block-proxy.tar`
 3. 启动：参照下文 Docker 部署
 4. 服务端配置：配置面板 <http://ip:8004>，关闭、启用配置面板：<http://ip:8001>
-5. 客户端配置：http 代理直接在 iphone wifi 详细里手动配置，socks5 代理只支持 socks5 over TLS，用小火箭配置。
+5. 客户端配置：http 代理直接在 iphone wifi 详情里手动配置，socks5 代理只支持 socks5 over TLS，用小火箭配置。
 
 ### 2）开发和调试
 
@@ -60,7 +60,7 @@ docker run --init -d --restart=unless-stopped \
            --name block-proxy block-proxy
 ```
 
-> block-proxy 物理内存使用平均在 200M，如果在 1G 内存的机器上，可以只启动 proxy 不启动后台面板，运行内存下降至 90M，访问 http://代理IP:8001 根据提示操作。
+> block-proxy 可以配置只启动 proxy 不启动后台面板，首次启动后访问 http://代理IP:8001 根据提示操作。
 
 网关里为了方便获取子网机器 ip 和 mac 地址，docker 容器需要和宿主机共享同一个网络，同时指定时区。
 
@@ -110,15 +110,14 @@ iptables -I FORWARD -m mac --mac-source D2:9E:8D:1B:F1:4E  -j REJECT
 ip6tables -I forwarding_rule -m mac --mac-source D2:9E:8D:1B:F1:4E -j REJECT
 ```
 
-重启防火墙
-
+然后重启防火墙
 
 
 ### 5）使用说明
 
 #### 应用条件：
 
-1. MITM 跑在 anyproxy 的规则定义里，所以客户端设备必须要安装 AnyProxy 的证书。
+1. MITM 基于 AnyProxy 的规则实现，客户端设备必须要安装 AnyProxy 的证书。
 2. 服务需要根据 ip 反查 mac 地址，需要代理服务工作在对子网有扫描权限的节点，最好是部署在 openwrt 网关，可以`arp -a`看下是否可以扫描完全。
 3. 服务会自动更新路由表，每 2 个小时更新一次，对于新入网的设备，最好在后台手动刷新并重启代理，以免拦截规则不能立即生效。
 4. 所有规则都在 HTTP 代理中生效，Socks5 是指向 AnyProxy 的反向代理，且默认开启了 TLS 加密，内网 Mac 地址的拦截只对直接绑定 HTTP 代理的情况生效。因此建议优先使用 HTTP 代理。
@@ -150,9 +149,8 @@ done！
 
 - 四层转发：Node 的流式 `pipe()` 性能很好，吞吐量不用担心。只要不解包，速度接近原生。
 - 七层拦截：url 命中规则时直接返回空，需要解包，但避免了网络耗时，总体基本不影响速度。
-- MITM：需要 MITM 的请求，RT 会增加。因为 tls 加解密基于系统的 OpenSSL，速度取决于 CPU 算力。
-- Openwrt 稳定性：为了避免瞬时的 CPU 打满，最好 docker 里加上 CPU 和内存的限制。实测内存 250M，CPU 50% 足够了。
-- Socks5代理：我没提供裸奔的 Socks5 代理，而是 over TLS 的 Socks5，在小火箭里配置。没有小火箭就只能配置 HTTP 代理。
+- MITM：MITM 主要耗时是 tls 加解密，基于系统的 OpenSSL，速度取决于 CPU 算力。
+- Socks5代理：我没提供裸奔的 Socks5 代理，只实现了 over TLS 的 Socks5，在小火箭里配置。
 
 ⚠️ 提示：如果把 block-proxy 部署在 openwrt 网关上，代理地址和网关地址一致，iOS Safari 有一个默认安全限制，不支持带认证的代理和网关 IP 一致，两个解决办法：
 
