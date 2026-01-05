@@ -18,6 +18,7 @@ const { HttpProxyAgent } = require('http-proxy-agent');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const _request = require("./http.js").request;
 const Rule = require("./mitm/rule.js");
+const uaFilter = require("./mitm/uaFilter.js");
 const attacker = require('./attacker.js');
 const monitor = require('./monitor.js');
 const domain = require('./domain.js');
@@ -45,10 +46,8 @@ var docker_host_IP = '';
 var enable_express = "1"; // "0", "1"
 var enable_socks5 = "1";
 // 域名判断，区分浏览器和 App
-var youtube_mitm_domains = [
-  "youtube.com",
-  "googlevideo.com",
-  "youtubei.googleapis.com"
+var filtered_mitm_domains = [
+  ...uaFilter.filtered_mitm_domains
 ];
 
 // 对 Rule 里的正则表达式进行预编译
@@ -233,14 +232,6 @@ function getBlockRules(ip) {
     }
   });
   return currBlockList;
-}
-
-function isYoutubeApp(ua) {
-  if (ua.startsWith("com.google.ios.youtube") || ua.startsWith("com.google.android.youtube")) {
-    return true;
-  } else {
-    return false;
-  }
 }
 
 // 检查是否应当拦截 host & match_rule & url
@@ -702,7 +693,7 @@ function authPass(protocol, host, url) {
     "googlevideo.com", // Toutube 视频流
     "dns.weixin.qq.com.cn", // 微信的 dns 预解析
     "weixin.qq.com",
-    ...youtube_mitm_domains
+    ...filtered_mitm_domains
   ];
   //  基于 http 传输的流
   const passUrl = [
@@ -740,16 +731,6 @@ function authPass(protocol, host, url) {
   }
 
   return pass;
-}
-
-function getUA(headers) {
-  if (headers.hasOwnProperty("User-Agent")) {
-    return headers["User-Agent"];
-  } else if (headers.hasOwnProperty("user-agent")) {
-    return headers["user-agent"];
-  } else {
-    return "";
-  }
 }
 
 function getAnyProxyOptions() {
@@ -1017,9 +998,8 @@ function getAnyProxyOptions() {
           return null;
         }
 
-        // Hack，Youtube 广告拦截不兼容浏览器，浏览器访问 Youtube 的广告拦截都不做 mitm
-        if (!isYoutubeApp(getUA(requestOptions.headers)) &&
-          youtube_mitm_domains.some(domain => trimHost(host).endsWith(domain) || trimHost(host) === domain)) {
+        // Hack, 根据 UA 判断是否符合放行条件，比如 Youtube 的 MITM 只对 App 生效，则浏览器的 UA 就需要放行
+        if (uaFilter.match(requestOptions.headers, host)) {
           return null;
         }
 
@@ -1081,7 +1061,7 @@ function getAnyProxyOptions() {
           // 如果是列表中的域名则拦截
           /// console.log(`[⭕️] ${url}`);
           // 为被拦截的域名返回自定义响应
-          let customHosts = youtube_mitm_domains;
+          let customHosts = filtered_mitm_domains;
           let customBody = customHosts.some(domain => host.endsWith(domain) || host === domain) ?
                                            Buffer.alloc(0) : "Blocked by AnyProxy";
           return {
