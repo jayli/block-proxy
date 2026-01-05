@@ -44,6 +44,12 @@ var is_running_in_docker = false;
 var docker_host_IP = '';
 var enable_express = "1"; // "0", "1"
 var enable_socks5 = "1";
+// 域名判断，区分浏览器和 App
+var youtube_mitm_domains = [
+  "youtube.com",
+  "googlevideo.com",
+  "youtubei.googleapis.com"
+];
 
 // 对 Rule 里的正则表达式进行预编译
 function preCompileRuleRegexp() {
@@ -227,6 +233,14 @@ function getBlockRules(ip) {
     }
   });
   return currBlockList;
+}
+
+function isYoutubeApp(ua) {
+  if (ua.startsWith("com.google.ios.youtube") || ua.startsWith("com.google.android.youtube")) {
+    return true;
+  } else {
+    return false;
+  }
 }
 
 // 检查是否应当拦截 host & match_rule & url
@@ -606,13 +620,19 @@ async function rewriteRuleBeforeRequest(host, url, request) {
   }
 }
 
+// a.com:443 → a.com
+function trimHost(host) {
+  if (/:\d+$/.test(host)) {
+    host = host.split(":")[0];
+  }
+  return host;
+}
+
 // 需要强制拆包的域名从 Rule 里获得
 // host: a.com
 //       a.com:443
 function shouldMitm(host) {
-  if (/:\d+$/.test(host)) {
-    host = host.split(":")[0];
-  }
+  host = trimHost(host);
   var should = false;
   var mitm_list = [];
   Object.keys(Rule).forEach(key => {
@@ -681,16 +701,15 @@ function authPass(protocol, host, url) {
   const passHosts = [
     "googlevideo.com", // Toutube 视频流
     "dns.weixin.qq.com.cn", // 微信的 dns 预解析
-    "weixin.qq.com"
+    "weixin.qq.com",
+    ...youtube_mitm_domains
   ];
   //  基于 http 传输的流
   const passUrl = [
     /\.(m3u8|mp4|mpd|ts|webm|avi|mkv)$/i
   ];
 
-  if (/:\d+$/.test(host)) {
-    host = host.split(":")[0];
-  }
+  host = trimHost(host);
 
   var pass = false;
 
@@ -721,6 +740,16 @@ function authPass(protocol, host, url) {
   }
 
   return pass;
+}
+
+function getUA(headers) {
+  if (headers.hasOwnProperty("User-Agent")) {
+    return headers["User-Agent"];
+  } else if (headers.hasOwnProperty("user-agent")) {
+    return headers["user-agent"];
+  } else {
+    return "";
+  }
 }
 
 function getAnyProxyOptions() {
@@ -988,6 +1017,12 @@ function getAnyProxyOptions() {
           return null;
         }
 
+        // Hack，Youtube 广告拦截不兼容浏览器，浏览器访问 Youtube 的广告拦截都不做 mitm
+        if (!isYoutubeApp(getUA(requestOptions.headers)) &&
+          youtube_mitm_domains.some(domain => trimHost(host).endsWith(domain) || trimHost(host) === domain)) {
+          return null;
+        }
+
         // 这里验证只能处理 HTTP 请求，HTTPs 里 _req 携带的请求头是不包含验证字段的，因为
         // https 内的 header 是五层信息，proxy-Authenticate 信息属于四层，这里看不到
         if (isHttp) {
@@ -1046,7 +1081,7 @@ function getAnyProxyOptions() {
           // 如果是列表中的域名则拦截
           /// console.log(`[⭕️] ${url}`);
           // 为被拦截的域名返回自定义响应
-          let customHosts = ["youtube.com","googlevideo.com"];
+          let customHosts = youtube_mitm_domains;
           let customBody = customHosts.some(domain => host.endsWith(domain) || host === domain) ?
                                            Buffer.alloc(0) : "Blocked by AnyProxy";
           return {
