@@ -441,6 +441,8 @@ function getUserReqHandler(userRule, recorder) {
         }
       }
 
+      // resHeader['Connection'] = "keep-alive";
+
       if (!responseInfo) {
         throw new Error('failed to get response info');
       } else if (!responseInfo.statusCode) {
