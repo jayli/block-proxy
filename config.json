@@ -129,21 +129,6 @@
         7
       ],
       "compiledFilterRegexp": {}
-    },
-    {
-      "filter_host": "youtubei.googleapis.com",
-      "filter_match_rule": "\\/youtubei\\/v1\\/notification_registration\\/get_settings",
-      "filter_start_time": "00:00",
-      "filter_end_time": "23:59",
-      "filter_weekday": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7
-      ]
     }
   ],
   "proxy_port": 8001,
