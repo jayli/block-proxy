@@ -161,14 +161,13 @@ function fetchRemoteResponse(protocol, options, reqData, config) {
               });
             } else if (isBrotlied && originContentLen) {
               refactContentEncoding();
-
-              try {
-                // an Unit8Array returned by decompression
-                const result = brotliTorb.decompress(serverResData);
-                fulfill(Buffer.from(result));
-              } catch (e) {
-                rejectParsing(e);
-              }
+              zlib.brotliDecompress(serverResData, (err, buff) => {
+                if (err) {
+                  rejectParsing(err);
+                } else {
+                  fulfill(buff);
+                }
+              });
             } else {
               fulfill(serverResData);
             }
