@@ -24,6 +24,15 @@ const monitor = require('./monitor.js');
 const domain = require('./domain.js');
 const wanip = require('./wanip.js');
 
+// 启用全局 keep-alive，使 AnyProxy 内部转发也复用连接
+http.globalAgent.keepAlive = true;
+https.globalAgent.keepAlive = true;
+http.globalAgent.maxSockets = 50;
+https.globalAgent.maxSockets = 50;
+
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 50 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
+
 // 全局参数
 const configPath = path.join(__dirname, '../config.json');
 var anyproxy_started = false;
@@ -733,6 +742,16 @@ function authPass(protocol, host, url) {
   return pass;
 }
 
+function passRequestWithHttpAgent(requestDetail, isHttps) {
+  return {
+    ...requestDetail,
+    requestOptions: {
+      ...requestDetail.requestOptions,
+      agent: isHttps ? httpsAgent : httpAgent,
+    }
+  };
+}
+
 function getAnyProxyOptions() {
   return {
     port: proxyPort,
@@ -995,12 +1014,12 @@ function getAnyProxyOptions() {
 
         // 如果是裸IP请求，全部放行
         if (net.isIPv4(host) || net.isIPv6(host)) {
-          return null;
+          return passRequestWithHttpAgent(requestDetail, isHttps);
         }
 
         // Hack, 根据 UA 判断是否符合放行条件，比如 Youtube 的 MITM 只对 App 生效，则浏览器的 UA 就需要放行
         if (uaFilter.match(requestOptions.headers, host)) {
-          return null;
+          return passRequestWithHttpAgent(requestDetail, isHttps);
         }
 
         // 这里验证只能处理 HTTP 请求，HTTPs 里 _req 携带的请求头是不包含验证字段的，因为
@@ -1053,7 +1072,7 @@ function getAnyProxyOptions() {
           } else {
             // 其他情况一律放行
             /// console.log("[✅] 1 " + url);
-            return null;
+            return passRequestWithHttpAgent(requestDetail, isHttps);
           }
         }
         // 如果当前 IP 有针对域名和 url 匹配 matchRule 的规则，则拦截
@@ -1083,7 +1102,7 @@ function getAnyProxyOptions() {
         }
         /// console.log("[✅] 2 " + url);
         // 如果重写逻辑也不匹配，则请求放行
-        return null;
+        return passRequestWithHttpAgent(requestDetail, isHttps);
       },
 
       async beforeSendResponse(requestDetail, responseDetail) {
