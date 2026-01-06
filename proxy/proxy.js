@@ -1196,7 +1196,7 @@ function getAnyProxyOptions() {
 
     },
     webInterface: {
-      enable: false,
+      enable: true,
       webPort: webInterfacePort
     },
     throttle: 800 * 1024 * 1024, // 800 Mbps
