@@ -124,12 +124,13 @@ ip6tables -I forwarding_rule -m mac --mac-source D2:9E:8D:1B:F1:4E -j REJECT
 
 #### Youtube 去广告
 
-一共六条拦截规则，四条 reject 规则直接配置在后台里：
+一共六条拦截规则，这几条 reject 规则直接配置在后台里：
 
 - *youtube.com*：`^https?:\/\/(www|s)\.youtube\.com\/(pagead|ptracking)`
 - *youtube.com*：`^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext`
 - *youtube.com*：`^https?:\/\/(www|s)\.youtube\.com\/api\/stats\/ads`
 - *googlevideo.com*：`^https?:\/\/[\w-]+\.googlevideo\.com\/(?!(dclk_video_ads|videoplayback\?)).+&oad`
+- *youtubei.googleapis.com*：`\/youtubei\/v1\/notification_registration\/get_settings`
 
 另外两条规则在这里：<https://github.com/jayli/block-proxy/blob/main/proxy/mitm/rule.js>（手工添加上面四条规则就够了）
 
