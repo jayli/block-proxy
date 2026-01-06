@@ -54,6 +54,7 @@ var is_running_in_docker = false;
 var docker_host_IP = '';
 var enable_express = "1"; // "0", "1"
 var enable_socks5 = "1";
+var enable_webinterface = "1"; // "0", "1"
 // 域名判断，区分浏览器和 App
 var filtered_mitm_domains = [
   ...uaFilter.filtered_mitm_domains
@@ -93,6 +94,7 @@ async function loadConfig() {
     enable_express: enable_express,
     enable_socks5: enable_socks5,
     socks5_port: socks5Port,
+    enable_webinterface: enable_webinterface,
     devices: []
   };
 
@@ -143,6 +145,9 @@ async function loadConfig() {
       enable_socks5 = loadedConfig.enable_socks5;
       config.enable_socks5 = enable_socks5;
 
+      enable_webinterface = loadedConfig.enable_webinterface;
+      config.enable_webinterface = enable_webinterface;
+
       socks5Port = loadedConfig.socks5_port;
       config.socks5_port = socks5Port;
 
@@ -178,6 +183,7 @@ async function loadConfig() {
         your_domain: your_domain,
         socks5_port: socks5Port,
         enable_socks5: enable_socks5,
+        enable_webinterface: enable_webinterface,
         vpn_proxy: ""
       });
       // fs.writeFileSync(configPath, JSON.stringify({
@@ -385,7 +391,9 @@ function startProxyServer() {
 
     proxyServerInstance.on('ready', () => {
       console.log(`✅ Proxy server started on port ${proxyPort}`);
-      console.log(`✅ Web interface available on port ${webInterfacePort}`);
+      if (enable_webinterface == "1") {
+        console.log(`✅ Web interface available on port ${webInterfacePort}`);
+      }
       console.log('Intercepting requests to hosts:', blockHosts.join(', '));
       console.log('All other requests will be passed through without HTTPS interception');
     });
@@ -1001,6 +1009,32 @@ function getAnyProxyOptions() {
                 body: "关闭 socks5 成功，请重启 Docker。"
               }
             };
+          } else if (pathname == "/disable_webinterface") {
+            var configData = await _fs.readConfig();
+            _fs.writeConfig({
+              ...configData,
+              enable_webinterface: "0"
+            });
+            return {
+              response: {
+                statusCode: 200,
+                header: { 'Content-Type': 'text/plain; charset=utf-8' },
+                body: "关闭 webinterface 成功，请重启 Docker。"
+              }
+            };
+          } else if (pathname == "/enable_webinterface") {
+            var configData = await _fs.readConfig();
+            _fs.writeConfig({
+              ...configData,
+              enable_webinterface: "1"
+            });
+            return {
+              response: {
+                statusCode: 200,
+                header: { 'Content-Type': 'text/plain; charset=utf-8' },
+                body: "启用 webinterface 成功，请重启 Docker。"
+              }
+            };
           } else {
             return {
               response: {
@@ -1196,7 +1230,7 @@ function getAnyProxyOptions() {
 
     },
     webInterface: {
-      enable: true,
+      enable: enable_webinterface == "1" ? true : false,
       webPort: webInterfacePort
     },
     throttle: 800 * 1024 * 1024, // 800 Mbps

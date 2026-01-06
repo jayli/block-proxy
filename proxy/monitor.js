@@ -7,13 +7,15 @@ const isLinux = os.platform() === 'linux';
 const isMacOS = os.platform() === 'darwin';
 
 const guideLine = [
-  "\n\n",
+  "\n\n\n",
   "操作：",
   "1. <a href='/enable_express'>启用管理后台</a>",
   "2. <a href='/disable_express'>关闭管理后台</a>",
   "3. <a href='/enable_socks5'>启用Socks5代理</a>",
   "4. <a href='/disable_socks5'>关闭Socks5代理</a>",
-  "5. <a href='/restart_docker'>重启 Docker</a>"
+  "5. <a href='/enable_webinterface'>启用webinterface</a>",
+  "6. <a href='/disable_webinterface'>关闭webinterface</a>",
+  "7. <a href='/restart_docker'>重启 Docker</a>"
 ].join("\n");
 
 function promisifyExec(cmd) {

@@ -140,6 +140,7 @@
   "enable_express": "1",
   "enable_socks5": "1",
   "socks5_port": 8002,
+  "enable_webinterface": "1",
   "devices": [
     {
       "ip": "192.168.124.1",
