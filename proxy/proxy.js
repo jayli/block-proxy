@@ -649,7 +649,6 @@ function parseResponseFromZippedChunk(response) {
     }
 
     const formatResponse = (newBody) => {
-      console.log(newBody);
       return {
         ...response,
         header: resHeader,
