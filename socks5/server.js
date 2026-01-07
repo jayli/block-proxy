@@ -3,6 +3,7 @@ const path = require('path');
 const net = require('net');
 const dgram = require('dgram');
 const tls = require('tls');
+const crypto = require('crypto');
 const fs = require('fs');
 const _fs = require('../proxy/fs.js');
 const { pipeline } = require('stream');
@@ -11,8 +12,23 @@ const { pipeline } = require('stream');
 const DOWNSTREAM_HTTP_PROXY_HOST = '127.0.0.1';
 const keyFile = path.join(__dirname, '../cert/rootCA.key');
 const crtFile = path.join(__dirname, '../cert/rootCA.crt');
+const ticketKeyPath = path.join(__dirname, './ticket-keys.bin');
+
+function initTicketKeyFile() {
+  if (!fs.existsSync(ticketKeyPath)) {
+    fs.writeFileSync(ticketKeyPath, crypto.randomBytes(48));
+  }
+}
+
+function getTicketKeys() {
+  initTicketKeyFile();
+  return fs.readFileSync(ticketKeyPath) || crypto.randomBytes(48);
+}
 
 async function init() {
+  initTicketKeyFile();
+  const ticketKeys = getTicketKeys();
+
   try {
     const loadedConfig = await _fs.readConfig();
 
@@ -95,42 +111,52 @@ async function init() {
       socket.write(resp.slice(0, len));
     }
 
-    // 处理 TCP CONNECT 请求（转发到下游 HTTP 代理）
     function handleTcpRequest(clientSocket, targetHost, targetPort) {
+      clientSocket.setTimeout(30_000);
+      clientSocket.on('timeout', () => clientSocket.destroy());
+
       const proxySocket = net.connect(DOWNSTREAM_HTTP_PROXY_PORT, DOWNSTREAM_HTTP_PROXY_HOST, () => {
         const connectReq = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n\r\n`;
         proxySocket.write(connectReq);
 
-        let buffer = '';
+        const chunks = [];
+        let totalLen = 0;
         const onProxyData = (chunk) => {
-          buffer += chunk.toString();
-          if (buffer.includes('\r\n\r\n')) {
+          if (clientSocket.destroyed || proxySocket.destroyed) return;
+
+          chunks.push(chunk);
+          totalLen += chunk.length;
+          const buf = Buffer.concat(chunks, totalLen);
+          if (buf.indexOf('\r\n\r\n') !== -1) {
             proxySocket.removeListener('data', onProxyData);
-            if (!buffer.match(/^HTTP\/1\.[01] 200/)) {
+            const str = buf.toString();
+            if (!str.match(/^HTTP\/1\.[01] 200/)) {
+              sendResponse(clientSocket, 0x05);
               clientSocket.destroy();
               proxySocket.destroy();
               return;
             }
-            // 隧道建立成功
-            sendResponse(clientSocket, 0x00); // Success
-            // 双向管道
-            pipeline(clientSocket, proxySocket, (err) => {
-              clientSocket.destroy();
-              proxySocket.destroy();
-            });
-            pipeline(proxySocket, clientSocket, () => {});
+            sendResponse(clientSocket, 0x00);
+
+            // 👇 高效双向转发
+            clientSocket.pipe(proxySocket);
+            proxySocket.pipe(clientSocket);
           }
         };
         proxySocket.on('data', onProxyData);
       });
 
+      proxySocket.setTimeout(30_000);
+      proxySocket.on('timeout', () => proxySocket.destroy());
       proxySocket.on('error', (err) => {
-        console.warn(`Proxy connection error to ${targetHost}:${targetPort}`, err.message);
-        sendResponse(clientSocket, 0x05); // Connection refused
-        clientSocket.destroy();
+        console.warn(`Proxy error: ${err.message}`);
+        if (!clientSocket.destroyed) {
+          sendResponse(clientSocket, 0x05);
+          clientSocket.destroy();
+        }
       });
-
       clientSocket.on('error', () => proxySocket.destroy());
+      clientSocket.on('close', () => proxySocket.destroy());
     }
 
     // 处理 UDP ASSOCIATE（本地 UDP 中继）
@@ -156,13 +182,16 @@ async function init() {
       clientSocket.on('error', () => udpRelay.close());
     }
 
+    console.log('ticketKeys length:', ticketKeys.length); // 必须是 48！
+
     // TLS 服务器选项
     const tlsOptions = {
       key: TLS_KEY,
       cert: TLS_CERT,
       minVersion: 'TLSv1.2',
-      // 可选：启用 ALPN（非必需）
-      // ALPNProtocols: ['http/1.1'],
+      // 👇 启用会话缓存（Session ID + Session Tickets）
+      sessionTimeout: 300, // 会话有效期（秒），默认 300
+      ticketKeys: ticketKeys
     };
 
     // 创建 TLS 封装的 SOCKS5 服务器

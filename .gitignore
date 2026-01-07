@@ -5,6 +5,7 @@
 /.pnp
 .pnp.js
 /anyproxy
+/socks5/ticket-keys.bin
 
 # testing
 /coverage
