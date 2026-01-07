@@ -8,6 +8,7 @@ const { start } = require('repl');
 const net = require('net');
 const scanNetwork = require("./scan").scanNetwork;
 const util = require('util');
+const zlib = require('zlib');
 const _util = require('../server/util.js');
 const os = require('os');
 const http = require("http");
@@ -77,6 +78,13 @@ function preCompileRuleRegexp() {
       });
     }
   });
+}
+
+function isEmpty(obj) {
+  if (obj === null || obj === undefined) {
+    return true;
+  }
+  return Object.keys(obj).length === 0;
 }
 
 // 读取配置文件的函数
@@ -596,6 +604,14 @@ async function MITMHandler(type, url, request, response) {
             new URL(url).hostname.toLowerCase().endsWith(item['host'].toLowerCase()) &&
             item.compiledRegexp.test(url)) {
             // new RegExp(item['regexp']).test(url)) {
+      // 只对需要 MITM 的 beforeSendResponse 启用解压缩，确保 MITM 处理的逻辑是解压后的明文
+      if (type == "beforeSendResponse" && !isEmpty(response)) {
+        try {
+          response = await parseResponseFromZippedChunk(response);
+        } catch (e) {
+          console.log(e);
+        }
+      }
       responseResult = await item.callback(url, request, response);
       break;
     } else {
@@ -606,6 +622,75 @@ async function MITMHandler(type, url, request, response) {
   // 要么是重写后的 response 对象，要么是 null
   // beforeSendResponse 中应当返回原 response，应当在 callback 中处理
   return responseResult;
+}
+
+// 为 MITM 处理响应结果 body 的解压缩
+// 之前是在 Anyproxy 里做，每个 response 都处理解压缩，目的是为了返回明文，抓包看明文用的，这里没必要
+// 只需对 mitm 做解压就可以，其他的不需要解压缩的就完全透给客户端
+// requestHandler.js 120 行 request() 里的逻辑
+function parseResponseFromZippedChunk(response) {
+  return new Promise((resolve, reject) => {
+    var resHeader = response.header;
+    const contentEncoding = resHeader['content-encoding'] || resHeader['Content-Encoding'];
+    const ifServerGzipped = /gzip/i.test(contentEncoding);
+    const isServerDeflated = /deflate/i.test(contentEncoding);
+    const isBrotlied = /br/i.test(contentEncoding);
+
+    const serverResData = response.body ? response.body : Buffer.alloc(0);
+    const originContentLen = Buffer.byteLength(serverResData);
+    resHeader['x-anyproxy-origin-content-length'] = originContentLen;
+
+    const refactContentEncoding = () => {
+      if (contentEncoding) {
+        resHeader['x-anyproxy-origin-content-encoding'] = contentEncoding;
+        delete resHeader['content-encoding'];
+        delete resHeader['Content-Encoding'];
+      }
+    }
+
+    const formatResponse = (newBody) => {
+      console.log(newBody);
+      return {
+        ...response,
+        header: resHeader,
+        body: newBody,
+        // rawBody: rawResChunks,
+        // _res: res
+      };
+    }
+
+
+    if (ifServerGzipped && originContentLen) {
+      refactContentEncoding();
+      zlib.gunzip(serverResData, (err, buff) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(formatResponse(buff));
+        }
+      });
+    } else if (isServerDeflated && originContentLen) {
+      refactContentEncoding();
+      zlib.inflate(serverResData, (err, buff) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(formatResponse(buff));
+        }
+      });
+    } else if (isBrotlied && originContentLen) {
+      refactContentEncoding();
+      zlib.brotliDecompress(serverResData, (err, buff) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(formatResponse(buff));
+        }
+      });
+    } else {
+      resolve(formatResponse(serverResData));
+    }
+  });
 }
 
 async function rewriteRuleBeforeResponse(host, url, request, response) {

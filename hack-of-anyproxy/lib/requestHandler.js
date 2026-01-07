@@ -118,59 +118,10 @@ function fetchRemoteResponse(protocol, options, reqData, config) {
             fulfill(resDataStream);
           } else {
             const serverResData = Buffer.concat(resDataChunks);
-            const originContentLen = util.getByteSize(serverResData);
-            // remove gzip related header, and ungzip the content
-            // note there are other compression types like deflate
-            const contentEncoding = resHeader['content-encoding'] || resHeader['Content-Encoding'];
-            const ifServerGzipped = /gzip/i.test(contentEncoding);
-            const isServerDeflated = /deflate/i.test(contentEncoding);
-            const isBrotlied = /br/i.test(contentEncoding);
-
-            /**
-             * when the content is unzipped, update the header content
-             */
-            const refactContentEncoding = () => {
-              if (contentEncoding) {
-                resHeader['x-anyproxy-origin-content-encoding'] = contentEncoding;
-                delete resHeader['content-encoding'];
-                delete resHeader['Content-Encoding'];
-              }
-            }
-
-            // set origin content length into header
-            resHeader['x-anyproxy-origin-content-length'] = originContentLen;
-
-            // only do unzip when there is res data
-            if (ifServerGzipped && originContentLen) {
-              refactContentEncoding();
-              zlib.gunzip(serverResData, (err, buff) => {
-                if (err) {
-                  rejectParsing(err);
-                } else {
-                  fulfill(buff);
-                }
-              });
-            } else if (isServerDeflated && originContentLen) {
-              refactContentEncoding();
-              zlib.inflate(serverResData, (err, buff) => {
-                if (err) {
-                  rejectParsing(err);
-                } else {
-                  fulfill(buff);
-                }
-              });
-            } else if (isBrotlied && originContentLen) {
-              refactContentEncoding();
-              zlib.brotliDecompress(serverResData, (err, buff) => {
-                if (err) {
-                  rejectParsing(err);
-                } else {
-                  fulfill(buff);
-                }
-              });
-            } else {
-              fulfill(serverResData);
-            }
+            fulfill(serverResData);
+            // 性能考虑，处理解压缩的逻辑放在了 MITM 的 Response 的回调里面，只有
+            // mitm response 的时候才解压，其他情况一律原样透传
+            return;
           }
         }).then((serverResData) => {
           resolve({
