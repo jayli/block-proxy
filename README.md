@@ -18,8 +18,8 @@
    - X86 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/x86/block-proxy-x86.tar" target=_blank>block-proxy-x86.tar</a>
 2. 导入：`docker load < block-proxy.tar`
 3. 启动：参照下文 Docker 部署
-4. 服务端配置：配置面板 <http://ip:8004>，关闭、启用配置面板：<http://ip:8001>
-5. 客户端配置：http 代理直接在 iphone wifi 详情里手动配置，socks5 代理只支持 socks5 over TLS，用小火箭配置。
+4. 服务端配置：配置面板 <http://server-ip:8004>，关闭、启用配置面板：<http://server-ip:8001>
+5. 客户端配置：http 代理直接在 iphone wifi 详情里手动配置，socks5 代理只支持 socks5 over TLS，用小火箭配置。配置信息参照[配置面板](http://localhost:8004)
 
 ### 2）开发和调试
 
