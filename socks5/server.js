@@ -182,7 +182,7 @@ async function init() {
       clientSocket.on('error', () => udpRelay.close());
     }
 
-    console.log('ticketKeys length:', ticketKeys.length); // 必须是 48！
+    // console.log('ticketKeys length:', ticketKeys.length); // 必须是 48！
 
     // TLS 服务器选项
     const tlsOptions = {
