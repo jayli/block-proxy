@@ -1206,13 +1206,13 @@ function getAnyProxyOptions() {
               statusCode: 200,
               header: {
                 'Content-Type': 'text/html; charset=UTF-8',
-                // 'Content-Length': getContentLength(customBody),
+                'Content-Length': getContentLength(customBody),
                 Pragma: 'no-cache',
                 Expires: 'Fri, 01 Jan 1990 00:00:00 GMT',
                 'Cache-Control': 'no-cache, must-revalidate',
                 'X-Content-Type-Options': 'nosniff',
                 'Server':'Video Stats Server',
-                'Content-Length': '0',
+                // 'Content-Length': '0',
                 'X-XSS-Protection': '0',
                 'X-Frame-Options': 'SAMEORIGIN',
                 'Alt-Svc': 'h3=":443"; ma=2592000,h3-29=":443"; ma=2592000'
