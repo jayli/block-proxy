@@ -4,6 +4,7 @@
 
 主要是限制小朋友上网，依赖 anyproxy，用在 openwrt 里。特性：
 
+- HTTP/Socks5 代理
 - 域名拦截
 - url 正则拦截
 - 指定拦截Mac地址
