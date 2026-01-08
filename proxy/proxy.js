@@ -1199,27 +1199,40 @@ function getAnyProxyOptions() {
           /// console.log(`[⭕️] ${url}`);
           // 为被拦截的域名返回自定义响应
           let customHosts = filtered_mitm_domains;
-          let customBody = customHosts.some(domain => host.endsWith(domain) || host === domain) ?
-                                           Buffer.alloc(0) : "Blocked by AnyProxy";
-          return {
-            response: {
-              statusCode: 200,
-              header: {
-                'Content-Type': 'text/html; charset=UTF-8',
-                'Content-Length': getContentLength(customBody),
-                Pragma: 'no-cache',
-                Expires: 'Fri, 01 Jan 1990 00:00:00 GMT',
-                'Cache-Control': 'no-cache, must-revalidate',
-                'X-Content-Type-Options': 'nosniff',
-                'Server':'Video Stats Server',
-                // 'Content-Length': '0',
-                'X-XSS-Protection': '0',
-                'X-Frame-Options': 'SAMEORIGIN',
-                'Alt-Svc': 'h3=":443"; ma=2592000,h3-29=":443"; ma=2592000'
-              },
-              body: customBody
-            }
-          };
+          if (customHosts.some(domain => host.endsWith(domain) || host === domain)) {
+            // 如果是拦截域名
+            return {
+              response: {
+                statusCode: 200,
+                header: {
+                  'Content-Type': 'text/html; charset=UTF-8',
+                  Pragma: 'no-cache',
+                  Expires: 'Fri, 01 Jan 1990 00:00:00 GMT',
+                  'Cache-Control': 'no-cache, must-revalidate',
+                  'X-Content-Type-Options': 'nosniff',
+                  'Server':'Video Stats Server',
+                  'Content-Length': 0,
+                  'X-XSS-Protection': 0,
+                  'X-Frame-Options': 'SAMEORIGIN',
+                  'Alt-Svc': 'h3=":443"; ma=2592000,h3-29=":443"; ma=2592000'
+                },
+                body: Buffer.alloc(0)
+              }
+            };
+          } else {
+            // 如果是其他域名
+            var customBody = "Blocked by anyproxy."
+            return {
+              response: {
+                statusCode: 200,
+                header: {
+                  'Content-Type': 'text/plain; charset=UTF-8',
+                  'Content-Length': getContentLength(customBody)
+                },
+                body: customBody
+              }
+            };
+          }
         }
 
         // 最后做一轮重写逻辑检查
