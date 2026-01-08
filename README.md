@@ -1,6 +1,6 @@
 # Block-Proxy
 
-基于 MITM 的上网过滤工具
+基于 MITM 的代理和上网过滤工具
 
 主要是限制小朋友上网，依赖 anyproxy，用在 openwrt 里。特性：
 
