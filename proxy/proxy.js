@@ -1206,7 +1206,7 @@ function getAnyProxyOptions() {
               statusCode: 200,
               header: {
                 'Content-Type': 'text/html; charset=UTF-8',
-                'Content-Length': getContentLength(customBody),
+                // 'Content-Length': getContentLength(customBody),
                 Pragma: 'no-cache',
                 Expires: 'Fri, 01 Jan 1990 00:00:00 GMT',
                 'Cache-Control': 'no-cache, must-revalidate',
