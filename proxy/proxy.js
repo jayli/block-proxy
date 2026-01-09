@@ -658,7 +658,6 @@ function parseResponseFromZippedChunk(response) {
       };
     }
 
-
     if (ifServerGzipped && originContentLen) {
       refactContentEncoding();
       zlib.gunzip(serverResData, (err, buff) => {
