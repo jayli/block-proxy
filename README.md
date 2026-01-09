@@ -9,7 +9,6 @@
 - url 正则拦截
 - 指定拦截Mac地址
 - 设定日期和时间段
-- 监控上网记录
 - 顺便过滤广告
 
 ### 1）使用方法
@@ -144,18 +143,6 @@ done！
 
 #### 代理性能
 
-- 四层转发：Node 的流式 `pipe()` 性能很好，吞吐量不用担心。只要不解包，速度接近原生。
-- 七层拦截：url 命中规则时直接返回空，需要解包，但避免了网络耗时，总体基本不影响速度。
-- MITM：MITM 主要耗时是 tls 加解密，基于系统的 OpenSSL，还取决于内容的 unzip，实现了非必要不解压。
-- Socks5代理：只实现了 over TLS 的 Socks5，在小火箭里配置。
-
-⚠️ 提示：如果把 block-proxy 部署在 openwrt 网关上，代理地址和网关地址一致，iOS Safari 有一个默认安全限制，不支持带认证的代理和网关 IP 一致，两个解决办法：
-
-1. 不要填代理认证用户名和密码
-2. 给 openwrt lan 口再绑定一个 IP，ios 设备在局域网内绑定这个 IP
-
-<img width="400" alt="image" src="https://github.com/user-attachments/assets/0f46d6b4-00b1-44aa-9be7-fa23a09bb199" />
-
 **并发测试**：
 
 |直连测试     |代理测试     |
@@ -165,6 +152,13 @@ done！
 **网速测试**：
 
 <img width="544" alt="image" src="https://github.com/user-attachments/assets/67c61e34-67ae-4345-97ca-d266cd35ddf4" />
+
+> ⚠️ 提示：如果把 block-proxy 部署在 openwrt 网关上，代理地址和网关地址一致，iOS Safari 有一个默认安全限制，不支持带认证的代理和网关 IP 一致，两个解决办法：
+>
+>1. 不要填代理认证用户名和密码
+>2. 给 openwrt lan 口再绑定一个 IP，ios 设备在局域网内绑定这个 IP
+>
+><img width="300" alt="image" src="https://github.com/user-attachments/assets/0f46d6b4-00b1-44aa-9be7-fa23a09bb199" />
 
 ### License
 
