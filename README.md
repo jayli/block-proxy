@@ -13,6 +13,18 @@
 
 ### 1）使用方法
 
+#### ①  快速部署
+
+安装：
+
+`npm install -g block-proxy`
+
+启动：
+
+`block-proxy`
+
+#### ②  Docker 部署（推荐）
+
 1. 下载 Docker 文件
    - Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/arm/block-proxy.tar" target=_blank>block-proxy-arm.tar</a>
    - X86 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/x86/block-proxy-x86.tar" target=_blank>block-proxy-x86.tar</a>

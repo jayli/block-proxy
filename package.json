@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "Small-scale network proxy filter",
+  "bin":{
+    "block-proxy": "./bin/start.js"
+  },
   "dependencies": {
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
