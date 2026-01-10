@@ -1,4 +1,9 @@
-# Block-Proxy
+
+<img width="300" alt="image" src="https://github.com/user-attachments/assets/2bb069d8-508a-41b9-9fee-94a1e31cc0cb" />
+
+---------------------------
+
+> **Block-Proxy**
 
 基于 MITM 的代理和上网过滤工具
 
