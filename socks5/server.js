@@ -196,6 +196,12 @@ async function init() {
 
     // 创建 TLS 封装的 SOCKS5 服务器
     const server = tls.createServer(tlsOptions, async (socket) => {
+      // 👇 关键：捕获 socket 级别的错误（包括 ECONNRESET）
+      socket.on('error', (err) => {
+        console.warn('Client socket error (ignored):', err.message);
+        // 不需要手动 destroy()，Node.js 会自动关闭
+      });
+
       try {
         // Step 1: 协商认证方法
         const authMethodsBuf = await new Promise((resolve) => {
@@ -293,6 +299,11 @@ async function init() {
         console.error('SOCKS5 over TLS session error:', err.message);
         socket.destroy();
       }
+    });
+
+    server.on('clientError', (err, socket) => {
+      console.warn('TLS client error during handshake:', err.message);
+      socket?.end(); // 安全关闭
     });
 
     // 错误处理

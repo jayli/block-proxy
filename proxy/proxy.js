@@ -207,7 +207,12 @@ async function loadConfig() {
 
 async function updateWanIp() {
   // var ips = await domain.getDomainIP(your_domain);
-  var ip = await wanip.getPublicIp();
+  var ip = "0.0.0.0";
+  try {
+    ip = await wanip.getPublicIp();
+  } catch(e) {
+    ip = "0.0.0.0";
+  }
   if (ip === null) {
     ip = "0.0.0.0";
   }
