@@ -403,9 +403,9 @@ function startProxyServer() {
     proxyServerInstance = new AnyProxy.ProxyServer(options);
 
     proxyServerInstance.on('ready', () => {
-      console.log(`✅ Proxy server started on port ${proxyPort}`);
+      console.log(`✅ \x1b[32mHTTP 代理服务启动，端口 ${proxyPort}\x1b[0m`);
       if (enable_webinterface == "1") {
-        console.log(`✅ Web interface available on port ${webInterfacePort}`);
+        console.log(`✅ \x1b[32mAnyProxy 监控面板启动，端口 ${webInterfacePort}\x1b[0m`);
       }
       console.log('Intercepting requests to hosts:', blockHosts.join(', '));
       console.log('All other requests will be passed through without HTTPS interception');

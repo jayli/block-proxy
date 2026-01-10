@@ -206,7 +206,6 @@ module.exports = {
   init: function() {
     // 启动服务器
     app.listen(PORT, async () => {
-      console.log(`✅ 静态服务器运行在 http://localhost:${PORT}`);
       // 如果是开发环境，则启动SSR服务，开启端口3000
       if (DEV === '1') {
         const child = exec('npm run craco', { cwd: path.join(__dirname,'../') });
@@ -227,6 +226,7 @@ module.exports = {
       }
       // 启动本地代理
       await LocalProxy.init();
+      console.log(`✅ \x1b[32m后台配置面板启动 → http://localhost:${PORT}\x1b[0m`);
     });
   }
 };

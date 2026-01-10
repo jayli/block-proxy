@@ -318,10 +318,10 @@ async function init() {
 
     // 启动监听
     server.listen(LISTEN_PORT, () => {
-      console.log(`✅ SOCKS5 over TLS server started on port ${LISTEN_PORT}`);
-      console.log(`🔒 Credentials and traffic are encrypted via TLS`);
-      console.log(`➡️  TCP → downstream HTTP proxy at ${DOWNSTREAM_HTTP_PROXY_HOST}:${DOWNSTREAM_HTTP_PROXY_PORT}`);
-      console.log(`➡️  UDP → direct local relay`);
+      console.log(`✅ \x1b[32mSOCKS5 (over TLS) 服务启动，端口 ${LISTEN_PORT}\x1b[0m`);
+      console.log(`🔒 传输加密和认证基于 TLS`);
+      console.log(`➡️  TCP → 流量转发至 HTTP 代理 → ${DOWNSTREAM_HTTP_PROXY_HOST}:${DOWNSTREAM_HTTP_PROXY_PORT}`);
+      console.log(`➡️  UDP → 直接发起请求`);
     });
   } catch (err) {
     console.error('Failed to initialize SOCKS5-TLS proxy:', err);
