@@ -3,7 +3,7 @@ module.exports = {
     {
       'type': 'beforeSendResponse',
       'host': '163.com',
-      'regexp': "/123",
+      'regexp': "/123/v1/(browse|next)",
       'callback': async function(url, request, response) {
         return {
           response
