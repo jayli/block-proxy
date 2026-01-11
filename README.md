@@ -22,13 +22,23 @@
 
 安装：
 
-`npm install -g block-proxy`
+```
+npm install -g block-proxy
+```
 
 启动：
 
-`block-proxy`
+```
+block-proxy
+```
 
-或者带配置文件启动`block-proxy -c my_config_file.js`，配置文件参照[config.js](example/config.js)
+或者带配置文件启动
+
+```
+block-proxy -c rule.js
+```
+
+配置文件参照 [rule.js](example/rule.js)，可留空
 
 #### ② 方式二，Docker 部署（推荐）
 
@@ -82,8 +92,11 @@ docker run --init -d --restart=unless-stopped \
            --log-opt max-file=3 \
            --cpus="5" \
            --memory 400m \
+           -v "$(pwd)/":/app/config \
            --name block-proxy block-proxy
 ```
+
+其中挂载目录 `$(pws)/` 下的 `rule.js` 是需要额外挂载的配置文件，可留空。
 
 > block-proxy 可以配置只启动 proxy 不启动后台面板，首次启动后访问 http://代理IP:8001 根据提示操作。
 
@@ -93,6 +106,7 @@ docker run --init -d --restart=unless-stopped \
 
 ```
 docker run --init -d --restart=unless-stopped --user=root \
+           -v "$(pwd)/":/app/config \
            -e TZ=Asia/Shanghai -p 8001:8001 -p 8002:8002 -p 8003:8003 \
            --name block-proxy block-proxy
 ```
@@ -120,7 +134,7 @@ docker run --init -d --restart=unless-stopped --user=root \
 #### ③ 设备配置
 
 1. 代理设置：iPhone/iPad 为例：设置 → 无线局域网 → 点击当前网络 → HTTP代理/配置代理，设置服务器和端口。
-2. 证书设置：打开anproxy监控地址（8003端口），扫码安装证书，在手机设置中安装该证书，同时配置完全信任：设置→通用→关于本机→证书信任设置→打开对AnyProxy的完全信任
+2. 证书设置：打开 anproxy 监控地址（8003端口），扫码安装证书，在手机设置中安装该证书，同时配置完全信任：设置→通用→关于本机→证书信任设置→打开对AnyProxy的完全信任
 
 小朋友的设备里把 Mac 固定下来：
 

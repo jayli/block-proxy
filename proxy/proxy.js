@@ -80,6 +80,15 @@ function preCompileRuleRegexp() {
   });
 }
 
+async function fileExists(filePath) {
+  try {
+    await fs.promises.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // 引入从命令行传进来的 rule.js，并加载
 async function loadGlobalConfigFile() {
   var configFile = await _fs.getGlobalConfigFile();
@@ -92,6 +101,21 @@ async function loadGlobalConfigFile() {
       ...Rule,
       ...extraRule
     }
+  }
+}
+
+// 引入 Docker 挂载目录下的 rule.js，并加载
+async function loadDockerMountedConfigFile() {
+  var rulePath = path.join(__dirname, '../config/rule.js');
+  var fileOK = await fileExists(rulePath);
+  if (fileOK) {
+    var extraRule = require(rulePath);
+    Rule = {
+      ...Rule,
+      ...extraRule
+    }
+  } else {
+    return;
   }
 }
 
@@ -1465,8 +1489,10 @@ var LocalProxy = {
       return;
     }
 
-    // 加载命令行里携带的 ConfigFile
+    // 加载命令行里携带的配置文件
     await loadGlobalConfigFile();
+    // 加载 Docker 挂载目录中的配置文件
+    await loadDockerMountedConfigFile();
     // 预编译 MITM Rule 的正则
     preCompileRuleRegexp();
 
