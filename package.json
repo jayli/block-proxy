@@ -37,8 +37,7 @@
     "express": "^5.1.0",
     "http-proxy-agent": "^7.0.2",
     "https-proxy-agent": "^7.0.6",
-    "ping": "^1.0.0",
-    "write-file-atomic": "^7.0.0"
+    "ping": "^1.0.0"
   },
   "browserslist": {
     "production": [

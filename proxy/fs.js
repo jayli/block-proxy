@@ -1,7 +1,6 @@
 // proxy/fs.js
 const fs = require('fs').promises;
 const path = require('path');
-const writeFileAtomic = require('write-file-atomic'); // 引入 write-file-atomic
 
 const configPath = path.join(__dirname, '../config.json');
 const CONFIG_FILE_PATH = configPath;
@@ -9,9 +8,6 @@ const CONFIG_FILE_PATH = configPath;
 // 传入的是对象
 async function writeConfig(newData) {
   try {
-    // 使用 write-file-atomic 进行原子写入
-    // 它会在内部创建一个临时文件，写入成功后再重命名为目标文件
-    // await writeFileAtomic(CONFIG_FILE_PATH, JSON.stringify(newData, null, 2), 'utf8');
     await fs.writeFile(CONFIG_FILE_PATH, JSON.stringify(newData, null, 2), 'utf8');
     // console.log('Config file written successfully');
   } catch (error) {
