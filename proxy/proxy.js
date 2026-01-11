@@ -18,12 +18,12 @@ const axios = require('axios');
 const { HttpProxyAgent } = require('http-proxy-agent');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const _request = require("./http.js").request;
-const Rule = require("./mitm/rule.js");
 const uaFilter = require("./mitm/uaFilter.js");
 const attacker = require('./attacker.js');
 const monitor = require('./monitor.js');
 const domain = require('./domain.js');
 const wanip = require('./wanip.js');
+var   Rule = require("./mitm/rule.js");
 
 // 启用全局 keep-alive，使 AnyProxy 内部转发也复用连接
 http.globalAgent.keepAlive = true;
@@ -78,6 +78,21 @@ function preCompileRuleRegexp() {
       });
     }
   });
+}
+
+// 引入从命令行传进来的 rule.js，并加载
+async function loadGlobalConfigFile() {
+  var configFile = await _fs.getGlobalConfigFile();
+  await _fs.clearGlobalConfigFile();
+  if (configFile == null) {
+    return;
+  } else {
+    var extraRule = require(configFile);
+    Rule = {
+      ...Rule,
+      ...extraRule
+    }
+  }
 }
 
 function isEmpty(obj) {
@@ -1450,6 +1465,11 @@ var LocalProxy = {
       return;
     }
 
+    // 加载命令行里携带的 ConfigFile
+    await loadGlobalConfigFile();
+    // 预编译 MITM Rule 的正则
+    preCompileRuleRegexp();
+
     console.log('启动代理服务 LocalProxy.init() ');
     console.log('Dev server started, starting LocalProxy...');
     is_running_in_docker = _util.isRunningInDocker();
@@ -1486,8 +1506,9 @@ var LocalProxy = {
 };
 
 // 预编译 MITM Rule 的正则
-(function() {
-  preCompileRuleRegexp();
+(async function() {
+  // await loadGlobalConfigFile();
+  // preCompileRuleRegexp();
 })();
 
 module.exports = LocalProxy;

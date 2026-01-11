@@ -2,6 +2,9 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
+const { Command } = require('commander');
+const program = new Command();
+const _fs = require('../proxy/fs.js');
 
 const pkgDir = path.join(__dirname, '..');
 const startScript = path.resolve(pkgDir, 'server/start.js');
@@ -28,12 +31,14 @@ function startApp() {
     process.stderr.write(data);
   });
 
-  currentChild.on('close', (code, signal) => {
+  currentChild.on('close', async (code, signal) => {
     currentChild = null; // 清空引用
     if (restartTimer) {
       clearTimeout(restartTimer);
       restartTimer = null;
     }
+
+    await _fs.clearGlobalConfigFile();
 
     if (code === 0) {
       console.error('[block proxy] 正常退出，不重启。');
@@ -62,8 +67,10 @@ function startApp() {
 }
 
 // ✅ 只注册一次 SIGINT 监听器（在 startApp 外部！）
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.error('\n[block proxy] 收到 SIGINT，正在关闭子进程...');
+
+  await _fs.clearGlobalConfigFile();
   
   if (restartTimer) {
     clearTimeout(restartTimer);
@@ -92,5 +99,27 @@ process.on('SIGTERM', () => {
   }
 });
 
-// 启动
-startApp();
+(async function() {
+  program
+    .name('block-proxy')
+    .description('极简的 MITM 代理工具：https://github.com/jayli/block-proxy')
+    .version('0.1.x')
+    .option('-c, --config <config>', 'MITM 配置文件');
+
+  program.parse(process.argv);
+  const options = program.opts();
+
+  if (options.config && options.config != "") {
+    if (path.isAbsolute(options.config)) {
+      await _fs.setGlobalConfigFile(options.config);
+    } else {
+      var pwd = process.cwd();
+      var configFile = path.resolve(pwd, options.config);
+      await _fs.setGlobalConfigFile(configFile);
+    }
+  }
+
+  // 启动
+  startApp();
+})();
+

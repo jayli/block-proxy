@@ -28,6 +28,8 @@
 
 `block-proxy`
 
+或者带配置文件启动`block-proxy -c my_config_file.js`，配置文件参照[config.js](example/config.js)
+
 #### ② 方式二，Docker 部署（推荐）
 
 1. 下载 Docker 文件

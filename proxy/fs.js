@@ -37,7 +37,33 @@ async function readConfig() {
   }
 }
 
+async function setGlobalConfigFile(configFile) {
+  var data = await readConfig();
+  data.config_file = configFile;
+  await writeConfig(data);
+}
+
+async function getGlobalConfigFile() {
+  var data = await readConfig();
+  if (data.hasOwnProperty("config_file")) {
+    return data.config_file;
+  } else {
+    return null;
+  }
+}
+
+async function clearGlobalConfigFile() {
+  var data = await readConfig();
+  if (data.hasOwnProperty("config_file")) {
+    delete data.config_file
+  }
+  await writeConfig(data);
+}
+
 module.exports = {
   writeConfig,
-  readConfig
+  readConfig,
+  setGlobalConfigFile,
+  getGlobalConfigFile,
+  clearGlobalConfigFile
 };
