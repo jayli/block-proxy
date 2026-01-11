@@ -106,7 +106,7 @@ var tempDevices = [];
 async function scanNetwork() {
   var status = await getScanStatus();
   if (status == "1") {
-    await setScanStatus("0");
+    // await setScanStatus("0");
     return tempDevices;
   } else {
     await setScanStatus("1");
@@ -117,4 +117,5 @@ async function scanNetwork() {
   }
 }
 
+module.exports.setScanStatus = setScanStatus;
 module.exports.scanNetwork = scanNetwork;

@@ -1,5 +1,5 @@
 {
-  "network_scanning_status": "1",
+  "network_scanning_status": "0",
   "progress_time_stamp": "1766571511705",
   "block_hosts": [
     {
@@ -245,6 +245,14 @@
     {
       "ip": "192.168.124.128",
       "mac": "48:F3:F3:CA:1D:E"
+    },
+    {
+      "ip": "192.168.124.66",
+      "mac": "E2:4D:6E:1:21:6E"
+    },
+    {
+      "ip": "192.168.124.125",
+      "mac": "14:C0:50:14:6E:A5"
     }
   ]
 }

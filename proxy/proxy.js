@@ -7,6 +7,7 @@ const path = require('path');
 const { start } = require('repl');
 const net = require('net');
 const scanNetwork = require("./scan").scanNetwork;
+const setScanStatus = require("./scan").setScanStatus;
 const util = require('util');
 const zlib = require('zlib');
 const _util = require('../server/util.js');
@@ -1401,6 +1402,7 @@ var LocalProxy = {
       newRouterMap = await scanNetwork();
     } catch (e) {
       newRouterMap = [];
+      setScanStatus("0");
     }
 
     var mergedRouterMap = [];
@@ -1494,7 +1496,10 @@ var LocalProxy = {
     // 预编译 MITM Rule 的正则
     preCompileRuleRegexp();
 
-    console.log('启动代理服务 LocalProxy.init() ');
+    // 启动时重置 Scan 本地扫描
+    setScanStatus("0");
+
+    console.log('启动代理服务');
     console.log('Dev server started, starting LocalProxy...');
     is_running_in_docker = _util.isRunningInDocker();
     if (is_running_in_docker) {
