@@ -446,8 +446,6 @@ function startProxyServer() {
       if (enable_webinterface == "1") {
         console.log(`✅ \x1b[32mAnyProxy 监控面板启动，端口 ${webInterfacePort}\x1b[0m`);
       }
-      console.log('Intercepting requests to hosts:', blockHosts.join(', '));
-      console.log('All other requests will be passed through without HTTPS interception');
     });
 
     proxyServerInstance.on('error', (e) => {
