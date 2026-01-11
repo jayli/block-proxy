@@ -3,6 +3,8 @@
 
 ---------------------------
 
+![](https://nodei.co/npm/block-proxy.png?downloads=true&downloadRank=true&stars=true)
+
 > **Block-Proxy**
 
 基于 MITM 的代理和上网过滤工具
