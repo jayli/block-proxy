@@ -3,11 +3,8 @@
   "version": "0.1.4",
   "description": "Small-scale network mitm proxy filter",
   "bin": {
-    "block-proxy": "./bin/start.js"
+    "block-proxy": "bin/start.js"
   },
-  "files": [
-    "bin/"
-  ],
   "dependencies": {
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
