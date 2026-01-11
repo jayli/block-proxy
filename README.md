@@ -1,5 +1,5 @@
 
-<img width="300" alt="image" src="https://github.com/user-attachments/assets/2bb069d8-508a-41b9-9fee-94a1e31cc0cb" /> ![](https://nodei.co/npm/block-proxy.png?downloads=true&downloadRank=true&stars=true)
+<img width="287" alt="image" src="https://github.com/user-attachments/assets/2bb069d8-508a-41b9-9fee-94a1e31cc0cb" /> ![](https://nodei.co/npm/block-proxy.png?downloads=true&downloadRank=true&stars=true)
 
 ---------------------------
 
