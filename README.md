@@ -18,7 +18,7 @@
 
 ### 1）使用方法
 
-#### ①  快速部署
+#### ① 方式一：快速部署
 
 安装：
 
@@ -28,17 +28,20 @@
 
 `block-proxy`
 
-#### ②  Docker 部署（推荐）
+#### ② 方式二，Docker 部署（推荐）
 
 1. 下载 Docker 文件
    - Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/arm/block-proxy.tar" target=_blank>block-proxy-arm.tar</a>
    - X86 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/x86/block-proxy-x86.tar" target=_blank>block-proxy-x86.tar</a>
 2. 导入：`docker load < block-proxy.tar`
 3. 启动：参照下文 Docker 部署
-4. 服务端配置：配置面板 <http://server-ip:8004>，关闭、启用配置面板：<http://server-ip:8001>
-5. 客户端配置：http 代理直接在 iphone wifi 详情里手动配置，socks5 代理只支持 socks5 over TLS，用小火箭配置。配置信息参照[配置面板](http://localhost:8004)
 
-### 2）开发和调试
+### 2）端口配置
+
+1. 服务端配置：配置面板 <http://server-ip:8004>，关闭、启用配置面板：<http://server-ip:8001>
+2. 客户端配置：http 代理直接在 iphone wifi 详情里手动配置，socks5 代理只支持 socks5 over TLS，用小火箭配置。配置信息参照[配置面板](http://localhost:8004)
+
+### 3）开发和调试
 
 代码 clone 下来后执行`pnpm i`，执行 `npm run dev` 运行本地服务。默认开启 5 个端口：
 
@@ -51,7 +54,7 @@
 |8004  |后台配置页端口  | 可禁用 |
 
 
-### 3）Docker 构建和部署
+### 4）Docker 构建说明
 
 准备工作，构建 docker 包，先启动本地 Docker：
 
@@ -93,9 +96,9 @@ docker run --init -d --restart=unless-stopped --user=root \
 ```
 
 
-### 4）配置说明
+### 5）配置说明
 
-#### 代理端口
+#### ① 代理端口
 
 默认开启两个代理端口：HTTP 8001 和 Socks5（over TLS） 8002。
 
@@ -103,7 +106,7 @@ docker run --init -d --restart=unless-stopped --user=root \
 
 ⚠️ 使用小火箭的 Socks5 over TLS 代理，TLS 选项里勾选“允许不安全”
 
-#### 后台配置
+#### ② 后台配置
 
 访问路径：`http://proxy-ip:8004`
 
@@ -112,7 +115,7 @@ docker run --init -d --restart=unless-stopped --user=root \
 <img src="https://github.com/user-attachments/assets/16f47d3f-1ef9-47a2-8640-c7e04ec64e1a" width=300 />
 
 
-#### 设备配置
+#### ③ 设备配置
 
 1. 代理设置：iPhone/iPad 为例：设置 → 无线局域网 → 点击当前网络 → HTTP代理/配置代理，设置服务器和端口。
 2. 证书设置：打开anproxy监控地址（8003端口），扫码安装证书，在手机设置中安装该证书，同时配置完全信任：设置→通用→关于本机→证书信任设置→打开对AnyProxy的完全信任
@@ -121,7 +124,7 @@ docker run --init -d --restart=unless-stopped --user=root \
 
 <img width="350" alt="image" src="https://github.com/user-attachments/assets/f9bfab89-7194-4a72-b1ae-5cca27911bc9" />
 
-#### 禁掉设备直连
+#### ④ 禁掉设备直连
 
 防止小朋友修改网Wifi连接，只允许设备通过代理访问，把直连上网权限关掉。网关里配置防火墙规则：
 
@@ -133,7 +136,7 @@ ip6tables -I forwarding_rule -m mac --mac-source D2:9E:8D:1B:F1:4E -j REJECT
 然后重启防火墙
 
 
-### 5）使用说明
+### 6）更多信息
 
 #### 应用条件：
 
