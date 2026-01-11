@@ -1,5 +1,5 @@
 // 文件名: proxy/proxy.js
-const AnyProxy = require('anyproxy');
+const AnyProxy = require('@bachi/anyproxy');
 const { exec } = require('child_process');
 const fs = require('fs');
 const _fs = require('./fs.js');
