@@ -103,7 +103,7 @@ process.on('SIGTERM', () => {
   program
     .name('block-proxy')
     .description('极简的 MITM 代理工具：https://github.com/jayli/block-proxy')
-    .version('0.1.x')
+    .version('0.1.3')
     .option('-c, --config <config>', 'MITM 配置文件');
 
   program.parse(process.argv);
