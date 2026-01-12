@@ -6,6 +6,7 @@ const tls = require('tls');
 const crypto = require('crypto');
 const fs = require('fs');
 const _fs = require('../proxy/fs.js');
+const domain = require('../proxy/domain.js');
 const { pipeline } = require('stream');
 
 // 固定下游 HTTP 代理地址（可改为配置项）
@@ -318,7 +319,8 @@ async function init() {
 
     // 启动监听
     server.listen(LISTEN_PORT, () => {
-      console.log(`✅ \x1b[32mSOCKS5 (over TLS) 服务启动，端口 ${LISTEN_PORT}\x1b[0m`);
+      var localIp = domain.getLocalIp();
+      console.log(`✅ \x1b[32mSOCKS5 (over TLS) 服务启动，IP ${localIp}, 端口 ${LISTEN_PORT}\x1b[0m`);
       console.log(`🔒 传输加密和认证基于 TLS`);
       console.log(`➡️  TCP → 流量转发至 HTTP 代理 → ${DOWNSTREAM_HTTP_PROXY_HOST}:${DOWNSTREAM_HTTP_PROXY_PORT}`);
       console.log(`➡️  UDP → 直接发起请求`);

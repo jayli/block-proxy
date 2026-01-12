@@ -434,9 +434,9 @@ function startProxyServer() {
     proxyServerInstance = new AnyProxy.ProxyServer(options);
 
     proxyServerInstance.on('ready', () => {
-      console.log(`✅ \x1b[32mHTTP 代理服务启动，端口 ${proxyPort}\x1b[0m`);
+      console.log(`✅ \x1b[32mHTTP 代理服务启动，IP: ${localIp}, 端口: ${proxyPort}\x1b[0m`);
       if (enable_webinterface == "1") {
-        console.log(`✅ \x1b[32mAnyProxy 监控面板启动，端口 ${webInterfacePort}\x1b[0m`);
+        console.log(`✅ \x1b[32mAnyProxy 监控面板启动，http://${localIp}:${webInterfacePort}\x1b[0m`);
       }
     });
 

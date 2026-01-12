@@ -1,6 +1,6 @@
 {
   "name": "block-proxy",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Small-scale network mitm proxy filter",
   "bin": {
     "block-proxy": "bin/start.js"
@@ -31,7 +31,7 @@
   },
   "devDependencies": {
     "@craco/craco": "^7.1.0",
-    "@bachi/anyproxy": "^0.1.1",
+    "@bachi/anyproxy": "^0.1.2",
     "axios": "^1.13.2",
     "commander": "^14.0.2",
     "express": "^5.1.0",
