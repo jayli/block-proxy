@@ -136,7 +136,7 @@ docker run --init -d --restart=unless-stopped --user=root \
 #### ③ 设备配置
 
 1. 代理设置：iPhone/iPad 为例：设置 → 无线局域网 → 点击当前网络 → HTTP代理/配置代理，设置服务器和端口。
-2. 证书设置：打开 anproxy 监控地址（8003端口），扫码安装证书，在手机设置中安装该证书，同时配置完全信任：设置→通用→关于本机→证书信任设置→打开对AnyProxy的完全信任
+2. 证书设置 <http://server-ip:8003/fetchCrtFile>，扫码安装证书，在手机设置中安装该证书，同时配置完全信任：设置→通用→关于本机→证书信任设置→打开对AnyProxy的完全信任
 
 小朋友的设备里把 Mac 固定下来：
 
