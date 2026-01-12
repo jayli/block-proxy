@@ -114,7 +114,7 @@ async function init() {
 
     function handleTcpRequest(clientSocket, targetHost, targetPort) {
       // jayli
-      console.log(targetHost);
+      // console.log(targetHost);
       clientSocket.setTimeout(30_000);
       clientSocket.on('timeout', () => clientSocket.destroy());
 
