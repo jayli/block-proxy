@@ -30,14 +30,15 @@
     "eject": "react-scripts eject"
   },
   "devDependencies": {
-    "@craco/craco": "^7.1.0",
     "@bachi/anyproxy": "^0.1.2",
+    "@craco/craco": "^7.1.0",
     "axios": "^1.13.2",
     "commander": "^14.0.2",
     "express": "^5.1.0",
     "http-proxy-agent": "^7.0.2",
     "https-proxy-agent": "^7.0.6",
-    "ping": "^1.0.0"
+    "ping": "^1.0.0",
+    "qrcode": "^1.5.4"
   },
   "browserslist": {
     "production": [

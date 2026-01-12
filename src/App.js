@@ -1,6 +1,7 @@
 // src/App.js
 import React, { useState, useEffect } from 'react';
 import './App.css';
+import QRCode from 'qrcode';
 
 // Toast组件
 const Toast = ({ message, type, onClose }) => {
@@ -71,6 +72,13 @@ function App() {
         if (data.hostIPs) {
           setHostIPs(data.hostIPs);
         }
+        var localIp = "0.0.0.0"
+        if (data.hostIPs) {
+          localIp = data.hostIPs.split(",")[0];
+        } else if (data.ips.length >= 1) {
+          localIp = data.ips[0].address;
+        }
+        QRCode.toCanvas(document.getElementById('qrcode'), `http://${localIp}:${config.web_interface_port}/fetchCrtFile`);
       } else {
         showToast('获取服务器IP失败', 'error');
       }
@@ -688,7 +696,7 @@ function App() {
             )}
           </p>
           <p>
-            <b>监控地址：</b>
+            <b>AnyProxy 监控地址：</b>
             {serverIPs.length > 0 ? (
               <span>
                 <a href={`http://${getIpAddress()}:${config.web_interface_port}`} target="_blank" rel="noopener noreferrer">
@@ -698,6 +706,13 @@ function App() {
             ) : (
               <span>正在获取服务器IP地址...</span>
             )}
+          </p>
+          <p>
+            <span>
+              扫码安装证书：
+              <a href={`http://${getIpAddress()}:${config.web_interface_port}/fetchCrtFile`} target="_blank">下载</a>
+            </span><br />
+            <canvas id="qrcode"></canvas>
           </p>
           <div>
             <p><b>配置方法</b>：（以Iphone为例）</p>
