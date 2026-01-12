@@ -6,6 +6,7 @@ const path = require('path');
 const util = require('./util');
 const net = require('net');
 const os = require('os');
+const domain = require('../proxy/domain.js');
 const { exec, execSync } = require('child_process');
 const LocalProxy = require('../proxy/proxy');
 
@@ -226,7 +227,8 @@ module.exports = {
       }
       // 启动本地代理
       await LocalProxy.init();
-      console.log(`✅ \x1b[32m后台配置面板启动 → http://localhost:${PORT}\x1b[0m`);
+      var localIp = domain.getLocalIp();
+      console.log(`✅ \x1b[32m后台配置面板启动 → http://${localIp}:${PORT}\x1b[0m`);
     });
   }
 };

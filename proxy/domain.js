@@ -1,6 +1,7 @@
 // proxy/domain.js
 const { lookup, resolve4 } = require('dns');
 const { promisify } = require('util');
+const os = require('os');
 
 const lookupAsync = promisify(lookup);
 const resolve4Async = promisify(resolve4);
@@ -15,6 +16,19 @@ async function getDomainIP(domain) {
   }
 }
 
+function getLocalIp() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      // 跳过 IPv6 和内部回环地址
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return '127.0.0.1'; // fallback
+}
+
 // 使用示例
 /*
 getDomainIP('example.com').then(ips => {
@@ -24,3 +38,4 @@ getDomainIP('example.com').then(ips => {
 });
 */
 module.exports.getDomainIP = getDomainIP;
+module.exports.getLocalIp = getLocalIp;
