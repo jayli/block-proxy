@@ -113,6 +113,8 @@ async function init() {
     }
 
     function handleTcpRequest(clientSocket, targetHost, targetPort) {
+      // jayli
+      console.log(targetHost);
       clientSocket.setTimeout(30_000);
       clientSocket.on('timeout', () => clientSocket.destroy());
 
@@ -160,13 +162,199 @@ async function init() {
       clientSocket.on('close', () => proxySocket.destroy());
     }
 
-    // 处理 UDP ASSOCIATE（本地 UDP 中继）
+    // 处理 UDP ASSOCIATE（RFC 1928 合规实现）
     function handleUdpAssociate(clientSocket) {
       const udpRelay = dgram.createSocket('udp4');
+      let clientUdpAddr = null; // 客户端的 UDP 地址（用于回包）
+
+      // 存储 { 'host:port': { rinfo } } 用于回包时知道发给谁
+      const targetToClientMap = new Map();
+
+      // 绑定到任意端口
+      udpRelay.bind(0, '127.0.0.1', () => {
+        const localAddr = udpRelay.address();
+        // 告诉客户端 UDP 中继地址（必须是 127.0.0.1 或公网 IP，不能是 0.0.0.0）
+        sendResponse(clientSocket, 0x00, 0x01, '127.0.0.1', localAddr.port);
+      });
+
+      // 接收来自客户端的 UDP 包（带 SOCKS5 header）
       udpRelay.on('message', (msg, rinfo) => {
-        // 注意：标准 SOCKS5 UDP 包含 header，但此处简化直接回传（适用于 DNS 等）
-        // 生产环境建议按 RFC 1928 封装/解封装
-        clientSocket.write(msg);
+        if (!clientUdpAddr) {
+          // 第一个包来自客户端，记录其地址（后续回包用）
+          clientUdpAddr = rinfo;
+        }
+
+        if (msg.length < 10) {
+          // 最小 UDP 请求：VER=0 + RSV=0 + FRAG=0 + ATYP=1 (IPv4) + ADDR(4) + PORT(2) = 10
+          return;
+        }
+
+        const ver = msg[0];
+        const frag = msg[2]; // 分片不支持
+        if (ver !== 0x00 || frag !== 0x00) {
+          return; // 不支持分片或错误版本
+        }
+
+        try {
+          const atyp = msg[3];
+          let headerLen = 0;
+          let targetHost, targetPort;
+
+          if (atyp === 0x01) {
+            // IPv4
+            targetHost = msg.slice(4, 8).join('.');
+            targetPort = msg.readUInt16BE(8);
+            headerLen = 10;
+          } else if (atyp === 0x03) {
+            // Domain
+            const len = msg[4];
+            if (msg.length < 5 + len + 2) return;
+            targetHost = msg.slice(5, 5 + len).toString();
+            targetPort = msg.readUInt16BE(5 + len);
+            headerLen = 5 + len + 2;
+          } else if (atyp === 0x04) {
+            // IPv6 —— 简化：只取原始字节，Node.js dgram 支持字符串格式
+            if (msg.length < 22) return;
+            const ipv6Bytes = msg.slice(4, 20);
+            targetHost = '[' + ipv6Bytes.reduce((acc, byte, i) => {
+              if (i % 2 === 0 && i > 0) acc += ':';
+              return acc + byte.toString(16).padStart(2, '0');
+            }, '').replace(/(^|:)0+([0-9a-f]+)/g, '$1$2') + ']';
+            targetPort = msg.readUInt16BE(20);
+            headerLen = 22;
+          } else {
+            return; // 不支持的地址类型
+          }
+
+          const payload = msg.slice(headerLen);
+          if (payload.length === 0) return;
+
+          // 构建目标唯一键（用于回包映射）
+          const targetKey = `${targetHost}:${targetPort}`;
+
+          // 创建临时 socket 发送数据（避免端口复用问题）
+          const outSocket = dgram.createSocket('udp4');
+          outSocket.send(payload, targetPort, targetHost, (err) => {
+            if (err) {
+              console.warn(`UDP forward error to ${targetHost}:${targetPort}:`, err.message);
+            }
+            outSocket.close();
+          });
+
+          // 记录该目标对应的客户端地址（用于响应包回传）
+          targetToClientMap.set(targetKey, rinfo);
+
+          // 可选：加个超时自动清理（简化起见这里省略，靠 close 清理）
+        } catch (e) {
+          console.warn('UDP parse error:', e.message);
+        }
+      });
+
+      // 接收从目标服务器返回的 UDP 响应，并转发回客户端
+      udpRelay.on('listening', () => {
+        // Node.js 不会自动监听入站响应，但我们已经在 bind 后处于 listening 状态
+        // 所有 inbound UDP 都会触发 'message'，包括响应
+      });
+
+      // 注意：响应包也会触发 'message'，但来源是外部服务器（不是 clientUdpAddr）
+      // 所以我们需要在上面的逻辑中区分：如果是来自已知 target 的响应，则回包
+
+      // 重写 message handler 以同时处理“客户端请求”和“服务器响应”
+      // 我们已经做了：所有包都进同一个 handler，通过 targetToClientMap 判断是否是响应
+
+      // 但我们还需要：当收到外部服务器的响应时，把它封装后发回 clientUdpAddr
+      // 所以上面的 handler 已经能处理请求，现在补充响应回包逻辑：
+
+      // 实际上，上面的 handler 只处理了“客户端 → 代理”的包。
+      // “目标服务器 → 代理”的包也会进同一个 handler，但此时 rinfo ≠ clientUdpAddr，
+      // 且不在 targetToClientMap 的 key 中（因为 key 是 host:port，而 rinfo 是源地址）。
+
+      // 所以我们需要换一种方式：**为每个目标创建独立的 socket？**
+      // 但那样太重。更高效的做法是：**用单个 relay socket，靠 targetToClientMap 映射**
+
+      // ✅ 正确做法：在收到外部响应时，根据 (rinfo.address:rinfo.port) 查找是否是我们发出的请求的目标
+      // 但注意：我们发的是 targetHost:targetPort，而响应来自 same address:port
+
+      // 所以我们在发送时，应该用 **rinfo.address:rinfo.port 作为 key 存 clientAddr**
+      // 但这样不行，因为多个客户端可能访问同一目标。
+
+      // 🚨 更健壮的方式：**每个客户端有自己的 udpRelay**（当前就是这么做的！）
+      // 所以在这个函数内，所有流量都属于同一个 SOCKS5 TCP 会话的客户端。
+      // 因此，我们可以安全地假设：**任何非 clientUdpAddr 的 UDP 包都是目标服务器的响应**
+
+      // 修改 message handler 如下（替换上面的 handler）：
+      udpRelay.removeAllListeners('message');
+      udpRelay.on('message', (msg, rinfo) => {
+        // 判断是客户端发来的请求，还是目标服务器的响应
+        if (clientUdpAddr && rinfo.address === clientUdpAddr.address && rinfo.port === clientUdpAddr.port) {
+          // ← 来自客户端的请求（带 header）
+          if (msg.length < 10) return;
+          const ver = msg[0];
+          const frag = msg[2];
+          if (ver !== 0x00 || frag !== 0x00) return;
+
+          const atyp = msg[3];
+          let headerLen = 0, targetHost, targetPort;
+
+          try {
+            if (atyp === 0x01) {
+              targetHost = msg.slice(4, 8).join('.');
+              targetPort = msg.readUInt16BE(8);
+              headerLen = 10;
+            } else if (atyp === 0x03) {
+              const len = msg[4];
+              if (msg.length < 5 + len + 2) return;
+              targetHost = msg.slice(5, 5 + len).toString();
+              targetPort = msg.readUInt16BE(5 + len);
+              headerLen = 5 + len + 2;
+            } else if (atyp === 0x04) {
+              if (msg.length < 22) return;
+              const ipv6Bytes = msg.slice(4, 20);
+              targetHost = '[' + ipv6Bytes.reduce((acc, byte, i) => {
+                if (i % 2 === 0 && i > 0) acc += ':';
+                return acc + byte.toString(16).padStart(2, '0');
+              }, '').replace(/(^|:)0+([0-9a-f]+)/g, '$1$2') + ']';
+              targetPort = msg.readUInt16BE(20);
+              headerLen = 22;
+            } else {
+              return;
+            }
+
+            const payload = msg.slice(headerLen);
+            if (payload.length === 0) return;
+
+            // 发送到目标
+            udpRelay.send(payload, targetPort, targetHost, (err) => {
+              if (err) {
+                console.warn(`UDP send error to ${targetHost}:${targetPort}:`, err.message);
+              }
+            });
+          } catch (e) {
+            console.warn('UDP request parse error:', e.message);
+          }
+        } else {
+          // ← 来自目标服务器的响应（裸 payload），需要封装后发回客户端
+          if (!clientUdpAddr) return; // 还没收到客户端请求
+
+          // 构建 SOCKS5 UDP response header
+          const respHeader = Buffer.alloc(10);
+          respHeader[0] = 0x00; // RSV
+          respHeader[1] = 0x00; // RSV
+          respHeader[2] = 0x00; // FRAG
+          respHeader[3] = 0x01; // ATYP = IPv4 (简化：统一返回 IPv4 0.0.0.0)
+          respHeader[4] = 0;
+          respHeader[5] = 0;
+          respHeader[6] = 0;
+          respHeader[7] = 0;
+          respHeader.writeUInt16BE(rinfo.port, 8); // 源端口作为 DST.PORT（部分客户端依赖）
+
+          const response = Buffer.concat([respHeader, msg]);
+          udpRelay.send(response, clientUdpAddr.port, clientUdpAddr.address, (err) => {
+            if (err) {
+              console.warn('UDP send back to client error:', err.message);
+            }
+          });
+        }
       });
 
       udpRelay.on('error', (err) => {
@@ -174,16 +362,15 @@ async function init() {
         clientSocket.destroy();
       });
 
-      const localAddr = udpRelay.address();
-      // 告诉客户端 UDP 中继地址（返回 127.0.0.1 + 端口）
-      sendResponse(clientSocket, 0x00, 0x01, '127.0.0.1', localAddr.port);
-
       // 清理
-      clientSocket.on('close', () => udpRelay.close());
-      clientSocket.on('error', () => udpRelay.close());
+      const cleanup = () => {
+        if (!udpRelay._closed) {
+          udpRelay.close();
+        }
+      };
+      clientSocket.on('close', cleanup);
+      clientSocket.on('error', cleanup);
     }
-
-    // console.log('ticketKeys length:', ticketKeys.length); // 必须是 48！
 
     // TLS 服务器选项
     const tlsOptions = {
@@ -297,19 +484,19 @@ async function init() {
           socket.destroy();
         }
       } catch (err) {
-        console.error('SOCKS5 over TLS session error:', err.message);
+        console.error('SOCKS5 over TLS session error:', err);
         socket.destroy();
       }
     });
 
     server.on('clientError', (err, socket) => {
-      console.warn('TLS client error during handshake:', err.message);
+      console.warn('TLS client error during handshake:', err);
       socket?.end(); // 安全关闭
     });
 
     // 错误处理
     server.on('tlsClientError', (err, tlsSocket) => {
-      console.warn('TLS handshake failed:', err.message);
+      console.warn('TLS handshake failed:', err);
       tlsSocket?.destroy();
     });
 

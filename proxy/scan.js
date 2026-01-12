@@ -41,6 +41,11 @@ function parseArpTable(arpOutput, subnet) {
       macMatch = line.match(/(([0-9a-fA-F]{1,2}[:\-]){5}([0-9a-fA-F]{1,2}))/);
     }
 
+    if (macMatch && macMatch[0].startsWith("0:0:")) {
+      // 如果 mac 是 "0:0:0:0:4:1" 之类的，说明子网禁止扫描
+      continue;
+    }
+
     if (macMatch) {
       let mac = macMatch[1].toUpperCase();
       if (process.platform !== 'win32') {
@@ -77,9 +82,9 @@ async function doScan() {
   const subnet = getLocalSubnet();
   // 如果是 30 网段，直接返回空
   if (subnet.startsWith("30.")) {
-    return []
+    return [];
   }
-  console.log(`Scanning subnet: ${subnet}.0/24`);
+  console.log(`正在扫描网段: ${subnet}.0/24`);
 
   // Ping all IPs to populate ARP cache
   const ips = Array.from({ length: 254 }, (_, i) => `${subnet}.${i + 1}`);
