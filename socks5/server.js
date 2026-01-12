@@ -496,7 +496,7 @@ async function init() {
 
     // 错误处理
     server.on('tlsClientError', (err, tlsSocket) => {
-      console.warn('TLS handshake failed:', err);
+      console.warn('TLS handshake failed:', err.message);
       tlsSocket?.destroy();
     });
 
