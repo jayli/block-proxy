@@ -13,8 +13,6 @@ cams-config.json
 cams-config/*
 
 # production
-/build
-/dist
 /src-tauri/target
 
 # misc
