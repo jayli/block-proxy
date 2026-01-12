@@ -541,7 +541,7 @@ function App() {
                         onChange={(e) => updateFilterTime(index, e.target.value, getFilterTimes(host).end)}
                       />
                     </label>
-                    <label>~</label>
+                    <label>～</label>
                     <label>
                       <input
                         type="time"
@@ -564,7 +564,6 @@ function App() {
         
         <div className="config-section">
           <h2>HTTP/Socks5 端口设置，验证信息，下游 VPN_Proxy 代理</h2>
-          {/*<p><span>配置页端口默认 8004</span></p> */}
           <div className="setting-row">
             <label>Anyproxy HTTP 代理端口:</label>
             <input
@@ -594,38 +593,38 @@ function App() {
           <div className="setting-row">
             <label>代理用户名:</label>
             <input
-              type="string"
+              type="text"
               value={config.auth_username}
               onChange={(e) => setConfig({...config, auth_username: e.target.value || ""})}
             />
           </div>
           <div className="setting-row">
-            <label>代理密码:&nbsp;&nbsp;&nbsp;&nbsp;</label>
+            <label>代理密码:</label>
             <input
-              type="string"
+              type="text"
               value={config.auth_password}
               onChange={(e) => setConfig({...config, auth_password: e.target.value || ""})}
             />
           </div>
 
-          <div className="setting-row">
+          <div className="setting-row full-width">
             <label>公网域名:</label>
-            <div>如果要公网可访问，OpenWRT 配置相同的端口转发到 AnyProxy 代理端口，这里写公网域名<br />（仅在浏览器通过公网域名+端口查看系统水位时防止回环）</div>
             <input
               type="text"
               value={config.your_domain}
               onChange={(e) => setConfig({...config, your_domain: e.target.value || ""})}
             />
+            <div className="help-text">如果要公网可访问，OpenWRT 配置相同的端口转发到 AnyProxy 代理端口，这里写公网域名<br />（仅在浏览器通过公网域名+端口查看系统水位时防止回环）</div>
           </div>
 
-          <div className="setting-row">
+          <div className="setting-row full-width">
             <label>VPN_PROXY 设置（留空）:</label>
-            <div>（格式：“127.0.0.1:1087”，仅调试用）</div>
             <input
               type="text"
               value={config.vpn_proxy}
               onChange={(e) => setConfig({...config, vpn_proxy: e.target.value || ""})}
             />
+            <div className="help-text">（格式：“127.0.0.1:1087”，仅调试用）</div>
           </div>
           <div className="setting-row actions">
             <button 

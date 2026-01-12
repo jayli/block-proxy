@@ -271,9 +271,11 @@ span.host-text {
 }
 
 .setting-row label {
-  /*width: 120px;*/
+  width: 220px; /* 固定宽度，足够容纳最长的标签 */
+  text-align: right;
   font-weight: bold;
   color: #555;
+  flex-shrink: 0; /* 防止被压缩 */
 }
 
 .setting-row input {
