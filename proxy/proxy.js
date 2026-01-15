@@ -721,6 +721,27 @@ async function MITMHandler(type, url, request, response) {
   return responseResult;
 }
 
+// 获得需要重写响应的规则列表，符合规则的则提高chunkSizeThreshold阈值到 20M（默认）以上，来强制整包返回
+// 否则就把chunkSizeThreshold阈值调整为 1M，超过阈值就流式返回，提高响应速度
+function getResponseRules() {
+  var Ms = [];
+
+  Object.keys(Rule).forEach(key => {
+    Ms = Ms.concat(Rule[key]);
+  });
+  var res = [];
+  for (const item of Ms) {
+    if (item['type'] == "beforeSendResponse") {
+      res.push({
+        type: item['type'],
+        host: item['host'],
+        regexp: item['regexp']
+      });
+    }
+  }
+  return res;
+}
+
 // 为 MITM 处理响应结果 body 的解压缩
 // 之前是在 Anyproxy 里做，每个 response 都处理解压缩，目的是为了返回明文，抓包看明文用的，这里没必要
 // 只需对 mitm 做解压就可以，其他的不需要解压缩的就完全透给客户端
@@ -897,6 +918,7 @@ function getAnyProxyOptions() {
   return {
     port: proxyPort,
     rule: {
+      responseRules: getResponseRules(),
       // 验证 Proxy-Authorization
       // protocol: http, https
       // req: 原始的 Request
