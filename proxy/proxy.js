@@ -21,9 +21,9 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const _request = require("./http.js").request;
 const uaFilter = require("./mitm/uaFilter.js");
 const attacker = require('./attacker.js');
-const monitor = require('./monitor.js');
 const domain = require('./domain.js');
 const wanip = require('./wanip.js');
+const operator = require("./operator.js");
 var   Rule = require("./mitm/rule.js");
 
 // 启用全局 keep-alive，使 AnyProxy 内部转发也复用连接
@@ -80,6 +80,69 @@ function preCompileRuleRegexp() {
     }
   });
 }
+
+// 对于一些流媒体的链接不支持 407 的情况要排除验证
+// host 可能携带端口：a.com:443
+function authPass(protocol, host, url) {
+  const passHosts = [
+    "googlevideo.com", // Toutube 视频流
+    "dns.weixin.qq.com.cn", // 微信的 dns 预解析
+    "weixin.qq.com",
+    // xiaohongshu.com:443，小红书App和知乎 App 里发起带端口的请求，收到 407 后第二次
+    "xiaohongshu.com:443",
+    "zhihu.com:443",
+    ...filtered_mitm_domains
+  ];
+  //  基于 http 传输的流
+  const passUrl = [
+    /\.(m3u8|mp4|mpd|ts|webm|avi|mkv)$/i
+  ];
+
+  var pass = false;
+  // 先检查是否完全比配，即带端口的匹配
+  passHosts.some(function(item) {
+    if (host.toLowerCase().endsWith(item.toLowerCase())) {
+      pass = true;
+      return true;
+    } else {
+      return false;
+    }
+  });
+  if (pass) {
+    return pass;
+  }
+
+  // 去掉端口后匹配
+  host = trimHost(host);
+
+  // 检查流媒体域名的排除项
+  passHosts.some(function(item) {
+    if (host.toLowerCase().endsWith(item.toLowerCase())) {
+      pass = true;
+      return true;
+    } else {
+      return false;
+    }
+  });
+  if (pass) {
+    return pass;
+  }
+
+  // 检查流媒体类型的排除项
+  if (url != null) {
+    passUrl.some(function(item) {
+      if (item.test(url)) {
+        pass = true;
+        return true;
+      } else {
+        return false;
+      }
+    });
+  }
+
+  return pass;
+}
+
 
 async function fileExists(filePath) {
   try {
@@ -820,70 +883,6 @@ function getProxyAuthConfig() {
   };
 }
 
-// 对于一些流媒体的链接不支持 407 的情况要排除验证
-// host 可能携带端口：a.com:443
-function authPass(protocol, host, url) {
-  const passHosts = [
-    "googlevideo.com", // Toutube 视频流
-    "dns.weixin.qq.com.cn", // 微信的 dns 预解析
-    "weixin.qq.com",
-    // xiaohongshu.com:443，小红书App和知乎 App 里发起带端口的请求，收到 407 后第二次
-    "xiaohongshu.com:443",
-    "zhihu.com:443",
-    ...filtered_mitm_domains
-  ];
-  //  基于 http 传输的流
-  const passUrl = [
-    /\.(m3u8|mp4|mpd|ts|webm|avi|mkv)$/i
-  ];
-
-
-  var pass = false;
-
-  // 先检查是否完全比配，即带端口的匹配
-  passHosts.some(function(item) {
-    if (host.toLowerCase().endsWith(item.toLowerCase())) {
-      pass = true;
-      return true;
-    } else {
-      return false;
-    }
-  });
-  if (pass) {
-    return pass;
-  }
-
-  // 去掉端口后匹配
-  host = trimHost(host);
-
-  // 检查流媒体域名的排除项
-  passHosts.some(function(item) {
-    if (host.toLowerCase().endsWith(item.toLowerCase())) {
-      pass = true;
-      return true;
-    } else {
-      return false;
-    }
-  });
-  if (pass) {
-    return pass;
-  }
-
-  // 检查流媒体类型的排除项
-  if (url != null) {
-    passUrl.some(function(item) {
-      if (item.test(url)) {
-        pass = true;
-        return true;
-      } else {
-        return false;
-      }
-    });
-  }
-
-  return pass;
-}
-
 function passRequestWithHttpAgent(requestDetail, isHttps) {
   return {
     ...requestDetail,
@@ -1051,7 +1050,7 @@ function getAnyProxyOptions() {
         const isHttps = url.startsWith('https:') ? true : false;
         const isHttp = !isHttps;
 
-        // 如果直接访问当前 IP 的代理端口
+        // 如果直接访问当前 IP 的代理端口  http://127.0.0.1:8001
         // 如果请求的目的是自己，防止代理回环
         // 这里没办法穷举，只能约定防火墙里绑定的转发端口和 AnyProxy 的代理端口保持一致
         // 只要不绑定其他端口，就绝对不会陷入回环问题
@@ -1064,113 +1063,8 @@ function getAnyProxyOptions() {
           // 其他机器访问 localhost 是不会走远端代理的
           (host == "localhost" || host == "127.0.0.1") 
         ) {
-          if (pathname === "/favicon.ico") {
-            return {
-              response:{
-                statusCode:200,
-                body: Buffer.alloc(0)
-              }
-            };
-          } else if (pathname == "/restart_docker") {
-            if (isDocker) {
-              var msg = "请手动重启 Docker 容器。";
-            } else {
-              var msg = "当前程序不在 Docker 容器内，请在终端终止程序后再 npm run start 启动。";
-            }
-            return {
-              response: {
-                statusCode: 200,
-                header: { 'Content-Type': 'text/plain; charset=utf-8' },
-                body: msg
-              }
-            };
-          } else if (pathname == "/enable_express") {
-            var configData = await _fs.readConfig();
-            _fs.writeConfig({
-              ...configData,
-              enable_express: "1"
-            });
-            return {
-              response: {
-                statusCode: 200,
-                header: { 'Content-Type': 'text/plain; charset=utf-8' },
-                body: "开启 express 后台设置成功，请重启 Docker。"
-              }
-            };
-          } else if (pathname == "/disable_express") {
-            var configData = await _fs.readConfig();
-            _fs.writeConfig({
-              ...configData,
-              enable_express: "0"
-            });
-            return {
-              response: {
-                statusCode: 200,
-                header: { 'Content-Type': 'text/plain; charset=utf-8' },
-                body: "关闭 express 后台设置成功，请重启 Docker。"
-              }
-            };
-          } else if (pathname == "/enable_socks5") {
-            var configData = await _fs.readConfig();
-            _fs.writeConfig({
-              ...configData,
-              enable_socks5: "1"
-            });
-            return {
-              response: {
-                statusCode: 200,
-                header: { 'Content-Type': 'text/plain; charset=utf-8' },
-                body: "开启 socks5 成功，请重启 Docker。"
-              }
-            };
-          } else if (pathname == "/disable_socks5") {
-            var configData = await _fs.readConfig();
-            _fs.writeConfig({
-              ...configData,
-              enable_socks5: "0"
-            });
-            return {
-              response: {
-                statusCode: 200,
-                header: { 'Content-Type': 'text/plain; charset=utf-8' },
-                body: "关闭 socks5 成功，请重启 Docker。"
-              }
-            };
-          } else if (pathname == "/disable_webinterface") {
-            var configData = await _fs.readConfig();
-            _fs.writeConfig({
-              ...configData,
-              enable_webinterface: "0"
-            });
-            return {
-              response: {
-                statusCode: 200,
-                header: { 'Content-Type': 'text/plain; charset=utf-8' },
-                body: "关闭 webinterface 成功，请重启 Docker。"
-              }
-            };
-          } else if (pathname == "/enable_webinterface") {
-            var configData = await _fs.readConfig();
-            _fs.writeConfig({
-              ...configData,
-              enable_webinterface: "1"
-            });
-            return {
-              response: {
-                statusCode: 200,
-                header: { 'Content-Type': 'text/plain; charset=utf-8' },
-                body: "启用 webinterface 成功，请重启 Docker。"
-              }
-            };
-          } else {
-            return {
-              response: {
-                statusCode: 200,
-                header: { 'Content-Type': 'text/html; charset=utf-8' },
-                body: '<pre>' + await monitor.getSystemMonitorInfo(proxyPort) + '</pre>'
-              }
-            };
-          }
+          // Operator
+          return await operator.getResponseByPathname(pathname, isDocker, proxyPort);
         }
 
         // 如果是裸IP请求，全部放行
