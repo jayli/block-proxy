@@ -827,6 +827,9 @@ function authPass(protocol, host, url) {
     "googlevideo.com", // Toutube 视频流
     "dns.weixin.qq.com.cn", // 微信的 dns 预解析
     "weixin.qq.com",
+    // xiaohongshu.com:443，小红书App和知乎 App 里发起带端口的请求，收到 407 后第二次
+    "xiaohongshu.com:443",
+    "zhihu.com:443",
     ...filtered_mitm_domains
   ];
   //  基于 http 传输的流
@@ -834,9 +837,24 @@ function authPass(protocol, host, url) {
     /\.(m3u8|mp4|mpd|ts|webm|avi|mkv)$/i
   ];
 
-  host = trimHost(host);
 
   var pass = false;
+
+  // 先检查是否完全比配，即带端口的匹配
+  passHosts.some(function(item) {
+    if (host.toLowerCase().endsWith(item.toLowerCase())) {
+      pass = true;
+      return true;
+    } else {
+      return false;
+    }
+  });
+  if (pass) {
+    return pass;
+  }
+
+  // 去掉端口后匹配
+  host = trimHost(host);
 
   // 检查流媒体域名的排除项
   passHosts.some(function(item) {
@@ -847,7 +865,6 @@ function authPass(protocol, host, url) {
       return false;
     }
   });
-
   if (pass) {
     return pass;
   }
@@ -922,17 +939,9 @@ function getAnyProxyOptions() {
 
         const authHeader = headers['proxy-authorization'];
 
-        // Hack:
-        // xiaohongshu.com:443，小红书App和知乎 App 里发起带端口的请求，收到 407 后第二次
-        // 请求不会带上authentication，这是 App 的 bug，为了避免功能不可用，这里统一 Hack 掉。
-        if (/:\d+$/ig.test(headers['host'])) {
-          return true;
-        }
-
         if (!authHeader || !authHeader.startsWith('Basic ')) {
           return this.sendAuthRequired();
         }
-
         const credentials = authHeader.substring(6); // 去掉 'Basic ' 前缀
         let decoded;
         try {
