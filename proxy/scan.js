@@ -78,6 +78,46 @@ async function getScanStatus() {
   return loadedConfig.network_scanning_status;
 }
 
+// 并发控制器，限制同时进行的 ping 数量
+class ConcurrentPingController {
+  constructor(maxConcurrent = 32, batchDelay = 50) {
+    this.maxConcurrent = maxConcurrent;
+    this.batchDelay = batchDelay; // 批次之间的延迟（毫秒）
+  }
+
+  // 批量执行 ping，控制并发数（真正的批次并发）
+  async batchPing(ips, timeout = 1) {
+    const results = [];
+
+    // 将IP列表分成多个批次
+    for (let i = 0; i < ips.length; i += this.maxConcurrent) {
+      const batch = ips.slice(i, i + this.maxConcurrent);
+
+      // 并发执行当前批次的所有ping
+      const batchPromises = batch.map(ip =>
+        ping.promise.probe(ip, { timeout })
+      );
+
+      const batchResults = await Promise.allSettled(batchPromises);
+
+      // 将批次结果添加到总结果中
+      batch.forEach((ip, index) => {
+        results.push({
+          ip,
+          result: batchResults[index]
+        });
+      });
+
+      // 如果不是最后一个批次，则添加延迟
+      if (i + this.maxConcurrent < ips.length) {
+        await new Promise(resolve => setTimeout(resolve, this.batchDelay));
+      }
+    }
+
+    return results;
+  }
+}
+
 async function doScan() {
   const subnet = getLocalSubnet();
   // 如果是 30 网段，直接返回空
@@ -86,11 +126,17 @@ async function doScan() {
   }
   console.log(`正在扫描网段: ${subnet}.0/24`);
 
-  // Ping all IPs to populate ARP cache
-  const ips = Array.from({ length: 254 }, (_, i) => `${subnet}.${i + 1}`);
-  await Promise.allSettled(ips.map(ip => ping.promise.probe(ip, { timeout: 1 })));
+  // 创建并发控制器，限制同时进行32个ping，批次间延迟50ms
+  const controller = new ConcurrentPingController(32, 50);
 
-  // Read ARP table via system command
+  // 生成所有IP地址
+  const ips = Array.from({ length: 254 }, (_, i) => `${subnet}.${i + 1}`);
+
+  // 使用并发控制器分批ping所有IP
+  console.log(`开始并发ping扫描，最大并发数: 32，批次延迟: 50ms`);
+  await controller.batchPing(ips, 1); // 使用1秒超时，ping结果仅用于填充ARP缓存
+
+  // 读取ARP表以获取MAC地址
   const cmd = process.platform === 'win32' ? 'arp -a' : 'arp -a';
   const arpOutput = await new Promise((resolve, reject) => {
     exec(cmd, async (error, stdout) => {

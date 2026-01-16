@@ -29,11 +29,12 @@ var   Rule = require("./mitm/rule.js");
 // 启用全局 keep-alive，使 AnyProxy 内部转发也复用连接
 http.globalAgent.keepAlive = true;
 https.globalAgent.keepAlive = true;
-http.globalAgent.maxSockets = 50;
-https.globalAgent.maxSockets = 50;
+// 连接上限 50 应该足够了，设置 100 留足 buffer
+http.globalAgent.maxSockets = 100;
+https.globalAgent.maxSockets = 100;
 
-const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 50 });
-const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 100 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 100 });
 
 // 全局参数
 const configPath = path.join(__dirname, '../config.json');
