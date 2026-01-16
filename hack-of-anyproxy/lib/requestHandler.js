@@ -46,6 +46,28 @@ function normalizeSocketKey(ip, port) {
   return ip + ":" + port
 }
 
+// 判断是否命中 responseRules
+function matchResponseRule(responseRules, userConfig) {
+  try {
+    var hostname = userConfig.requestOptions.hostname.split(":")[0].toLowerCase();
+    var pathname = userConfig.requestOptions.path; // 带query
+    var url = `${userConfig.protocol}://${hostname}${pathname}`
+    var matched = false;
+    for (const item of responseRules) {
+      if (hostname.endsWith(item["host"]) && new RegExp(item['regexp']).test(url)) {
+        matched = true;
+        break;
+      } else {
+        continue;
+      }
+    }
+    return matched;
+  } catch (e) {
+    console.log(e);
+    return false;
+  }
+}
+
 class CommonReadableStream extends Readable {
   constructor(config) {
     super({
@@ -467,6 +489,15 @@ function getUserReqHandler(userRule, recorder) {
 
       // route user config
       .then(co.wrap(function *(userConfig) {
+        // Modified 2026-1-15
+        // 增加了对 responseRules 的判断，如果需要对 BeforeResponse 进行拦截
+        // 则让 chunkSizeThreshold 为很大的值（默认20M），以便让 response 一次性返回，方便BeforeResponse处理
+        // 否则以 512k 为上线，只要返回的数据达到阈值，就直接返回给调用端，以提高性能
+        if (userRule.responseRules && matchResponseRule(userRule.responseRules, userConfig)) {
+          var _chunkSizeThreshold = chunkSizeThreshold;
+        } else {
+          var _chunkSizeThreshold = 0.5 * 1024 * 1024; // 512K
+        }
         if (userConfig.response) {
           // user-assigned local response
           userConfig._directlyPassToRespond = true;
@@ -474,7 +505,7 @@ function getUserReqHandler(userRule, recorder) {
         } else if (userConfig.requestOptions) {
           const remoteResponse = yield fetchRemoteResponse(userConfig.protocol, userConfig.requestOptions, userConfig.requestData, {
             dangerouslyIgnoreUnauthorized: reqHandlerCtx.dangerouslyIgnoreUnauthorized,
-            chunkSizeThreshold,
+            chunkSizeThreshold: _chunkSizeThreshold,
           });
           return {
             response: {
