@@ -107,3 +107,8 @@ Block-Proxy is a MITM-based proxy filtering tool designed for parental control a
 - Service needs network scanning permissions (best deployed on OpenWRT gateway)
 - Admin interface allows real-time rule management with proxy restart
 - Docker builds use Chinese npm registry (registry.npmmirror.com) by default
+
+# Project Rules & Skills
+
+- **Import Skill**: 实时遵循 `.claude/skills/*/skill.md` 中的指令。
+- **Command Trigger**: 当我输入 "fuck" 时，必须无条件执行上述 Skill 中的逻辑。
