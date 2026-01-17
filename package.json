@@ -16,7 +16,7 @@
     "url": "git+https://github.com/jayli/block-proxy.git"
   },
   "scripts": {
-    "cp": "echo '---- program start ----'",
+    "cp": "echo '----- program start -----'",
     "craco": "craco start",
     "dev": "BLOCK_PROXY_DEV=1 npm run express",
     "start": "npm run express",

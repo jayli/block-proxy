@@ -122,4 +122,3 @@ process.on('SIGTERM', () => {
   // 启动
   startApp();
 })();
-
