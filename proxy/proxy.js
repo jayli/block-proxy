@@ -91,6 +91,8 @@ function authPass(protocol, host, url) {
     "weixin.qq.com",
     // xiaohongshu.com:443，小红书App和知乎 App 里发起带端口的请求，收到 407 后第二次
     "xiaohongshu.com:443",
+    "xiaohongshu.com",
+    "xhscdn.com",
     "zhihu.com:443",
     ...filtered_mitm_domains
   ];
