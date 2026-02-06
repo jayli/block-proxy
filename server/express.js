@@ -96,6 +96,7 @@ app.post('/api/config', async (req, res) => {
         const configPath = path.join(__dirname, '../config.json');
         // fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2));
         _fs.writeConfig(newConfig);
+        _fs.backupConfig(newConfig);
         res.status(200).json({ message: 'Config updated successfully' });
       } catch (err) {
         res.status(400).json({ error: 'Invalid JSON or write error: ' + err.message });
