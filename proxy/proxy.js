@@ -85,6 +85,7 @@ function preCompileRuleRegexp() {
 // 对于一些流媒体的链接不支持 407 的情况要排除验证
 // host 可能携带端口：a.com:443
 function authPass(protocol, host, url) {
+  // console.log("url:", host, url);
   const passHosts = [
     "googlevideo.com", // Toutube 视频流
     "dns.weixin.qq.com.cn", // 微信的 dns 预解析
@@ -94,6 +95,20 @@ function authPass(protocol, host, url) {
     "xiaohongshu.com",
     "xhscdn.com",
     "zhihu.com:443",
+    //-----千问客户端
+    "globalsign.com",
+    "quark.cn",
+    "qianwen.com",
+    "uc.cn",
+    "ucweb.com",
+    "uc.cmd",
+    "alibabausercontent.com",
+    "taobao.com",
+    "sm.cn",
+    "zaodian.com",
+    "amap.com",
+    "alipay.com",
+    "aliyuncs.com",
     ...filtered_mitm_domains
   ];
   //  基于 http 传输的流
