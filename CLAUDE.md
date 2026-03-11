@@ -5,6 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 ## Common Commands
 
 ### Development
+- `pnpm i` – Install dependencies (pnpm is the preferred package manager)
 - `npm run dev` – Start development mode with BLOCK_PROXY_DEV=1 (starts all services)
 - `npm run craco` – Start React development server with CRACO (port 3000)
 - `npm run start` / `npm run express` – Start backend + proxy server for production
@@ -91,6 +92,12 @@ Client → HTTP Proxy (8001) → AnyProxy → MITM Rules → Target Server
 - Two rule types: `beforeSendRequest` and `beforeSendResponse`
 - Built-in rules: YouTube ad removal, Youdao Dictionary VIP unlock
 
+**Adding Custom MITM Rules:**
+1. Edit `proxy/mitm/rule.js` for built-in rules, or
+2. Create external rule file and start with `block-proxy -c rule.js`
+3. Rule structure: `{ type, host, regexp, callback }` where callback receives `(url, request, response)`
+4. See `example/rule.js` for reference
+
 ### Configuration Management
 - Configuration stored in `config.json` at runtime
 - Supports external rule files via `-c` flag (global config via `_fs.setGlobalConfigFile()`)
@@ -119,9 +126,10 @@ Client → HTTP Proxy (8001) → AnyProxy → MITM Rules → Target Server
 
 ### Development Workflow
 1. **Development**: `npm run dev` starts proxy + admin UI + SOCKS5 (if enabled)
-2. **Testing**: Proxy-only mode with `npm run proxy`
-3. **Building**: `npm run build` compiles React frontend to `/build/`
-4. **Docker**: Separate commands for x86 and ARM architectures
+2. **Frontend Development**: `npm run craco` starts React dev server (port 3000) with API proxy to backend (port 8003)
+3. **Testing**: Proxy-only mode with `npm run proxy`
+4. **Building**: `npm run build` compiles React frontend to `/build/`
+5. **Docker**: Separate commands for x86 and ARM architectures
 
 ### Dependencies
 - `@bachi/anyproxy` – Modified AnyProxy fork for MITM
