@@ -95,6 +95,8 @@ function authPass(protocol, host, url) {
     "xiaohongshu.com",
     "xhscdn.com",
     "zhihu.com:443",
+    "zhimg.com",
+    "zhihu.com",
     //-----千问客户端
     "globalsign.com",
     "quark.cn",
