@@ -1052,8 +1052,39 @@ function getAnyProxyOptions() {
         }
 
         const blockRules = getBlockRules(clientIp);
-        // requestDetail.host 是域名+端口的形式
-        const host = requestDetail.host.split(":")[0];
+        // requestDetail.host 可能是以下格式：
+        // - 域名:端口     如 example.com:443
+        // - IPv4:端口     如 192.168.1.1:443
+        // - [IPv6]:端口   如 [2001:db8::1]:443（标准格式）
+        // - IPv6:端口     如 240c:409f:1000::4:0:a5:443（非标准格式）
+        let host;
+        if (requestDetail.host.startsWith("[")) {
+          // 标准 IPv6 格式: [2001:db8::1]:443
+          const closingBracket = requestDetail.host.indexOf("]");
+          if (closingBracket !== -1) {
+            host = requestDetail.host.substring(1, closingBracket);
+          } else {
+            // 异常情况，缺少闭合括号
+            host = requestDetail.host;
+          }
+        } else {
+          // 通过最后一个冒号判断是否有端口
+          // 如果最后一个冒号后面是纯数字，则认为是端口
+          const lastColonIndex = requestDetail.host.lastIndexOf(":");
+          if (lastColonIndex !== -1) {
+            const possiblePort = requestDetail.host.substring(lastColonIndex + 1);
+            if (/^\d+$/.test(possiblePort)) {
+              // 最后部分是端口号，取前半部分作为 host
+              host = requestDetail.host.substring(0, lastColonIndex);
+            } else {
+              // 最后部分不是数字，整个字符串都是 host
+              host = requestDetail.host;
+            }
+          } else {
+            // 没有冒号，整个字符串就是 host
+            host = requestDetail.host;
+          }
+        }
 
         // rewrite 规则判断
         if (shouldMitm(host)) {
