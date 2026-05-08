@@ -11,6 +11,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 - `npm run start` / `npm run express` – Start backend + proxy server for production
 - `npm run proxy` – Start proxy only (no admin interface)
 - `npm run socks5` – Start SOCKS5 server only
+- `npm run cp` – Print start banner (used internally by other scripts)
+
+### Code Analysis
+- `npm test` – Run React tests (currently limited, based on CRA defaults)
+
+### Utilities
+- `npm run rm_bkconfig` – Remove backup config file
 
 ### Build & Deployment
 - `npm run build` – Build React frontend
@@ -34,6 +41,8 @@ Block-Proxy is a MITM-based proxy filtering tool designed for parental control a
    - `mitm/rule.js` – MITM rule definitions (YouTube ads, Youdao Dictionary, etc.)
    - `mitm/youtube/` – YouTube ad-blocking response modifiers
    - `mitm/ydcd/` – Youdao Dictionary VIP modifier
+   - `mitm/persistentStore.js` – Presistent store for MITM state (you can read along)
+   - `mitm/uaFilter.js` – User-Agent based filtering
    - `scan.js` – Network scanning for device discovery (every 2 hours via ARP)
    - `fs.js` – Configuration file management (read/write/backup)
    - `attacker.js` – Request blocking logic
@@ -41,6 +50,7 @@ Block-Proxy is a MITM-based proxy filtering tool designed for parental control a
    - `operator.js` – Proxy control operations (restart, etc.)
    - `http.js` – HTTP client utilities
    - `wanip.js` – WAN IP detection
+   - `monitor.js` – Proxy monitoring interface
 
 2. **SOCKS5 Proxy** (`/socks5/`)
    - `server.js` – SOCKS5 over TLS implementation (port 8002), forwards to AnyProxy
@@ -58,7 +68,11 @@ Block-Proxy is a MITM-based proxy filtering tool designed for parental control a
 5. **CLI Interface** (`/bin/`)
    - `start.js` – Global CLI entry point with auto-restart capabilities (max 10000 restarts) and config cleanup on exit
 
-6. **Configuration** (`config.json`)
+6. **AnyProxy Fork** (`/hack-of-anyproxy/`)
+   - Modified AnyProxy request handler with custom TLS handling, IPv6 normalization, and UA-based filtering
+   - Patched into `@bachi/anyproxy` package at runtime
+
+7. **Configuration** (`config.json`)
    - Runtime configuration: ports, blocked hosts, authentication, device list
    - Auto-saved from admin interface
    - Key fields: `block_hosts[]`, `proxy_port`, `socks5_port`, `enable_express`, `enable_socks5`, `devices[]`, `auth_username`, `auth_password`
@@ -132,6 +146,7 @@ Client → HTTP Proxy (8001) → AnyProxy → MITM Rules → Target Server
 5. **Docker**: Separate commands for x86 and ARM architectures
 
 ### Dependencies
+**Note:** Due to the `@bachi/anyproxy` fork being incompatible with newer Node.js versions, it is bundled as a `devDependency`. Most runtime dependencies are in `devDependencies`:
 - `@bachi/anyproxy` – Modified AnyProxy fork for MITM
 - `express` – Backend API server
 - `react`, `react-dom` – Frontend framework
@@ -140,6 +155,7 @@ Client → HTTP Proxy (8001) → AnyProxy → MITM Rules → Target Server
 - `qrcode` – Certificate QR code generation for MITM setup
 - `ping` – Network ping utility
 - `http-proxy-agent`, `https-proxy-agent` – Upstream proxy support
+- `@craco/craco` – CRA configuration override
 
 ## Important Notes
 - SOCKS5 proxy does not support MAC address targeting (only HTTP proxy does)
@@ -153,4 +169,6 @@ Client → HTTP Proxy (8001) → AnyProxy → MITM Rules → Target Server
 
 # Project Rules & Skills
 
-- **Import Skill**: 实时遵循 `.claude/skills/*/skill.md` 中的指令。
+- **Local Skills**: 实时遵循 `.claude/skills/*/skill.md` 中的指令。可用技能: `commit`, `pcap-analyse`
+- **CLI入口**: 全局命令 `block-proxy` 注册在 `bin/start.js`，通过 `npm i -g` 安装后可直接调用
+- **config.json** 是运行时配置文件（非源码），由 `proxy/fs.js` 管理读写和备份，不在 git 中追踪变更
