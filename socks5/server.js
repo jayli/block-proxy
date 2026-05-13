@@ -115,7 +115,7 @@ async function init() {
     function handleTcpRequest(clientSocket, targetHost, targetPort) {
       // jayli
       // console.log(targetHost);
-      clientSocket.setTimeout(30_000);
+      clientSocket.setTimeout(120_000);
       clientSocket.on('timeout', () => clientSocket.destroy());
 
       const proxySocket = net.connect(DOWNSTREAM_HTTP_PROXY_PORT, DOWNSTREAM_HTTP_PROXY_HOST, () => {
@@ -149,7 +149,7 @@ async function init() {
         proxySocket.on('data', onProxyData);
       });
 
-      proxySocket.setTimeout(30_000);
+      proxySocket.setTimeout(120_000);
       proxySocket.on('timeout', () => proxySocket.destroy());
       proxySocket.on('error', (err) => {
         console.warn(`Proxy error: ${err.message}`);

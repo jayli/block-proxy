@@ -1353,7 +1353,7 @@ function getAnyProxyOptions() {
     forceProxyHttps: false, // 关闭全局 HTTPS 拦截
     wsIntercept: false,
     silent: true,
-    timeout: 60 * 1000 // 60秒
+    timeout: 120 * 1000 // 120秒
   };
 }
 
