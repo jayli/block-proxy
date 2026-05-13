@@ -496,7 +496,7 @@ function getUserReqHandler(userRule, recorder) {
         if (userRule.responseRules && matchResponseRule(userRule.responseRules, userConfig)) {
           var _chunkSizeThreshold = chunkSizeThreshold;
         } else {
-          var _chunkSizeThreshold = 0.5 * 1024 * 1024; // 512K
+          var _chunkSizeThreshold = 64 * 1024; // 64K
         }
         if (userConfig.response) {
           // user-assigned local response
