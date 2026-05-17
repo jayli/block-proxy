@@ -7,17 +7,13 @@
 
 > **Block-Proxy**
 
-基于 MITM 的代理和过滤工具，Socks5 套 TLS，用于公网
+Socks5/http 代理工具，支持 MITM 和二次开发
 
-主要是限制小朋友上网，依赖 anyproxy，用在 openwrt 里。特性：
+用在家庭网关，限制小朋友上网用。特性：
 
-- HTTP 代理
-- Socks5 over TLS 代理
-- 域名拦截
-- url 正则拦截
-- 指定拦截Mac地址
-- 设定日期和时间段
-- 顺便过滤广告
+- HTTP 代理 + Socks5 over TLS 代理
+- 域名拦截、url 正则、Mac 地址拦截
+- 设定日期和时间段、顺便过滤广告
 
 ### 1）使用方法
 
@@ -49,7 +45,35 @@ block-proxy -c rule.js
    - Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/arm/block-proxy.tar" target=_blank>block-proxy-arm.tar</a>
    - X86 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/x86/block-proxy-x86.tar" target=_blank>block-proxy-x86.tar</a>
 2. 导入：`docker load < block-proxy.tar`
-3. 启动：参照下文 Docker 部署
+3. 启动：
+
+```
+docker run --init -d --restart=unless-stopped \
+           -e TZ=Asia/Shanghai --network=host \
+           --user=root \
+           --log-driver local \
+           --log-opt max-size=10m \
+           --log-opt max-file=3 \
+           --cpus="5" \
+           --memory 400m \
+           -v "$(pwd)/":/app/config \
+           --name block-proxy block-proxy
+```
+
+其中挂载目录 `$(pws)/` 下的 `rule.js` 是需要额外挂载的配置文件，可留空。
+
+> block-proxy 可以配置只启动 proxy 不启动后台面板，首次启动后访问 http://代理IP:8001 根据提示操作。
+
+网关里为了方便获取子网机器 ip 和 mac 地址，docker 容器需要和宿主机共享同一个网络，同时指定时区。
+
+如果是在 Window/Mac 中，需要手动指定端口绑定（不推荐）：
+
+```
+docker run --init -d --restart=unless-stopped --user=root \
+           -v "$(pwd)/":/app/config \
+           -e TZ=Asia/Shanghai -p 8001:8001 -p 8002:8002 -p 8003:8003 \
+           --name block-proxy block-proxy
+```
 
 ### 2）端口配置
 
@@ -84,42 +108,14 @@ block-proxy -c rule.js
 
 > 要是打包 docker 空间不够就执行 `docker system prune -a --volumes`
 
-拷贝 tar 到 openwrt 后启动容器：
-
-```
-docker run --init -d --restart=unless-stopped \
-           -e TZ=Asia/Shanghai --network=host \
-           --user=root \
-           --log-driver local \
-           --log-opt max-size=10m \
-           --log-opt max-file=3 \
-           --cpus="5" \
-           --memory 400m \
-           -v "$(pwd)/":/app/config \
-           --name block-proxy block-proxy
-```
-
-其中挂载目录 `$(pws)/` 下的 `rule.js` 是需要额外挂载的配置文件，可留空。
-
-> block-proxy 可以配置只启动 proxy 不启动后台面板，首次启动后访问 http://代理IP:8001 根据提示操作。
-
-网关里为了方便获取子网机器 ip 和 mac 地址，docker 容器需要和宿主机共享同一个网络，同时指定时区。
-
-如果是在 Window/Mac 中，需要手动指定端口绑定（不推荐）：
-
-```
-docker run --init -d --restart=unless-stopped --user=root \
-           -v "$(pwd)/":/app/config \
-           -e TZ=Asia/Shanghai -p 8001:8001 -p 8002:8002 -p 8003:8003 \
-           --name block-proxy block-proxy
-```
-
+拷贝 tar 到 openwrt 后启动容器：参照上文 Docker部署。
 
 ### 5）配置说明
 
 #### ① 代理端口
 
-默认开启两个代理端口：HTTP 8001 和 Socks5（over TLS） 8002。
+- 8001：HTTP 代理
+- 8002：socks5 over TLS
 
 ⚠️ Socks5 代理不支持对 Mac 地址的定向拦截，Mac 地址的拦截只对局域网内的 HTTP 代理绑定生效。建议局域网绑定 http 代理，公网绑定 Socks5 代理。
 
@@ -136,10 +132,10 @@ docker run --init -d --restart=unless-stopped --user=root \
 
 #### ③ 设备配置
 
-1. 代理设置：iPhone/iPad 为例：设置 → 无线局域网 → 点击当前网络 → HTTP代理/配置代理，设置服务器和端口。
-2. 证书设置：打开 AnyProxy 监控端口（默认8003），扫码安装证书，在手机设置中安装该证书，同时配置完全信任：设置→通用→关于本机→证书信任设置→打开对AnyProxy的完全信任
+1. 证书设置：进入后台配置，扫码安装证书，在手机设置中安装该证书，同时配置完全信任：设置→通用→关于本机→证书信任设置→打开对AnyProxy的完全信任
+2. 代理设置：iPhone/iPad 为例：设置 → 无线局域网 → 点击当前网络 → HTTP代理/配置代理，设置服务器和端口。
 
-小朋友的设备里把 Mac 固定下来：
+如果要通过 mac 地址拦截小朋友上网，小朋友的设备里把 Mac 固定下来：
 
 <img width="350" alt="image" src="https://github.com/user-attachments/assets/f9bfab89-7194-4a72-b1ae-5cca27911bc9" />
 
@@ -162,7 +158,7 @@ ip6tables -I forwarding_rule -m mac --mac-source D2:9E:8D:1B:F1:4E -j REJECT
 1. MITM 基于 AnyProxy 的规则实现，客户端设备必须要安装 AnyProxy 的证书。
 2. 服务需要根据 ip 反查 mac 地址，需要代理服务工作在对子网有扫描权限的节点，最好是部署在 openwrt 网关，可以`arp -a`看下是否可以扫描完全。
 3. 服务会自动更新路由表，每 2 个小时更新一次，对于新入网的设备，最好在后台手动刷新并重启代理，以免拦截规则不能立即生效。
-4. 所有规则都在 HTTP 代理中生效，Socks5 是指向 AnyProxy 的反向代理，且默认开启了 TLS 加密，内网 Mac 地址的拦截只对直接绑定 HTTP 代理的情况生效。因此建议优先使用 HTTP 代理。
+4. 所有规则都在 HTTP 代理中生效，Socks5 on tls 是指向 AnyProxy 的反向代理，内网 Mac 地址的拦截只对直接绑定 HTTP 代理的情况生效。
 
 #### Youtube 去广告
 
