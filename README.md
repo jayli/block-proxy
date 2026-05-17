@@ -41,11 +41,13 @@ block-proxy -c rule.js
 
 #### ② 方式二，Docker 部署（推荐）
 
-1. 下载 Docker 文件
-   - Arm 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/arm/block-proxy.tar" target=_blank>block-proxy-arm.tar</a>
-   - X86 架构 → <a href="http://yui.cool:7001/public/downloads/block-proxy/x86/block-proxy-x86.tar" target=_blank>block-proxy-x86.tar</a>
-2. 导入：`docker load < block-proxy.tar`
-3. 启动：
+1. 拉取镜像（自动匹配架构）：
+
+```
+docker pull crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest
+```
+
+2. 启动：
 
 ```
 docker run --init -d --restart=unless-stopped \
@@ -57,7 +59,7 @@ docker run --init -d --restart=unless-stopped \
            --cpus="5" \
            --memory 400m \
            -v "$(pwd)/":/app/config \
-           --name block-proxy block-proxy
+           --name block-proxy crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest
 ```
 
 其中挂载目录 `$(pws)/` 下的 `rule.js` 是需要额外挂载的配置文件，可留空。
@@ -72,7 +74,7 @@ docker run --init -d --restart=unless-stopped \
 docker run --init -d --restart=unless-stopped --user=root \
            -v "$(pwd)/":/app/config \
            -e TZ=Asia/Shanghai -p 8001:8001 -p 8002:8002 -p 8003:8003 \
-           --name block-proxy block-proxy
+           --name block-proxy crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest
 ```
 
 ### 2）端口配置
@@ -101,11 +103,16 @@ docker run --init -d --restart=unless-stopped --user=root \
 - 生产启动：`npm run start`，生产环境使用
 - 只启动代理：`npm run proxy`，不启动配置后台，只启动代理
 - 后台构建：`npm run build`
-- 本地打包：`npm run docker:build`
-- 打arm包：`npm run docker:build_arm`
-- 导出tar包到本地：`docker save -o block-proxy.tar block-proxy`
-- 安装包到openwrt：`docker load < block-proxy.tar`
+- 本地构建 amd64：`npm run docker:build`
+- 本地构建 arm64：`npm run docker:build:arm`
+- 推送 amd64 + arm64 双架构到 ACR：`npm run docker:push`
+- 仅推送 amd64：`npm run docker:push:amd64`
+- 仅推送 arm64：`npm run docker:push:arm64`
 
+> 首次使用 `docker:push` 前需要先 ACR 登录：
+> ```
+> docker login --username=hi50078584@aliyun.com crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com
+> ```
 > 要是打包 docker 空间不够就执行 `docker system prune -a --volumes`
 
 拷贝 tar 到 openwrt 后启动容器：参照上文 Docker部署。
