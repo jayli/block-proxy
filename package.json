@@ -17,7 +17,7 @@
   },
   "scripts": {
     "cp": "echo '----- program start -----'",
-    "rm_bkconfig": "rm ./config_backup.json",
+    "rm_bkconfig": "rm -f ./config_backup.json",
     "craco": "craco start",
     "dev": "BLOCK_PROXY_DEV=1 npm run express",
     "start": "npm run express",
