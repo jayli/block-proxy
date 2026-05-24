@@ -13,7 +13,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 - `npm run socks5` – Start SOCKS5 server only
 - `npm run cp` – Print start banner (used internally by other scripts)
 
-### Code Analysis
+### Testing
+- `npm run test:proxy` – 一键代理连通性/性能/吞吐量测试（需先启动代理服务）
 - `npm test` – Run React tests (currently limited, based on CRA defaults)
 
 ### Utilities
@@ -22,8 +23,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 ### Build & Deployment
 - `npm run build` – Build React frontend
 - `npm run docker:build` – Build Docker image for current architecture
-- `npm run docker:build_arm` – Build ARM64 Docker image
-- `npm test` – Run React tests
+- `npm run docker:build:arm` – Build ARM64 Docker image
 - `npm run eject` – Eject from Create React App (irreversible)
 
 ### Global CLI
@@ -65,14 +65,19 @@ Block-Proxy is a MITM-based proxy filtering tool designed for parental control a
    - `App.js` – Admin interface for managing blocking rules
    - Built with Create React App, configured via CRACO
 
-5. **CLI Interface** (`/bin/`)
+5. **Test Suite** (`/test/`)
+   - `run.js` – 一键测试入口，自动检测代理状态、启动 Mock Server、运行测试、输出报告
+   - `proxy-tests.js` – 测试逻辑：HTTP 代理和 SOCKS5 连通性/延迟/并发/稳定性/吞吐量，以及外部站点验证
+   - `lib/mock-server.js` – 本地 Mock HTTP 服务器，提供可控的响应体大小和延迟
+
+6. **CLI Interface** (`/bin/`)
    - `start.js` – Global CLI entry point with auto-restart capabilities (max 10000 restarts) and config cleanup on exit
 
-6. **AnyProxy Fork** (`/hack-of-anyproxy/`)
+7. **AnyProxy Fork** (`/hack-of-anyproxy/`)
    - Modified AnyProxy request handler with custom TLS handling, IPv6 normalization, and UA-based filtering
    - Patched into `@bachi/anyproxy` package at runtime
 
-7. **Configuration** (`config.json`)
+8. **Configuration** (`config.json`)
    - Runtime configuration: ports, blocked hosts, authentication, device list
    - Auto-saved from admin interface
    - Key fields: `block_hosts[]`, `proxy_port`, `socks5_port`, `enable_express`, `enable_socks5`, `devices[]`, `auth_username`, `auth_password`
@@ -92,8 +97,9 @@ Block-Proxy is a MITM-based proxy filtering tool designed for parental control a
 ### Request Flow
 ```
 Client → HTTP Proxy (8001) → AnyProxy → MITM Rules → Target Server
-       → SOCKS5 (8002) → TLS → AnyProxy → MITM Rules → Target Server
+       → SOCKS5 (8002) → TLS → SOCKS5 Server → HTTP Proxy (8001) → Target Server
 ```
+SOCKS5 先做 TLS 握手和认证，然后通过 CONNECT 命令建立隧道，将 TCP 流量转发至下游 HTTP 代理。
 
 ## Key Patterns
 
@@ -158,6 +164,7 @@ Client → HTTP Proxy (8001) → AnyProxy → MITM Rules → Target Server
 - `@craco/craco` – CRA configuration override
 
 ## Important Notes
+- **Testing**: 通过代理请求 `127.0.0.1` 会被 AnyProxy 拦截返回管理页面。Mock Server 需绑定 `0.0.0.0` 并通过 LAN IP 访问
 - SOCKS5 proxy does not support MAC address targeting (only HTTP proxy does)
 - Clients must install AnyProxy certificate for HTTPS MITM inspection
 - Service needs network scanning permissions (best deployed on OpenWRT gateway, uses `arp -a`)
