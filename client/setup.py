@@ -2,7 +2,7 @@ from setuptools import setup
 
 APP = ["main.py"]
 DATA_FILES = [
-    ("resources", ["resources/icon.png", "resources/icon_off.png"]),
+    ("resources", ["resources/icon.png", "resources/icon_off.png", "resources/xray"]),
 ]
 OPTIONS = {
     "argv_emulation": False,

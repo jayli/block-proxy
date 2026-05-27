@@ -7,7 +7,15 @@ import shutil
 class XrayManager:
     def __init__(self, xray_path=None, config_dir=None):
         if xray_path is None:
-            xray_path = shutil.which("xray") or "/usr/local/bin/xray"
+            bundle_path = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "resources",
+                "xray",
+            )
+            if os.path.exists(bundle_path):
+                xray_path = bundle_path
+            else:
+                xray_path = shutil.which("xray") or "/usr/local/bin/xray"
         if config_dir is None:
             config_dir = os.path.expanduser(
                 "~/Library/Application Support/BlockProxyClient"
