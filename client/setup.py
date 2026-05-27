@@ -2,7 +2,6 @@ from setuptools import setup
 
 APP = ["main.py"]
 DATA_FILES = [
-    ("resources", ["resources/xray"]),
     ("icons", [
         "icons/socks_on_G.png",
         "icons/socks_on_M.png",

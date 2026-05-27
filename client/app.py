@@ -69,13 +69,14 @@ class BlockProxyClient(rumps.App):
             self.icon = icon_path
         self.title = None
 
-    def _icon_dir(self):
-        app_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(app_dir, "icons")
+    def _bundle_resource_dir(self):
+        if getattr(sys, "frozen", False):
+            from Foundation import NSBundle
+            return NSBundle.mainBundle().resourcePath()
+        return os.path.dirname(os.path.abspath(__file__))
 
-    def _resource_dir(self):
-        app_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(app_dir, "resources")
+    def _icon_dir(self):
+        return os.path.join(self._bundle_resource_dir(), "icons")
 
     def toggle_proxy(self, sender):
         if self.connected:
@@ -88,15 +89,30 @@ class BlockProxyClient(rumps.App):
             rumps.alert("请先配置节点信息")
             return
 
-        self.xray.start(self.config.data)
-        if self.config.data["mode"] == "global":
-            self.sys_proxy.enable(
-                socks_port=self.config.data["local"]["socks_port"],
-                http_port=self.config.data["local"]["http_port"],
-            )
-        self.connected = True
-        self.toggle_item.title = "关闭代理"
-        self._update_icon()
+        def _start():
+            try:
+                self.xray.start(self.config.data)
+            except OSError as e:
+                if e.errno == 48:
+                    rumps.notification(
+                        "BlockProxyClient", "启动失败",
+                        f"端口被占用，请检查端口是否已被其他程序使用",
+                    )
+                else:
+                    rumps.notification(
+                        "BlockProxyClient", "启动失败", str(e),
+                    )
+                return
+            if self.config.data["mode"] == "global":
+                self.sys_proxy.enable(
+                    socks_port=self.config.data["local"]["socks_port"],
+                    http_port=self.config.data["local"]["http_port"],
+                )
+            self.connected = True
+            self.toggle_item.title = "关闭代理"
+            self._update_icon()
+
+        threading.Thread(target=_start, daemon=True).start()
 
     def _disconnect(self):
         self.sys_proxy.disable()

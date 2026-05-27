@@ -21,9 +21,10 @@ echo "Downloading xray-core ${XRAY_VERSION} for ${ARCH}..."
 curl -L -o /tmp/xray.zip "$URL"
 
 echo "Extracting..."
-unzip -o /tmp/xray.zip xray -d "$DEST_DIR"
-chmod +x "$DEST_DIR/xray"
+unzip -o /tmp/xray.zip xray -d /tmp
+mv /tmp/xray "$DEST_DIR/core"
+chmod +x "$DEST_DIR/core"
 rm /tmp/xray.zip
 
-echo "Done: $DEST_DIR/xray"
-"$DEST_DIR/xray" version
+echo "Done: $DEST_DIR/core"
+"$DEST_DIR/core" version
