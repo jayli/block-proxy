@@ -23,14 +23,17 @@ class BlockProxyClient(rumps.App):
         self._update_icon()
         self._start_health_check()
 
+    def _pad(self, text):
+        return text.ljust(len(text) + 6, " ")
+
     def _build_menu(self):
-        self.toggle_item = rumps.MenuItem("开启代理", callback=self.toggle_proxy)
-        self.config_item = rumps.MenuItem("节点配置...", callback=self.open_config)
+        self.toggle_item = rumps.MenuItem(self._pad("开启代理"), callback=self.toggle_proxy)
+        self.config_item = rumps.MenuItem(self._pad("节点配置..."), callback=self.open_config)
 
-        self.global_item = rumps.MenuItem("全局代理", callback=self.set_global_mode)
-        self.manual_item = rumps.MenuItem("手动模式", callback=self.set_manual_mode)
+        self.global_item = rumps.MenuItem(self._pad("全局代理"), callback=self.set_global_mode)
+        self.manual_item = rumps.MenuItem(self._pad("手动模式"), callback=self.set_manual_mode)
 
-        self.quit_item = rumps.MenuItem("退出", callback=self.quit_app)
+        self.quit_item = rumps.MenuItem(self._pad("退出"), callback=self.quit_app)
 
         self.menu = [
             self.toggle_item,
@@ -77,14 +80,14 @@ class BlockProxyClient(rumps.App):
                 http_port=self.config.data["local"]["http_port"],
             )
         self.connected = True
-        self.toggle_item.title = "关闭代理"
+        self.toggle_item.title = self._pad("关闭代理")
         self._update_icon()
 
     def _disconnect(self):
         self.sys_proxy.disable()
         self.xray.stop()
         self.connected = False
-        self.toggle_item.title = "开启代理"
+        self.toggle_item.title = self._pad("开启代理")
         self._update_icon()
 
     def open_config(self, sender):
