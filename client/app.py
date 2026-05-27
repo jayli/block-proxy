@@ -107,10 +107,15 @@ class SocksClient(rumps.App):
                     )
                 return
             if self.config.data["mode"] == "global":
-                self.sys_proxy.enable(
-                    socks_port=self.config.data["local"]["socks_port"],
-                    http_port=self.config.data["local"]["http_port"],
-                )
+                try:
+                    self.sys_proxy.enable(
+                        socks_port=self.config.data["local"]["socks_port"],
+                        http_port=self.config.data["local"]["http_port"],
+                    )
+                except Exception as e:
+                    rumps.notification(
+                        "SocksClient", "系统代理设置失败", str(e),
+                    )
 
             def _update_ui():
                 self.connected = True

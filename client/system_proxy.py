@@ -1,6 +1,16 @@
+import logging
 import subprocess
 import atexit
 import signal
+
+logger = logging.getLogger("system_proxy")
+
+
+def _run_networksetup(args):
+    result = subprocess.run(args, capture_output=True, text=True)
+    if result.returncode != 0:
+        logger.warning("networksetup failed: %s -> %s", " ".join(args), result.stderr.strip())
+    return result.returncode == 0
 
 
 class SystemProxy:
@@ -38,46 +48,54 @@ class SystemProxy:
     def enable(self, socks_port, http_port):
         self._interfaces = self._get_active_interfaces()
         for iface in self._interfaces:
-            subprocess.run(
-                ["networksetup", "-setsocksfirewallproxy", iface, "127.0.0.1", str(socks_port)],
-                check=True,
+            _run_networksetup(
+                ["networksetup", "-setsocksfirewallproxy", iface, "127.0.0.1", str(socks_port)]
             )
-            subprocess.run(
-                ["networksetup", "-setsocksfirewallproxystate", iface, "on"],
-                check=True,
+            _run_networksetup(
+                ["networksetup", "-setsocksfirewallproxystate", iface, "on"]
             )
-            subprocess.run(
-                ["networksetup", "-setwebproxy", iface, "127.0.0.1", str(http_port)],
-                check=True,
+            _run_networksetup(
+                ["networksetup", "-setwebproxy", iface, "127.0.0.1", str(http_port)]
             )
-            subprocess.run(
-                ["networksetup", "-setwebproxystate", iface, "on"],
-                check=True,
+            _run_networksetup(
+                ["networksetup", "-setwebproxystate", iface, "on"]
             )
-            subprocess.run(
-                ["networksetup", "-setsecurewebproxy", iface, "127.0.0.1", str(http_port)],
-                check=True,
+            _run_networksetup(
+                ["networksetup", "-setsecurewebproxy", iface, "127.0.0.1", str(http_port)]
             )
-            subprocess.run(
-                ["networksetup", "-setsecurewebproxystate", iface, "on"],
-                check=True,
+            _run_networksetup(
+                ["networksetup", "-setsecurewebproxystate", iface, "on"]
             )
         self._enabled = True
+        self._verify(socks_port, http_port)
+
+    def _verify(self, socks_port, http_port):
+        checks = [
+            ("-getsocksfirewallproxy", "-setsocksfirewallproxystate"),
+            ("-getwebproxy", "-setwebproxystate"),
+            ("-getsecurewebproxy", "-setsecurewebproxystate"),
+        ]
+        for iface in self._interfaces:
+            for get_cmd, set_cmd in checks:
+                result = subprocess.run(
+                    ["networksetup", get_cmd, iface],
+                    capture_output=True, text=True,
+                )
+                if "Enabled: No" in result.stdout:
+                    logger.warning("proxy not enabled after setting: %s %s, retrying", get_cmd, iface)
+                    _run_networksetup(["networksetup", set_cmd, iface, "on"])
 
     def disable(self):
         interfaces = self._interfaces or self._get_active_interfaces()
         for iface in interfaces:
-            subprocess.run(
-                ["networksetup", "-setsocksfirewallproxystate", iface, "off"],
-                check=True,
+            _run_networksetup(
+                ["networksetup", "-setsocksfirewallproxystate", iface, "off"]
             )
-            subprocess.run(
-                ["networksetup", "-setwebproxystate", iface, "off"],
-                check=True,
+            _run_networksetup(
+                ["networksetup", "-setwebproxystate", iface, "off"]
             )
-            subprocess.run(
-                ["networksetup", "-setsecurewebproxystate", iface, "off"],
-                check=True,
+            _run_networksetup(
+                ["networksetup", "-setsecurewebproxystate", iface, "off"]
             )
         self._enabled = False
         self._interfaces = []
