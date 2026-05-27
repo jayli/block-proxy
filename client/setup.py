@@ -10,11 +10,11 @@ DATA_FILES = [
 ]
 OPTIONS = {
     "argv_emulation": False,
-    "iconfile": "icons/socks_app_icon.png",
+    "iconfile": "icons/app_example.png",
     "plist": {
         "LSUIElement": True,
-        "CFBundleName": "BlockProxyClient",
-        "CFBundleIdentifier": "com.jaylli.blockproxyclient",
+        "CFBundleName": "SocksClient",
+        "CFBundleIdentifier": "com.jaylli.socksclient",
         "CFBundleVersion": "1.0.0",
         "CFBundleShortVersionString": "1.0.0",
     },
@@ -22,7 +22,7 @@ OPTIONS = {
 }
 
 setup(
-    name="BlockProxyClient",
+    name="SocksClient",
     app=APP,
     data_files=DATA_FILES,
     options={"py2app": OPTIONS},

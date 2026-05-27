@@ -3,19 +3,20 @@ import sys
 import subprocess
 import threading
 import rumps
+from PyObjCTools import AppHelper
 from config import Config
-from xray_manager import XrayManager
+from proxy_core import ProxyCore
 from system_proxy import SystemProxy
 
 
-class BlockProxyClient(rumps.App):
+class SocksClient(rumps.App):
     def __init__(self):
-        super().__init__("BlockProxyClient", quit_button=None)
+        super().__init__("SocksClient", quit_button=None)
         self.template = True
 
         self.config = Config()
         self.config.load()
-        self.xray = XrayManager()
+        self.proxy = ProxyCore()
         self.sys_proxy = SystemProxy()
         self.connected = False
 
@@ -91,16 +92,16 @@ class BlockProxyClient(rumps.App):
 
         def _start():
             try:
-                self.xray.start(self.config.data)
+                self.proxy.start(self.config.data)
             except OSError as e:
                 if e.errno == 48:
                     rumps.notification(
-                        "BlockProxyClient", "启动失败",
+                        "SocksClient", "启动失败",
                         f"端口被占用，请检查端口是否已被其他程序使用",
                     )
                 else:
                     rumps.notification(
-                        "BlockProxyClient", "启动失败", str(e),
+                        "SocksClient", "启动失败", str(e),
                     )
                 return
             if self.config.data["mode"] == "global":
@@ -108,15 +109,19 @@ class BlockProxyClient(rumps.App):
                     socks_port=self.config.data["local"]["socks_port"],
                     http_port=self.config.data["local"]["http_port"],
                 )
-            self.connected = True
-            self.toggle_item.title = "关闭代理"
-            self._update_icon()
+
+            def _update_ui():
+                self.connected = True
+                self.toggle_item.title = "关闭代理"
+                self._update_icon()
+
+            AppHelper.callAfter(_update_ui)
 
         threading.Thread(target=_start, daemon=True).start()
 
     def _disconnect(self):
         self.sys_proxy.disable()
-        self.xray.stop()
+        self.proxy.stop()
         self.connected = False
         self.toggle_item.title = "启动代理"
         self._update_icon()
@@ -179,7 +184,7 @@ class BlockProxyClient(rumps.App):
             from Foundation import NSURL, NSRange
 
             alert = NSAlert.alloc().init()
-            alert.setMessageText_("关于 BlockProxyClient")
+            alert.setMessageText_("关于 SocksClient")
             alert.addButtonWithTitle_("好")
 
             url = "https://github.com/jayli/block-proxy"
@@ -205,7 +210,7 @@ class BlockProxyClient(rumps.App):
             alert.runModal()
         except Exception:
             rumps.alert(
-                title="关于 BlockProxyClient",
+                title="关于 SocksClient",
                 message=(
                     "项目：block-proxy\n"
                     "作者：lijing00333\n"
@@ -216,7 +221,8 @@ class BlockProxyClient(rumps.App):
 
     def quit_app(self, sender):
         if self.connected:
-            self._disconnect()
+            self.sys_proxy.disable()
+            threading.Thread(target=self.proxy.stop, daemon=True).start()
         rumps.quit_application()
 
     def _start_health_check(self):
@@ -224,12 +230,12 @@ class BlockProxyClient(rumps.App):
             while True:
                 import time
                 time.sleep(5)
-                if self.connected and not self.xray.is_running():
+                if self.connected and not self.proxy.is_running():
                     self._disconnect()
                     rumps.notification(
-                        "BlockProxyClient",
+                        "SocksClient",
                         "代理已断开",
-                        "xray-core 进程意外退出",
+                        "代理进程意外退出",
                     )
 
         t = threading.Thread(target=check, daemon=True)

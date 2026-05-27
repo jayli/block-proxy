@@ -1,8 +1,8 @@
-from app import BlockProxyClient
+from app import SocksClient
 
 
 def main():
-    client = BlockProxyClient()
+    client = SocksClient()
     client.run()
 
 
