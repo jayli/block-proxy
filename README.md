@@ -14,8 +14,9 @@ Socks5/http 代理工具，支持 MITM 和二次开发
 - HTTP 代理 + Socks5 over TLS 代理
 - 域名拦截、url 正则、Mac 地址拦截
 - 设定日期和时间段、顺便过滤广告
+- 提供服务端和客户端
 
-### 1）使用方法
+### 1）服务端使用方法
 
 #### ① 方式一：快速部署
 
@@ -77,12 +78,12 @@ docker run --init -d --restart=unless-stopped --user=root \
            --name block-proxy crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest
 ```
 
-### 2）端口配置
+### 2）服务侧端口配置
 
 1. 服务端配置：配置面板 <http://server-ip:8004>，关闭、启用配置面板：<http://server-ip:8001>
 2. 客户端配置：http 代理直接在 iphone wifi 详情里手动配置，socks5 代理只支持 socks5 over TLS，用小火箭配置。配置信息参照[配置面板](http://localhost:8004)
 
-### 3）开发和调试
+### 3）服务侧代码的开发和调试
 
 代码 clone 下来后执行`pnpm i`，执行 `npm run dev` 运行本地服务。默认开启 5 个端口：
 
@@ -95,7 +96,7 @@ docker run --init -d --restart=unless-stopped --user=root \
 |8004  |后台配置页端口  | 可禁用 |
 
 
-### 4）Docker 构建说明
+### 4）Block-Proxy 的 Docker 构建说明
 
 准备工作，构建 docker 包，先启动本地 Docker：
 
@@ -117,7 +118,7 @@ docker run --init -d --restart=unless-stopped --user=root \
 
 拷贝 tar 到 openwrt 后启动容器：参照上文 Docker部署。
 
-### 5）配置说明
+### 5）客户端配置说明
 
 #### ① 代理端口
 
@@ -158,7 +159,7 @@ ip6tables -I forwarding_rule -m mac --mac-source D2:9E:8D:1B:F1:4E -j REJECT
 然后重启防火墙
 
 
-### 6）更多信息
+### 6）关于 MITM
 
 #### 应用条件：
 
@@ -200,6 +201,10 @@ done！
 >2. 给 openwrt lan 口再绑定一个 IP，ios 设备在局域网内绑定这个 IP
 >
 ><img width="300" alt="image" src="https://github.com/user-attachments/assets/0f46d6b4-00b1-44aa-9be7-fa23a09bb199" />
+
+### 7）客户端软件
+
+提供了客户端桌面端连接代理工具 SocksClient.app，支持 MacOS（M系列），直接运行 `client/dist/SocksClient.app`。
 
 ### License
 
