@@ -18,6 +18,8 @@ def show_config_window(config_path):
         config["local"]["socks_port"] = int(entries["socks_port"].get())
         config["local"]["http_port"] = int(entries["http_port"].get())
         config["local"]["udp"] = udp_var.get()
+        config["local"]["proxy_private"] = proxy_private_var.get()
+        config["autostart"] = autostart_var.get()
 
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
@@ -26,7 +28,7 @@ def show_config_window(config_path):
     root = tk.Tk()
     root.title("Socks 节点配置")
     root.resizable(False, False)
-    w, h = 400, 380
+    w, h = 400, 460
     x = (root.winfo_screenwidth() - w) // 2
     y = (root.winfo_screenheight() - h) // 2
     root.geometry(f"{w}x{h}+{x}+{y}")
@@ -74,6 +76,25 @@ def show_config_window(config_path):
     udp_var = tk.BooleanVar(value=config["local"]["udp"])
     ttk.Label(frame, text="启用 UDP:").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
     ttk.Checkbutton(frame, variable=udp_var).grid(
+        row=row, column=1, sticky="w", pady=4
+    )
+    row += 1
+
+    proxy_private_var = tk.BooleanVar(value=config["local"].get("proxy_private", False))
+    ttk.Label(frame, text="代理私有地址段:").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
+    ttk.Checkbutton(frame, variable=proxy_private_var).grid(
+        row=row, column=1, sticky="w", pady=4
+    )
+    row += 1
+
+    ttk.Separator(frame, orient="horizontal").grid(
+        row=row, column=0, columnspan=2, sticky="ew", pady=10
+    )
+    row += 1
+
+    autostart_var = tk.BooleanVar(value=config.get("autostart", False))
+    ttk.Label(frame, text="开机启动:").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
+    ttk.Checkbutton(frame, variable=autostart_var).grid(
         row=row, column=1, sticky="w", pady=4
     )
     row += 1

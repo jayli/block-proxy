@@ -29,7 +29,24 @@ class XrayManager:
         server = user_config["server"]
         local = user_config["local"]
 
+        routing_rules = []
+        if not local.get("proxy_private", False):
+            routing_rules.append({
+                "type": "field",
+                "ip": [
+                    "127.0.0.0/8",
+                    "10.0.0.0/8",
+                    "172.16.0.0/12",
+                    "192.168.0.0/16",
+                    "::1/128",
+                    "fc00::/7",
+                    "fe80::/10",
+                ],
+                "outboundTag": "direct",
+            })
+
         xray_config = {
+            "routing": {"rules": routing_rules},
             "inbounds": [
                 {
                     "tag": "socks-in",
@@ -45,7 +62,10 @@ class XrayManager:
                     "protocol": "http",
                 },
             ],
-            "outbounds": [self._build_outbound(server)],
+            "outbounds": [
+                self._build_outbound(server),
+                {"tag": "direct", "protocol": "freedom"},
+            ],
         }
 
         os.makedirs(self.config_dir, exist_ok=True)
@@ -56,6 +76,7 @@ class XrayManager:
 
     def _build_outbound(self, server):
         outbound = {
+            "tag": "proxy",
             "protocol": "socks",
             "settings": {
                 "servers": [self._build_server(server)],

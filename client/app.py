@@ -30,6 +30,7 @@ class BlockProxyClient(rumps.App):
         self.global_item = rumps.MenuItem("全局代理(设置系统代理)", callback=self.set_global_mode)
         self.manual_item = rumps.MenuItem("手动模式(关闭系统代理)", callback=self.set_manual_mode)
 
+        self.about_item = rumps.MenuItem("关于", callback=self.show_about)
         self.quit_item = rumps.MenuItem("退出", callback=self.quit_app)
 
         self.menu = [
@@ -38,6 +39,8 @@ class BlockProxyClient(rumps.App):
             None,
             self.global_item,
             self.manual_item,
+            None,
+            self.about_item,
             None,
             self.quit_item,
         ]
@@ -124,7 +127,11 @@ class BlockProxyClient(rumps.App):
                 if result.returncode != 0:
                     break
                 time.sleep(0.5)
+            old_data = self.config.data.copy()
             self.config.load()
+            if self.connected and self.config.data != old_data:
+                self._disconnect()
+                self._connect()
 
         threading.Thread(target=_reload_after_window, daemon=True).start()
 
@@ -146,6 +153,50 @@ class BlockProxyClient(rumps.App):
         self._update_icon()
         if self.connected:
             self.sys_proxy.disable()
+
+    def show_about(self, sender):
+        try:
+            from AppKit import (
+                NSAlert, NSTextField, NSMutableAttributedString,
+                NSAttributedString, NSFont, NSColor, NSMakeRect,
+            )
+            from Foundation import NSURL, NSRange
+
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_("关于 BlockProxyClient")
+            alert.addButtonWithTitle_("好")
+
+            url = "https://github.com/jayli/block-proxy"
+            text = f"项目：block-proxy\n作者：lijing00333\n地址：{url}\n版本：v0.1"
+
+            attr_str = NSMutableAttributedString.alloc().initWithString_(text)
+            full_range = NSRange(0, len(text))
+            font = NSFont.systemFontOfSize_(13)
+            attr_str.addAttribute_value_range_("NSFont", font, full_range)
+
+            link_start = text.index(url)
+            link_range = NSRange(link_start, len(url))
+            attr_str.addAttribute_value_range_("NSLink", NSURL.URLWithString_(url), link_range)
+            attr_str.addAttribute_value_range_("NSColor", NSColor.linkColor(), link_range)
+
+            text_field = NSTextField.wrappingLabelWithString_("")
+            text_field.setAttributedStringValue_(attr_str)
+            text_field.setAllowsEditingTextAttributes_(True)
+            text_field.setSelectable_(True)
+            text_field.setFrame_(NSMakeRect(0, 0, 300, 80))
+
+            alert.setAccessoryView_(text_field)
+            alert.runModal()
+        except Exception:
+            rumps.alert(
+                title="关于 BlockProxyClient",
+                message=(
+                    "项目：block-proxy\n"
+                    "作者：lijing00333\n"
+                    "地址：https://github.com/jayli/block-proxy\n"
+                    "版本：v0.1"
+                ),
+            )
 
     def quit_app(self, sender):
         if self.connected:
