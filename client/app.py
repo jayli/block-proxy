@@ -11,6 +11,7 @@ from system_proxy import SystemProxy
 class BlockProxyClient(rumps.App):
     def __init__(self):
         super().__init__("BlockProxyClient", quit_button=None)
+        self.template = True
 
         self.config = Config()
         self.config.load()
