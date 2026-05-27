@@ -57,10 +57,18 @@ class BlockProxyClient(rumps.App):
         self.manual_item.state = 1 if not is_global else 0
 
     def _update_icon(self):
-        icon_name = "icon.png" if self.connected else "icon_off.png"
-        icon_path = os.path.join(self._resource_dir(), icon_name)
+        if self.connected:
+            icon_name = "socks_on_G.png" if self.config.data["mode"] == "global" else "socks_on_M.png"
+        else:
+            icon_name = "christmas-sock_light.png"
+        icon_path = os.path.join(self._icon_dir(), icon_name)
         if os.path.exists(icon_path):
             self.icon = icon_path
+        self.title = None
+
+    def _icon_dir(self):
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.join(app_dir, "icons")
 
     def _resource_dir(self):
         app_dir = os.path.dirname(os.path.abspath(__file__))
@@ -124,6 +132,7 @@ class BlockProxyClient(rumps.App):
         self.config.data["mode"] = "global"
         self.config.save()
         self._update_mode_menu()
+        self._update_icon()
         if self.connected:
             self.sys_proxy.enable(
                 socks_port=self.config.data["local"]["socks_port"],
@@ -134,6 +143,7 @@ class BlockProxyClient(rumps.App):
         self.config.data["mode"] = "manual"
         self.config.save()
         self._update_mode_menu()
+        self._update_icon()
         if self.connected:
             self.sys_proxy.disable()
 

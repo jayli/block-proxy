@@ -2,11 +2,16 @@ from setuptools import setup
 
 APP = ["main.py"]
 DATA_FILES = [
-    ("resources", ["resources/icon.png", "resources/icon_off.png", "resources/xray"]),
+    ("resources", ["resources/xray"]),
+    ("icons", [
+        "icons/socks_on_G.png",
+        "icons/socks_on_M.png",
+        "icons/christmas-sock_light.png",
+    ]),
 ]
 OPTIONS = {
     "argv_emulation": False,
-    "iconfile": "resources/icon.png",
+    "iconfile": "icons/socks_app_icon.png",
     "plist": {
         "LSUIElement": True,
         "CFBundleName": "BlockProxyClient",
