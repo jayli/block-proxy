@@ -55,7 +55,8 @@ def show_config_window(config_path):
     row = len(fields)
 
     tls_var = tk.BooleanVar(value=config["server"]["tls"])
-    ttk.Checkbutton(frame, text="启用 TLS", variable=tls_var).grid(
+    ttk.Label(frame, text="启用 TLS:").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
+    ttk.Checkbutton(frame, variable=tls_var).grid(
         row=row, column=1, sticky="w", pady=4
     )
     row += 1
@@ -71,7 +72,8 @@ def show_config_window(config_path):
     row += 1
 
     udp_var = tk.BooleanVar(value=config["local"]["udp"])
-    ttk.Checkbutton(frame, text="启用 UDP", variable=udp_var).grid(
+    ttk.Label(frame, text="启用 UDP:").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
+    ttk.Checkbutton(frame, variable=udp_var).grid(
         row=row, column=1, sticky="w", pady=4
     )
     row += 1
