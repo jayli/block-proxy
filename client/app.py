@@ -4,9 +4,17 @@ import subprocess
 import threading
 import rumps
 from PyObjCTools import AppHelper
+from Foundation import NSObject
 from config import Config
 from proxy_core import ProxyCore
 from system_proxy import SystemProxy
+
+
+class _MenuOpenDelegate(NSObject):
+    def menuWillOpen_(self, menu):
+        cb = getattr(self, "_on_open", None)
+        if cb:
+            cb()
 
 
 class SocksClient(rumps.App):
@@ -21,6 +29,7 @@ class SocksClient(rumps.App):
         self.connected = False
 
         self._build_menu()
+        self._setup_menu_delegate()
         self._update_icon()
         self._start_health_check()
 
@@ -28,8 +37,8 @@ class SocksClient(rumps.App):
         self.toggle_item = rumps.MenuItem("启动代理", callback=self.toggle_proxy)
         self.config_item = rumps.MenuItem("Socks 节点配置...", callback=self.open_config)
 
-        self.global_item = rumps.MenuItem("全局代理(设置系统代理)", callback=self.set_global_mode)
-        self.manual_item = rumps.MenuItem("手动模式(关闭系统代理)", callback=self.set_manual_mode)
+        self.global_item = rumps.MenuItem("全局代理（设置系统代理）", callback=self.set_global_mode)
+        self.manual_item = rumps.MenuItem("手动模式（关闭系统代理）", callback=self.set_manual_mode)
 
         self.about_item = rumps.MenuItem("关于", callback=self.show_about)
         self.quit_item = rumps.MenuItem("退出", callback=self.quit_app)
@@ -239,6 +248,34 @@ class SocksClient(rumps.App):
             self.sys_proxy.disable()
             threading.Thread(target=self.proxy.stop, daemon=True).start()
         rumps.quit_application()
+
+    def _setup_menu_delegate(self):
+        try:
+            delegate = _MenuOpenDelegate.alloc().init()
+            delegate._on_open = self._on_menu_open
+            self._menu._menu.setDelegate_(delegate)
+            self._menu_delegate = delegate
+        except Exception:
+            pass
+
+    def _on_menu_open(self):
+        if not self.connected:
+            return
+
+        def _check():
+            latency = self.proxy.measure_latency()
+
+            def _update():
+                if not self.connected:
+                    return
+                if latency is not None:
+                    self.toggle_item.title = f"关闭代理（{latency}ms）"
+                else:
+                    self.toggle_item.title = "关闭代理（超时）"
+
+            AppHelper.callAfter(_update)
+
+        threading.Thread(target=_check, daemon=True).start()
 
     def _start_health_check(self):
         def check():

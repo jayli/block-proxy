@@ -204,6 +204,62 @@ class ProxyCore:
     def is_running(self):
         return self._running and self._thread is not None and self._thread.is_alive()
 
+    async def _measure_latency(self):
+        import time
+        start = time.monotonic()
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(
+                    self._server_config["address"],
+                    self._server_config["port"],
+                    ssl=self._ssl_ctx if self._server_config["tls"] else None,
+                    server_hostname=self._server_config["address"] if self._server_config["tls"] else None,
+                ),
+                timeout=5,
+            )
+            username = self._server_config.get("username", "")
+            password = self._server_config.get("password", "")
+            if username and password:
+                writer.write(b"\x05\x01\x02")
+            else:
+                writer.write(b"\x05\x01\x00")
+            await writer.drain()
+            resp = await asyncio.wait_for(reader.readexactly(2), timeout=5)
+            if resp[0] != 0x05:
+                writer.close()
+                return None
+            if resp[1] == 0x02 and username and password:
+                uname = username.encode("utf-8")
+                passwd = password.encode("utf-8")
+                writer.write(
+                    b"\x01"
+                    + struct.pack("B", len(uname)) + uname
+                    + struct.pack("B", len(passwd)) + passwd
+                )
+                await writer.drain()
+                auth_resp = await asyncio.wait_for(reader.readexactly(2), timeout=5)
+                if auth_resp[1] != 0x00:
+                    writer.close()
+                    return None
+            elapsed = time.monotonic() - start
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except OSError:
+                pass
+            return int(elapsed * 1000)
+        except Exception:
+            return None
+
+    def measure_latency(self):
+        if not self._running or not self._loop or not self._loop.is_running():
+            return None
+        future = asyncio.run_coroutine_threadsafe(self._measure_latency(), self._loop)
+        try:
+            return future.result(timeout=6)
+        except Exception:
+            return None
+
     def _run_loop(self, started_event):
         asyncio.set_event_loop(self._loop)
         try:
