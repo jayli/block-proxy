@@ -24,7 +24,7 @@ def show_config_window(config_path):
         root.destroy()
 
     root = tk.Tk()
-    root.title("节点配置")
+    root.title("Socks over tls 节点配置")
     root.resizable(False, False)
     w, h = 400, 380
     x = (root.winfo_screenwidth() - w) // 2
