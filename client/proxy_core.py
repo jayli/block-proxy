@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import ipaddress
 import logging
 import ssl
@@ -18,6 +19,7 @@ PRIVATE_NETWORKS = [
 ]
 
 
+@functools.lru_cache(maxsize=256)
 def is_private_ip(host):
     try:
         addr = ipaddress.ip_address(host)
@@ -26,15 +28,20 @@ def is_private_ip(host):
         return False
 
 
+RELAY_IDLE_TIMEOUT = 300
+
+
 async def relay(reader, writer):
     try:
         while True:
-            data = await reader.read(65536)
+            data = await asyncio.wait_for(reader.read(65536), timeout=RELAY_IDLE_TIMEOUT)
             if not data:
                 break
             writer.write(data)
             if writer.transport.get_write_buffer_size() > 65536:
                 await writer.drain()
+    except asyncio.TimeoutError:
+        pass
     except (ConnectionResetError, BrokenPipeError, OSError):
         pass
     finally:

@@ -2,6 +2,7 @@ import logging
 import subprocess
 import atexit
 import signal
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("system_proxy")
 
@@ -47,25 +48,18 @@ class SystemProxy:
 
     def enable(self, socks_port, http_port):
         self._interfaces = self._get_active_interfaces()
+        tasks = []
         for iface in self._interfaces:
-            _run_networksetup(
-                ["networksetup", "-setsocksfirewallproxy", iface, "127.0.0.1", str(socks_port)]
-            )
-            _run_networksetup(
-                ["networksetup", "-setsocksfirewallproxystate", iface, "on"]
-            )
-            _run_networksetup(
-                ["networksetup", "-setwebproxy", iface, "127.0.0.1", str(http_port)]
-            )
-            _run_networksetup(
-                ["networksetup", "-setwebproxystate", iface, "on"]
-            )
-            _run_networksetup(
-                ["networksetup", "-setsecurewebproxy", iface, "127.0.0.1", str(http_port)]
-            )
-            _run_networksetup(
-                ["networksetup", "-setsecurewebproxystate", iface, "on"]
-            )
+            tasks.extend([
+                ["networksetup", "-setsocksfirewallproxy", iface, "127.0.0.1", str(socks_port)],
+                ["networksetup", "-setsocksfirewallproxystate", iface, "on"],
+                ["networksetup", "-setwebproxy", iface, "127.0.0.1", str(http_port)],
+                ["networksetup", "-setwebproxystate", iface, "on"],
+                ["networksetup", "-setsecurewebproxy", iface, "127.0.0.1", str(http_port)],
+                ["networksetup", "-setsecurewebproxystate", iface, "on"],
+            ])
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(_run_networksetup, tasks))
         self._enabled = True
         self._verify(socks_port, http_port)
 
@@ -87,15 +81,14 @@ class SystemProxy:
 
     def disable(self):
         interfaces = self._interfaces or self._get_active_interfaces()
+        tasks = []
         for iface in interfaces:
-            _run_networksetup(
-                ["networksetup", "-setsocksfirewallproxystate", iface, "off"]
-            )
-            _run_networksetup(
-                ["networksetup", "-setwebproxystate", iface, "off"]
-            )
-            _run_networksetup(
-                ["networksetup", "-setsecurewebproxystate", iface, "off"]
-            )
+            tasks.extend([
+                ["networksetup", "-setsocksfirewallproxystate", iface, "off"],
+                ["networksetup", "-setwebproxystate", iface, "off"],
+                ["networksetup", "-setsecurewebproxystate", iface, "off"],
+            ])
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(_run_networksetup, tasks))
         self._enabled = False
         self._interfaces = []

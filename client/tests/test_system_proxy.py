@@ -27,7 +27,7 @@ class TestSystemProxy:
             call(["networksetup", "-setsecurewebproxy", "Wi-Fi", "127.0.0.1", "1087"], capture_output=True, text=True),
             call(["networksetup", "-setsecurewebproxystate", "Wi-Fi", "on"], capture_output=True, text=True),
         ]
-        mock_run.assert_has_calls(expected_calls, any_order=False)
+        mock_run.assert_has_calls(expected_calls, any_order=True)
 
     @patch("system_proxy.SystemProxy._get_active_interfaces")
     @patch("system_proxy.subprocess.run")
@@ -42,7 +42,7 @@ class TestSystemProxy:
             call(["networksetup", "-setwebproxystate", "Wi-Fi", "off"], capture_output=True, text=True),
             call(["networksetup", "-setsecurewebproxystate", "Wi-Fi", "off"], capture_output=True, text=True),
         ]
-        mock_run.assert_has_calls(expected_calls)
+        mock_run.assert_has_calls(expected_calls, any_order=True)
 
     @patch("system_proxy.SystemProxy._get_active_interfaces")
     @patch("system_proxy.subprocess.run")

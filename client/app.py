@@ -28,6 +28,7 @@ class SocksClient(rumps.App):
         self.sys_proxy = SystemProxy()
         self.connected = False
 
+        self._measuring = False
         self._build_menu()
         self._setup_menu_delegate()
         self._update_icon()
@@ -159,19 +160,10 @@ class SocksClient(rumps.App):
         self.config.save()
         script_path = os.path.join(self._bundle_resource_dir(), "config_window.py")
         python_path = self._find_python() if self._is_compiled() else sys.executable
-        subprocess.Popen([python_path, script_path, self.config.config_path])
+        proc = subprocess.Popen([python_path, script_path, self.config.config_path])
 
         def _reload_after_window():
-            import time
-            time.sleep(0.5)
-            while True:
-                result = subprocess.run(
-                    ["pgrep", "-f", f"config_window.py {self.config.config_path}"],
-                    capture_output=True,
-                )
-                if result.returncode != 0:
-                    break
-                time.sleep(0.5)
+            proc.wait()
             old_data = self.config.data.copy()
             self.config.load()
             if self.connected and self.config.data != old_data:
@@ -259,21 +251,26 @@ class SocksClient(rumps.App):
             pass
 
     def _on_menu_open(self):
-        if not self.connected:
+        if not self.connected or self._measuring:
             return
 
+        self._measuring = True
+
         def _check():
-            latency = self.proxy.measure_latency()
+            try:
+                latency = self.proxy.measure_latency()
 
-            def _update():
-                if not self.connected:
-                    return
-                if latency is not None:
-                    self.toggle_item.title = f"关闭代理（{latency}ms）"
-                else:
-                    self.toggle_item.title = "关闭代理（超时）"
+                def _update():
+                    if not self.connected:
+                        return
+                    if latency is not None:
+                        self.toggle_item.title = f"关闭代理（{latency}ms）"
+                    else:
+                        self.toggle_item.title = "关闭代理（超时）"
 
-            AppHelper.callAfter(_update)
+                AppHelper.callAfter(_update)
+            finally:
+                self._measuring = False
 
         threading.Thread(target=_check, daemon=True).start()
 
