@@ -45,8 +45,6 @@ def show_config_window(config_path):
     for i, (key, label, default) in enumerate(fields):
         ttk.Label(frame, text=label).grid(row=i, column=0, sticky="w", pady=4, padx=(0, 8))
         entry = ttk.Entry(frame)
-        if key == "password":
-            entry.config(show="*")
         entry.insert(0, default)
         entry.grid(row=i, column=1, sticky="ew", pady=4)
         entries[key] = entry
