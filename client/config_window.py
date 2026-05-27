@@ -25,8 +25,11 @@ def show_config_window(config_path):
 
     root = tk.Tk()
     root.title("节点配置")
-    root.geometry("400x380")
     root.resizable(False, False)
+    w, h = 400, 380
+    x = (root.winfo_screenwidth() - w) // 2
+    y = (root.winfo_screenheight() - h) // 2
+    root.geometry(f"{w}x{h}+{x}+{y}")
 
     frame = ttk.Frame(root, padding=20)
     frame.pack(fill="both", expand=True)
