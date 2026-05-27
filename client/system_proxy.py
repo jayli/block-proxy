@@ -16,7 +16,10 @@ class SystemProxy:
 
     def _cleanup(self):
         if self._enabled:
-            self.disable()
+            try:
+                self.disable()
+            except Exception:
+                pass
 
     def _get_active_interfaces(self):
         result = subprocess.run(
