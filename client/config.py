@@ -1,0 +1,49 @@
+import json
+import os
+import copy
+
+DEFAULT_CONFIG = {
+    "server": {
+        "address": "",
+        "port": 8002,
+        "username": "",
+        "password": "",
+        "tls": True,
+        "allowInsecure": True,
+    },
+    "local": {
+        "socks_port": 1080,
+        "http_port": 1087,
+        "udp": True,
+    },
+    "mode": "global",
+}
+
+DEFAULT_CONFIG_DIR = os.path.expanduser(
+    "~/Library/Application Support/BlockProxyClient"
+)
+
+
+class Config:
+    def __init__(self, config_path=None):
+        if config_path is None:
+            config_path = os.path.join(DEFAULT_CONFIG_DIR, "config.json")
+        self.config_path = config_path
+        self.data = None
+
+    def load(self):
+        if os.path.exists(self.config_path):
+            with open(self.config_path, "r") as f:
+                self.data = json.load(f)
+        else:
+            self.data = copy.deepcopy(DEFAULT_CONFIG)
+            self.save()
+        return self.data
+
+    def save(self):
+        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        with open(self.config_path, "w") as f:
+            json.dump(self.data, f, indent=2)
+
+    def is_configured(self):
+        return bool(self.data and self.data["server"]["address"])
