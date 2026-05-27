@@ -68,7 +68,7 @@ def show_config_window(config_path):
     insecure_combo = ttk.Combobox(
         frame, textvariable=insecure_var, values=["true", "false"], state="readonly", width=10
     )
-    insecure_combo.grid(row=row, column=1, sticky="ew", pady=4)
+    insecure_combo.grid(row=row, column=1, sticky="w", pady=4)
     row += 1
 
     udp_var = tk.BooleanVar(value=config["local"]["udp"])
