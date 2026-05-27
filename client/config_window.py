@@ -30,6 +30,7 @@ def show_config_window(config_path):
 
     frame = ttk.Frame(root, padding=20)
     frame.pack(fill="both", expand=True)
+    frame.grid_columnconfigure(1, weight=1)
 
     entries = {}
     fields = [
@@ -42,12 +43,12 @@ def show_config_window(config_path):
     ]
 
     for i, (key, label, default) in enumerate(fields):
-        ttk.Label(frame, text=label).grid(row=i, column=0, sticky="w", pady=4)
-        entry = ttk.Entry(frame, width=30)
+        ttk.Label(frame, text=label).grid(row=i, column=0, sticky="w", pady=4, padx=(0, 8))
+        entry = ttk.Entry(frame)
         if key == "password":
             entry.config(show="*")
         entry.insert(0, default)
-        entry.grid(row=i, column=1, sticky="w", pady=4)
+        entry.grid(row=i, column=1, sticky="ew", pady=4)
         entries[key] = entry
 
     row = len(fields)
@@ -65,7 +66,7 @@ def show_config_window(config_path):
     insecure_combo = ttk.Combobox(
         frame, textvariable=insecure_var, values=["true", "false"], state="readonly", width=10
     )
-    insecure_combo.grid(row=row, column=1, sticky="w", pady=4)
+    insecure_combo.grid(row=row, column=1, sticky="ew", pady=4)
     row += 1
 
     udp_var = tk.BooleanVar(value=config["local"]["udp"])
