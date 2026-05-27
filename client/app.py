@@ -1,4 +1,6 @@
 import os
+import sys
+import subprocess
 import threading
 import rumps
 from config import Config
@@ -88,80 +90,27 @@ class BlockProxyClient(rumps.App):
         self._show_config_window()
 
     def _show_config_window(self):
-        import tkinter as tk
-        from tkinter import ttk
-
-        def save_and_close():
-            self.config.data["server"]["address"] = entries["address"].get()
-            self.config.data["server"]["port"] = int(entries["port"].get())
-            self.config.data["server"]["username"] = entries["username"].get()
-            self.config.data["server"]["password"] = entries["password"].get()
-            self.config.data["server"]["tls"] = tls_var.get()
-            self.config.data["server"]["allowInsecure"] = insecure_var.get() == "true"
-            self.config.data["local"]["socks_port"] = int(entries["socks_port"].get())
-            self.config.data["local"]["http_port"] = int(entries["http_port"].get())
-            self.config.data["local"]["udp"] = udp_var.get()
-            self.config.save()
-            root.destroy()
-
-        root = tk.Tk()
-        root.title("节点配置")
-        root.geometry("400x380")
-        root.resizable(False, False)
-
-        frame = ttk.Frame(root, padding=20)
-        frame.pack(fill="both", expand=True)
-
-        entries = {}
-        fields = [
-            ("address", "地址:", self.config.data["server"]["address"]),
-            ("port", "端口:", str(self.config.data["server"]["port"])),
-            ("username", "用户名:", self.config.data["server"]["username"]),
-            ("password", "密码:", self.config.data["server"]["password"]),
-            ("socks_port", "本地SOCKS端口:", str(self.config.data["local"]["socks_port"])),
-            ("http_port", "本地HTTP端口:", str(self.config.data["local"]["http_port"])),
-        ]
-
-        for i, (key, label, default) in enumerate(fields):
-            ttk.Label(frame, text=label).grid(row=i, column=0, sticky="w", pady=4)
-            entry = ttk.Entry(frame, width=30)
-            if key == "password":
-                entry.config(show="*")
-            entry.insert(0, default)
-            entry.grid(row=i, column=1, sticky="w", pady=4)
-            entries[key] = entry
-
-        row = len(fields)
-
-        tls_var = tk.BooleanVar(value=self.config.data["server"]["tls"])
-        ttk.Checkbutton(frame, text="启用 TLS", variable=tls_var).grid(
-            row=row, column=0, columnspan=2, sticky="w", pady=4
+        self.config.save()
+        script_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "config_window.py"
         )
-        row += 1
+        python_path = sys.executable
+        subprocess.Popen([python_path, script_path, self.config.config_path])
 
-        ttk.Label(frame, text="allowInsecure:").grid(row=row, column=0, sticky="w", pady=4)
-        insecure_var = tk.StringVar(
-            value="true" if self.config.data["server"]["allowInsecure"] else "false"
-        )
-        insecure_combo = ttk.Combobox(
-            frame, textvariable=insecure_var, values=["true", "false"], state="readonly", width=10
-        )
-        insecure_combo.grid(row=row, column=1, sticky="w", pady=4)
-        row += 1
+        def _reload_after_window():
+            import time
+            time.sleep(0.5)
+            while True:
+                result = subprocess.run(
+                    ["pgrep", "-f", f"config_window.py {self.config.config_path}"],
+                    capture_output=True,
+                )
+                if result.returncode != 0:
+                    break
+                time.sleep(0.5)
+            self.config.load()
 
-        udp_var = tk.BooleanVar(value=self.config.data["local"]["udp"])
-        ttk.Checkbutton(frame, text="启用 UDP", variable=udp_var).grid(
-            row=row, column=0, columnspan=2, sticky="w", pady=4
-        )
-        row += 1
-
-        ttk.Button(frame, text="保存", command=save_and_close).grid(
-            row=row, column=0, columnspan=2, pady=15
-        )
-
-        root.lift()
-        root.attributes("-topmost", True)
-        root.mainloop()
+        threading.Thread(target=_reload_after_window, daemon=True).start()
 
     def set_global_mode(self, sender):
         self.config.data["mode"] = "global"
