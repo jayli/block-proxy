@@ -70,10 +70,12 @@ class SocksClient(rumps.App):
             self.icon = icon_path
         self.title = None
 
+    def _is_compiled(self):
+        return "__compiled__" in globals() or getattr(sys, "frozen", False)
+
     def _bundle_resource_dir(self):
-        if getattr(sys, "frozen", False):
-            from Foundation import NSBundle
-            return NSBundle.mainBundle().resourcePath()
+        if self._is_compiled():
+            return os.path.dirname(sys.executable)
         return os.path.dirname(os.path.abspath(__file__))
 
     def _icon_dir(self):
@@ -129,12 +131,20 @@ class SocksClient(rumps.App):
     def open_config(self, sender):
         self._show_config_window()
 
+    def _find_python(self):
+        for p in [
+            "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3",
+            "/usr/local/bin/python3",
+            "/usr/bin/python3",
+        ]:
+            if os.path.exists(p):
+                return p
+        return "python3"
+
     def _show_config_window(self):
         self.config.save()
-        script_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "config_window.py"
-        )
-        python_path = sys.executable
+        script_path = os.path.join(self._bundle_resource_dir(), "config_window.py")
+        python_path = self._find_python() if self._is_compiled() else sys.executable
         subprocess.Popen([python_path, script_path, self.config.config_path])
 
         def _reload_after_window():
