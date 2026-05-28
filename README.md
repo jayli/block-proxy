@@ -204,7 +204,9 @@ done！
 
 ### 7）客户端软件
 
-提供了客户端桌面端连接代理工具 SocksClient.app，支持 MacOS（M系列），直接运行 `client/dist/SocksClient.app`。
+提供了客户端桌面端连接代理工具 SocksClient.app，支持 MacOS（M系列）。
+
+下载地址：[GitHub Release](https://github.com/jayli/block-proxy/releases/latest)
 
 ### License
 
