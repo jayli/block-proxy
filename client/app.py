@@ -206,7 +206,7 @@ class SocksClient(rumps.App):
             alert.addButtonWithTitle_("好")
 
             url = "https://github.com/jayli/block-proxy"
-            text = f"项目：block-proxy\n作者：lijing00333\n地址：{url}\n版本：v0.1"
+            text = f"项目：block-proxy\n作者：lijing00333\n地址：{url}\n版本：v0.1.0"
 
             attr_str = NSMutableAttributedString.alloc().initWithString_(text)
             full_range = NSRange(0, len(text))
@@ -233,7 +233,7 @@ class SocksClient(rumps.App):
                     "项目：block-proxy\n"
                     "作者：lijing00333\n"
                     "地址：https://github.com/jayli/block-proxy\n"
-                    "版本：v0.1"
+                    "版本：v0.1.0"
                 ),
             )
 

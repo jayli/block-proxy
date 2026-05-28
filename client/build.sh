@@ -3,7 +3,7 @@ set -e
 
 APP_NAME="SocksClient"
 BUNDLE_ID="com.jaylli.socksclient"
-VERSION="1.0.0"
+VERSION="0.1.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DIST_DIR="$SCRIPT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
