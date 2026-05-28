@@ -1,7 +1,17 @@
 import json
+import platform
 import sys
 import tkinter as tk
 from tkinter import ttk
+
+
+def _macos_setup():
+    try:
+        from AppKit import NSApp
+        NSApp.setActivationPolicy_(1)  # NSApplicationActivationPolicyAccessory
+        NSApp.activateIgnoringOtherApps_(True)
+    except ImportError:
+        pass
 
 
 def show_config_window(config_path):
@@ -32,6 +42,9 @@ def show_config_window(config_path):
     x = (root.winfo_screenwidth() - w) // 2
     y = (root.winfo_screenheight() - h) // 2
     root.geometry(f"{w}x{h}+{x}+{y}")
+
+    if platform.system() == "Darwin":
+        root.after(50, _macos_setup)
 
     frame = ttk.Frame(root, padding=20)
     frame.pack(fill="both", expand=True)
@@ -105,6 +118,8 @@ def show_config_window(config_path):
 
     root.lift()
     root.attributes("-topmost", True)
+    if platform.system() != "Darwin":
+        root.after(100, lambda: root.focus_force())
     root.mainloop()
 
 

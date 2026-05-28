@@ -196,9 +196,11 @@ class SocksClient(rumps.App):
             from AppKit import (
                 NSAlert, NSTextField, NSMutableAttributedString,
                 NSAttributedString, NSFont, NSColor, NSMakeRect,
+                NSApp,
             )
             from Foundation import NSURL, NSRange
 
+            NSApp.activateIgnoringOtherApps_(True)
             alert = NSAlert.alloc().init()
             alert.setMessageText_("关于 SocksClient")
             alert.addButtonWithTitle_("好")
