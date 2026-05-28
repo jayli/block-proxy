@@ -14,6 +14,26 @@ def _macos_setup():
         pass
 
 
+def _center_on_mouse_screen(w, h):
+    if platform.system() == "Darwin":
+        try:
+            from AppKit import NSScreen, NSEvent
+            mouse_loc = NSEvent.mouseLocation()
+            primary_h = NSScreen.screens()[0].frame().size.height
+            for screen in NSScreen.screens():
+                sf = screen.frame()
+                if (sf.origin.x <= mouse_loc.x < sf.origin.x + sf.size.width and
+                        sf.origin.y <= mouse_loc.y < sf.origin.y + sf.size.height):
+                    vf = screen.visibleFrame()
+                    x = int(vf.origin.x + (vf.size.width - w) / 2)
+                    y = int(primary_h - vf.origin.y - vf.size.height +
+                            (vf.size.height - h) / 2)
+                    return x, y
+        except Exception:
+            pass
+    return None
+
+
 def show_config_window(config_path):
     with open(config_path, "r") as f:
         config = json.load(f)
@@ -35,12 +55,17 @@ def show_config_window(config_path):
             json.dump(config, f, indent=2)
         root.destroy()
 
+    pos = _center_on_mouse_screen(400, 460)
+
     root = tk.Tk()
     root.title("Socks 节点配置")
     root.resizable(False, False)
     w, h = 400, 460
-    x = (root.winfo_screenwidth() - w) // 2
-    y = (root.winfo_screenheight() - h) // 2
+    if pos:
+        x, y = pos
+    else:
+        x = (root.winfo_screenwidth() - w) // 2
+        y = (root.winfo_screenheight() - h) // 2
     root.geometry(f"{w}x{h}+{x}+{y}")
 
     if platform.system() == "Darwin":
