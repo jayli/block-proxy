@@ -170,6 +170,29 @@ main.py (入口, 文件锁单实例) → app.py (rumps 状态栏 App)
 - 路由表每 2 小时刷新；新设备可能需要手动刷新
 - ACR 推送前需先 `docker login --username=hi50078584@aliyun.com crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com`
 
+## Current Work In Progress
+
+### HTTPS 未安装证书时的优雅降级
+
+**问题**：当前架构下，客户端必须安装 `cert/` 目录下的根证书才能正常使用 HTTPS 代理。未安装证书的设备通过代理访问 HTTPS 站点时，AnyProxy 会尝试 MITM 拦截并用自签证书替换，导致浏览器报证书错误、连接失败。
+
+**目标**：对未安装证书的客户端实现优雅降级——HTTPS 流量仍能正常通过代理，只是放弃 MITM 拦截能力。具体而言：
+
+1. **域名级拦截仍然生效**：通过 CONNECT 请求中的 host 或 TLS ClientHello 的 SNI 字段判断目标域名，命中 `block_hosts` 规则时直接拒绝连接
+2. **透明隧道转发**：未命中拦截规则的 HTTPS 流量，直接建立 TCP 隧道（CONNECT tunnel）转发到目标服务器，不做 TLS 解密，客户端与目标服务器直接完成 TLS 握手
+3. **响应级规则不可用**：`beforeSendResponse` 类型的 MITM 规则（如 YouTube 去广告、有道词典 VIP）在未安装证书的设备上不生效，这是预期行为
+
+**涉及的关键代码路径**：
+- `node_modules/@bachi/anyproxy/lib/requestHandler.js` — HTTPS CONNECT 请求处理逻辑，决定是 MITM 拦截还是隧道转发
+- `node_modules/@bachi/anyproxy/lib/httpsServerMgr.js` — HTTPS MITM 服务管理
+- `proxy/attacker.js` — 拦截判断逻辑
+- `proxy/mitm/rule.js` — MITM 规则定义，`beforeSendRequest` 中对 CONNECT 请求的处理
+
+**技术方案方向**：
+- 在 AnyProxy 的 `beforeSendRequest` 阶段，对 HTTPS CONNECT 请求进行域名级拦截判断
+- 未命中拦截规则时，返回指示跳过 MITM 的响应（如直接 tunnel），让 AnyProxy 以纯转发模式处理
+- 需要研究 `@bachi/anyproxy` 是否已支持 non-intercept 模式，或者需要修改 fork 代码
+
 # Project Rules & Skills
 
 - **Local Skills**: 实时遵循 `.claude/skills/*/skill.md` 中的指令。可用技能: `commit`, `pcap-analyse`
