@@ -8,8 +8,29 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DIST_DIR="$SCRIPT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 
+# Detect architecture
+ARCH=$(uname -m)
+ZIP_NAME="SocksClient-macos-${ARCH}.zip"
+
+echo "==> Detected architecture: $ARCH"
+
 echo "==> Cleaning old build..."
 rm -rf "$DIST_DIR" "$SCRIPT_DIR/main.build" "$SCRIPT_DIR/main.dist"
+rm -f "$DIST_DIR"/*.zip
+
+# Find python3 from PATH
+PYTHON=$(command -v python3 || true)
+if [ -z "$PYTHON" ]; then
+    echo "ERROR: python3 not found in PATH"
+    exit 1
+fi
+echo "==> Using Python: $PYTHON ($($PYTHON --version))"
+
+# Check nuitka
+if ! $PYTHON -m nuitka --version &>/dev/null; then
+    echo "ERROR: nuitka not installed. Run: $PYTHON -m pip install nuitka"
+    exit 1
+fi
 
 echo "==> Generating app.icns..."
 if [ ! -f "$SCRIPT_DIR/icons/app.icns" ]; then
@@ -29,7 +50,7 @@ fi
 
 echo "==> Building with Nuitka..."
 cd "$SCRIPT_DIR"
-/Library/Frameworks/Python.framework/Versions/3.13/bin/python3 -m nuitka \
+$PYTHON -m nuitka \
     --standalone \
     --macos-create-app-bundle \
     --macos-app-name="$APP_NAME" \
@@ -56,4 +77,10 @@ plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP_DIR/Contents
 echo "==> Cleaning Nuitka build artifacts..."
 rm -rf "$DIST_DIR/main.build" "$DIST_DIR/main.dist"
 
+echo "==> Packaging..."
+cd "$DIST_DIR"
+rm -f "$ZIP_NAME"
+zip -r -q "$ZIP_NAME" "$APP_NAME.app"
+
 echo "==> Build complete: $APP_DIR"
+echo "==> Package: $DIST_DIR/$ZIP_NAME"
