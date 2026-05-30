@@ -8,6 +8,8 @@ user-invocable: true
 
 仅本地构建 macOS 客户端，不修改版本号，不发布。自动检测当前机器架构并构建对应版本。
 
+每次构建都会从 `client/icons/app_icon.png` 重新生成 `app.icns`，确保图标始终与源文件一致。
+
 ## Instructions
 
 1. 执行构建脚本：

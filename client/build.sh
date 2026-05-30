@@ -32,21 +32,19 @@ if ! $PYTHON -m nuitka --version &>/dev/null; then
     exit 1
 fi
 
-echo "==> Generating app.icns..."
-if [ ! -f "$SCRIPT_DIR/icons/app.icns" ]; then
-    ICONSET=$(mktemp -d)/app.iconset
-    mkdir -p "$ICONSET"
-    sips -z 16 16 "$SCRIPT_DIR/icons/app_example.png" --out "$ICONSET/icon_16x16.png" &>/dev/null
-    sips -z 32 32 "$SCRIPT_DIR/icons/app_example.png" --out "$ICONSET/icon_16x16@2x.png" &>/dev/null
-    sips -z 32 32 "$SCRIPT_DIR/icons/app_example.png" --out "$ICONSET/icon_32x32.png" &>/dev/null
-    sips -z 64 64 "$SCRIPT_DIR/icons/app_example.png" --out "$ICONSET/icon_32x32@2x.png" &>/dev/null
-    sips -z 128 128 "$SCRIPT_DIR/icons/app_example.png" --out "$ICONSET/icon_128x128.png" &>/dev/null
-    sips -z 256 256 "$SCRIPT_DIR/icons/app_example.png" --out "$ICONSET/icon_128x128@2x.png" &>/dev/null
-    sips -z 256 256 "$SCRIPT_DIR/icons/app_example.png" --out "$ICONSET/icon_256x256.png" &>/dev/null
-    sips -z 512 512 "$SCRIPT_DIR/icons/app_example.png" --out "$ICONSET/icon_256x256@2x.png" &>/dev/null
-    iconutil -c icns "$ICONSET" -o "$SCRIPT_DIR/icons/app.icns"
-    rm -rf "$(dirname "$ICONSET")"
-fi
+echo "==> Generating app.icns from app_icon.png..."
+ICONSET=$(mktemp -d)/app.iconset
+mkdir -p "$ICONSET"
+sips -z 16 16 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_16x16.png" &>/dev/null
+sips -z 32 32 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_16x16@2x.png" &>/dev/null
+sips -z 32 32 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_32x32.png" &>/dev/null
+sips -z 64 64 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_32x32@2x.png" &>/dev/null
+sips -z 128 128 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_128x128.png" &>/dev/null
+sips -z 256 256 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_128x128@2x.png" &>/dev/null
+sips -z 256 256 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_256x256.png" &>/dev/null
+sips -z 512 512 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_256x256@2x.png" &>/dev/null
+iconutil -c icns "$ICONSET" -o "$SCRIPT_DIR/icons/app.icns"
+rm -rf "$(dirname "$ICONSET")"
 
 echo "==> Building with Nuitka..."
 cd "$SCRIPT_DIR"
