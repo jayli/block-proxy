@@ -20,7 +20,7 @@ class _MenuOpenDelegate(NSObject):
 class SocksClient(rumps.App):
     def __init__(self):
         super().__init__("SocksClient", quit_button=None)
-        self.template = True
+        self.template = False
 
         self.config = Config()
         self.config.load()
