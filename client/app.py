@@ -2,12 +2,21 @@ import os
 import sys
 import subprocess
 import threading
+import platform
 import rumps
 from PyObjCTools import AppHelper
 from Foundation import NSObject
 from config import Config
 from proxy_core import ProxyCore
 from system_proxy import SystemProxy
+
+
+def _is_tahoe_or_newer():
+    try:
+        ver = tuple(map(int, platform.mac_ver()[0].split(".")))
+        return ver >= (26, 0)
+    except Exception:
+        return False
 
 
 class _MenuOpenDelegate(NSObject):
@@ -20,7 +29,7 @@ class _MenuOpenDelegate(NSObject):
 class SocksClient(rumps.App):
     def __init__(self):
         super().__init__("SocksClient", quit_button=None)
-        self.template = True
+        self.template = _is_tahoe_or_newer()
 
         self.config = Config()
         self.config.load()
@@ -33,7 +42,16 @@ class SocksClient(rumps.App):
         self._setup_menu_delegate()
         self._update_icon()
         self._start_health_check()
-        self._schedule_icon_fix()
+
+    def run(self, **options):
+        if not _is_tahoe_or_newer():
+            def _fix_highlight():
+                try:
+                    self._nsapp.nsstatusitem.setHighlightMode_(False)
+                except Exception:
+                    pass
+            AppHelper.callAfter(_fix_highlight)
+        super().run(**options)
 
     def _build_menu(self):
         self.toggle_item = rumps.MenuItem("启动代理", callback=self.toggle_proxy)
@@ -79,25 +97,7 @@ class SocksClient(rumps.App):
         icon_path = os.path.join(self._icon_dir(), icon_name)
         if os.path.exists(icon_path):
             self.icon = icon_path
-            self._apply_button_icon()
         self.title = None
-
-    def _apply_button_icon(self):
-        try:
-            button = self._nsapp.nsstatusitem.button()
-            if button and self._icon_nsimage:
-                self._icon_nsimage.setTemplate_(True)
-                button.setImage_(self._icon_nsimage)
-        except AttributeError:
-            pass
-
-    def _schedule_icon_fix(self):
-        def _fix():
-            import time
-            time.sleep(1)
-            AppHelper.callAfter(self._apply_button_icon)
-
-        threading.Thread(target=_fix, daemon=True).start()
 
     def _is_compiled(self):
         return "__compiled__" in globals() or getattr(sys, "frozen", False)
