@@ -113,7 +113,7 @@ docker run --init -d --restart=unless-stopped --user=root \
 | 8001 | HTTP 代理端口 | 不可禁用 |
 | 8002 | Socks5 over TLS 代理端口 | 可禁用 |
 | 8003 | 后台配置面板端口 | 可禁用 |
-| 8004 | ~~已废弃~~ | 已迁移至 8003 |
+
 
 ### 配置面板
 
