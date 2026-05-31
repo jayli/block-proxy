@@ -38,7 +38,58 @@ docker run --init -d --restart=unless-stopped \
   crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest
 ```
 
-挂载目录 `$(pwd)/` 下的 `rule.js` 是额外配置文件，可留空。
+### 挂载配置文件（config.json 和 rule.js）
+
+Docker 启动命令中的 `-v "$(pwd)/":/app/config` 将宿主机当前目录映射到容器内的 `/app/config`。代理启动时会自动从该目录加载配置。
+
+#### config.json
+
+容器首次启动时，如果挂载目录下没有 `config.json`，代理会自动生成一份默认配置。你也可以预先创建：
+
+```json
+{
+  "block_hosts": [],
+  "proxy_port": 8001,
+  "socks5_port": 8002,
+  "auth_username": "admin",
+  "auth_password": "your-password",
+  "enable_express": "1",
+  "enable_socks5": "1"
+}
+```
+
+配置修改后通过后台面板（`:8003`）保存，或重启容器后生效。
+
+#### rule.js（自定义 MITM 规则）
+
+在挂载目录下创建 `rule.js`，代理启动时会自动加载并与内置规则合并。参照 [`example/rule.js`](https://github.com/jayli/block-proxy/blob/main/example/rule.js) 格式：
+
+```js
+module.exports = {
+  MyRule: [{
+    type: 'beforeSendRequest',
+    host: 'example.com',
+    regexp: '^https?://example\\.com/blocked',
+    callback: async function(url, request, response) {
+      return {
+        response: {
+          statusCode: 403,
+          header: { 'Content-Type': 'text/plain' },
+          body: 'Blocked by custom rule'
+        }
+      };
+    }
+  }]
+};
+```
+
+规则支持两种类型：
+- `beforeSendRequest` — 在请求发出前拦截，可返回本地响应阻断请求
+- `beforeSendResponse` — 在响应返回前修改，可改写响应体
+
+修改 `rule.js` 后需重启容器使规则生效。
+
+> 注意：`config.json` 是运行时配置文件，通过后台面板修改后由代理自动写入。`rule.js` 需要手动编辑，容器只读取不写入。
 
 ### Docker 部署 - 端口绑定模式（Windows/Mac）
 
