@@ -1,5 +1,5 @@
 {
-  "network_scanning_status": "1",
+  "network_scanning_status": "0",
   "progress_time_stamp": "1766571511705",
   "block_hosts": [
     {
@@ -140,7 +140,7 @@
   "enable_express": "1",
   "enable_socks5": "1",
   "socks5_port": 8002,
-  "enable_webinterface": "1",
+  "enable_webinterface": "0",
   "devices": [
     {
       "ip": "192.168.124.1",
@@ -197,6 +197,31 @@
     {
       "ip": "192.168.124.251",
       "mac": "6E:FB:18:4D:9C:3E"
+    },
+    {
+      "ip": "192.168.124.3",
+      "mac": "0:DD:B6:EA:E6:2A"
+    },
+    {
+      "ip": "192.168.124.64",
+      "mac": "76:39:29:EF:3:94"
+    },
+    {
+      "ip": "192.168.124.66",
+      "mac": "E2:4D:6E:1:21:6E"
+    },
+    {
+      "ip": "192.168.124.91",
+      "mac": "BA:5A:91:BE:7D:ED"
+    },
+    {
+      "ip": "192.168.124.232",
+      "mac": "DC:97:58:D:FD:9F"
+    },
+    {
+      "ip": "192.168.124.252",
+      "mac": "82:41:4F:6F:89:C2"
     }
-  ]
+  ],
+  "enable_mitm": "1"
 }

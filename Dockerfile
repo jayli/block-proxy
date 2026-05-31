@@ -45,7 +45,7 @@ COPY cert/rootCA.crt /root/.anyproxy/certificates/
 
 USER nodeuser
 
-EXPOSE 8001 8002 8003
+EXPOSE 8001 8002
 
 # 使用 node 启动脚本作为 CMD
 CMD ["npm", "run", "start"]

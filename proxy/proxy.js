@@ -57,7 +57,7 @@ var is_running_in_docker = false;
 var docker_host_IP = '';
 var enable_express = "1"; // "0", "1"
 var enable_socks5 = "1";
-var enable_webinterface = "1"; // "0", "1"
+var enable_webinterface = "0"; // "0", "1"
 var enable_mitm = "1"; // "0", "1"，是否对 HTTPS 启用 MITM 解密（关闭后纯隧道转发，不拦截）
 // 域名判断，区分浏览器和 App
 var filtered_mitm_domains = [

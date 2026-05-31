@@ -78,7 +78,7 @@ function App() {
         } else if (data.ips.length >= 1) {
           localIp = data.ips[0].address;
         }
-        QRCode.toCanvas(document.getElementById('qrcode'), `http://${localIp}:${config.web_interface_port}/fetchCrtFile`);
+        QRCode.toCanvas(document.getElementById('qrcode'), `http://${localIp}:8003/fetchCrtFile`);
       } else {
         showToast('获取服务器IP失败', 'error');
       }
@@ -710,21 +710,9 @@ function App() {
             )}
           </p>
           <p>
-            <b>AnyProxy 监控地址：</b>
-            {serverIPs.length > 0 ? (
-              <span>
-                <a href={`http://${getIpAddress()}:${config.web_interface_port}`} target="_blank" rel="noopener noreferrer">
-                  {`http://${getIpAddress()}:${config.web_interface_port}`}
-                </a>
-              </span>
-            ) : (
-              <span>正在获取服务器IP地址...</span>
-            )}
-          </p>
-          <p>
             <span>
               扫码安装证书：
-              <a href={`http://${getIpAddress()}:${config.web_interface_port}/fetchCrtFile`} target="_blank">下载</a>
+              <a href={`http://${getIpAddress()}:8003/fetchCrtFile`} target="_blank">下载</a>
             </span><br />
             <canvas id="qrcode"></canvas>
           </p>

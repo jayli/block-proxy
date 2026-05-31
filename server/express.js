@@ -11,7 +11,7 @@ const { exec, execSync } = require('child_process');
 const LocalProxy = require('../proxy/proxy');
 
 const app = express();
-const PORT = 8004;
+const PORT = 8003;
 const DEV = process.env.BLOCK_PROXY_DEV || 0;
 const configPath = path.join(__dirname, '../config.json');
 
@@ -196,6 +196,22 @@ app.use(/\/proxy\/*/, async (req, res) => {
     }
   } catch (error) {
     res.status(502).json({ error: `代理错误: ${error.message}` });
+  }
+});
+
+// 证书下载接口
+app.get('/fetchCrtFile', (req, res) => {
+  try {
+    const certPath = path.join(__dirname, '../cert/rootCA.crt');
+    if (fs.existsSync(certPath)) {
+      res.setHeader('Content-Type', 'application/x-x509-ca-cert');
+      res.setHeader('Content-Disposition', 'attachment; filename="rootCA.crt"');
+      res.sendFile(certPath);
+    } else {
+      res.status(404).json({ error: '证书文件不存在，请先生成根证书' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: '证书下载失败: ' + error.message });
   }
 });
 

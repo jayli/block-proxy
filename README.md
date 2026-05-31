@@ -74,14 +74,14 @@ docker run --init -d --restart=unless-stopped \
 ```
 docker run --init -d --restart=unless-stopped --user=root \
            -v "$(pwd)/":/app/config \
-           -e TZ=Asia/Shanghai -p 8001:8001 -p 8002:8002 -p 8003:8003 \
+           -e TZ=Asia/Shanghai -p 8001:8001 -p 8002:8002 \
            --name block-proxy crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest
 ```
 
 ### 2）服务侧端口配置
 
-1. 服务端配置：配置面板 <http://server-ip:8004>，关闭、启用配置面板：<http://server-ip:8001>
-2. 客户端配置：http 代理直接在 iphone wifi 详情里手动配置，socks5 代理只支持 socks5 over TLS，用小火箭配置。配置信息参照[配置面板](http://localhost:8004)
+1. 服务端配置：配置面板 <http://server-ip:8003>，关闭、启用配置面板：<http://server-ip:8001>
+2. 客户端配置：http 代理直接在 iphone wifi 详情里手动配置，socks5 代理只支持 socks5 over TLS，用小火箭配置。配置信息参照[配置面板](http://localhost:8003)
 
 ### 3）服务侧代码的开发和调试
 
@@ -92,8 +92,8 @@ docker run --init -d --restart=unless-stopped --user=root \
 |3000  |调试端口（仅开发调试配置面板用）| 生产环境不启用|
 |8001  |HTTP 代理端口 | 不可禁用 |
 |8002  |Socks5（Over TLS）代理端口 | 可禁用 |
-|8003  |AnyProxy 监控页面| 可禁用  |
-|8004  |后台配置页端口  | 可禁用 |
+|8003  |后台配置页端口  | 可禁用 |
+|8004  |~~已废弃~~  | 原后台配置页，已迁移至 8003 |
 
 
 ### 4）Block-Proxy 的 Docker 构建说明
@@ -131,7 +131,7 @@ docker run --init -d --restart=unless-stopped --user=root \
 
 #### ② 后台配置
 
-访问路径：`http://proxy-ip:8004`
+访问路径：`http://proxy-ip:8003`
 
 路由表间隔两小时刷新一次。如果新加入网的设备没生效，刷新一下路由表。添加限制条件后，点击重启代理按钮。
 
