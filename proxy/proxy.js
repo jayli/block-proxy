@@ -42,7 +42,7 @@ var anyproxy_started = false;
 var blockHosts = [];
 var proxyPort = 8001; // http 代理端口
 var socks5Port = 8002; // socks5 端口
-var webInterfacePort = 8003; // anyproxy 监控端口
+
 var vpn_proxy = "";
 var devices = [];
 var progress_time_stamp = "";
@@ -57,7 +57,7 @@ var is_running_in_docker = false;
 var docker_host_IP = '';
 var enable_express = "1"; // "0", "1"
 var enable_socks5 = "1";
-var enable_webinterface = "0"; // "0", "1"
+
 var enable_mitm = "1"; // "0", "1"，是否对 HTTPS 启用 MITM 解密（关闭后纯隧道转发，不拦截）
 // 域名判断，区分浏览器和 App
 var filtered_mitm_domains = [
@@ -218,7 +218,6 @@ async function loadConfig() {
     progress_time_stamp: progress_time_stamp,
     block_hosts: blockHosts,
     proxy_port: proxyPort,
-    web_interface_port: webInterfacePort,
     your_domain: your_domain,
     vpn_proxy:"",
     auth_username:"",
@@ -226,7 +225,6 @@ async function loadConfig() {
     enable_express: enable_express,
     enable_socks5: enable_socks5,
     socks5_port: socks5Port,
-    enable_webinterface: enable_webinterface,
     devices: []
   };
 
@@ -277,9 +275,6 @@ async function loadConfig() {
       enable_socks5 = loadedConfig.enable_socks5;
       config.enable_socks5 = enable_socks5;
 
-      enable_webinterface = loadedConfig.enable_webinterface;
-      config.enable_webinterface = enable_webinterface;
-
       enable_mitm = loadedConfig.enable_mitm || "1"; // 默认开启，兼容旧配置文件缺少此字段
       config.enable_mitm = enable_mitm;
 
@@ -294,11 +289,6 @@ async function loadConfig() {
         config.proxy_port = proxyPort;
       }
       
-      if (loadedConfig.web_interface_port) {
-        webInterfacePort = loadedConfig.web_interface_port;
-        config.web_interface_port = webInterfacePort;
-      }
-
       if (loadedConfig.devices) {
         devices = loadedConfig.devices;
         config.devices = devices;
@@ -311,14 +301,12 @@ async function loadConfig() {
         progress_time_stamp: progress_time_stamp,
         block_hosts: blockHosts,
         proxy_port: proxyPort,
-        web_interface_port: webInterfacePort,
         auth_password:"",
         auth_username:"",
         enable_express: enable_express,
         your_domain: your_domain,
         socks5_port: socks5Port,
         enable_socks5: enable_socks5,
-        enable_webinterface: enable_webinterface,
         enable_mitm: enable_mitm,
         vpn_proxy: ""
       });
@@ -523,9 +511,6 @@ function startProxyServer() {
 
     proxyServerInstance.on('ready', () => {
       console.log(`✅ \x1b[32mHTTP 代理服务启动，IP: ${localIp}, 端口: ${proxyPort}\x1b[0m`);
-      if (enable_webinterface == "1") {
-        console.log(`✅ \x1b[32mAnyProxy 监控面板启动，http://${localIp}:${webInterfacePort}\x1b[0m`);
-      }
     });
 
     proxyServerInstance.on('error', (e) => {
@@ -1348,10 +1333,6 @@ function getAnyProxyOptions() {
         return null;
       },
 
-    },
-    webInterface: {
-      enable: enable_webinterface == "1" ? true : false,
-      webPort: webInterfacePort
     },
     throttle: 800 * 1024 * 1024, // 800 Mbps
     forceProxyHttps: false, // 关闭全局 HTTPS 拦截

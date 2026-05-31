@@ -20,7 +20,6 @@ function App() {
     block_hosts: [],
     proxy_port: 8001,
     socks5_port:8002,
-    web_interface_port: 8003,
     auth_username: "",
     auth_password: "",
   });
@@ -578,15 +577,6 @@ function App() {
               type="number"
               value={config.socks5_port}
               onChange={(e) => setConfig({...config, socks5_port: parseInt(e.target.value) || 8002})}
-            />
-          </div>
-          
-          <div className="setting-row">
-            <label>Anyproxy 监控端口:</label>
-            <input
-              type="number"
-              value={config.web_interface_port}
-              onChange={(e) => setConfig({...config, web_interface_port: parseInt(e.target.value) || 8003})}
             />
           </div>
 
