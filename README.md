@@ -14,7 +14,7 @@ Socks5/http 代理工具，支持 MITM 和二次开发
 - HTTP 代理 + Socks5 over TLS 代理
 - 域名拦截、url 正则、Mac 地址拦截
 - 设定日期和时间段、顺便过滤广告
-- 提供服务端和客户端
+- 提供服务端（npm 包和 docker 包）和[客户端](https://github.com/jayli/block-proxy/releases/)
 
 ### 1）服务端使用方法
 
