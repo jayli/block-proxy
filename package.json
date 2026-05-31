@@ -31,6 +31,8 @@
     "docker:push:amd64": "npm run build && docker buildx build --platform linux/amd64 --push -t crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest-amd64 .",
     "docker:push:arm64": "npm run build && docker buildx build --platform linux/arm64 --push -t crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest-arm64 .",
     "test": "react-scripts test",
+    "gen-icons": "node client/watch-icons.js",
+    "watch:icons": "node client/watch-icons.js --watch",
     "test:proxy": "node test/run.js",
     "eject": "react-scripts eject"
   },
