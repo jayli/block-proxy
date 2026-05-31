@@ -3,5 +3,7 @@
   "proxy_port": 8001,
   "socks5_port": 8002,
   "auth_username": "admin",
-  "auth_password": "admin"
+  "auth_password": "admin",
+  "enable_express": "1",
+  "enable_socks5": "1"
 }
