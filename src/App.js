@@ -645,11 +645,10 @@ function App() {
               {loading ? '保存中...' : '保存配置'}
             </button>
             
-            <button 
-              onClick={handleUpdateDevices} 
+            <button
+              onClick={handleUpdateDevices}
               disabled={loading}
-              className="restart-btn"
-              style={{ backgroundColor: '#17a2b8', color: 'white' }}
+              className="refresh-btn"
             >
               {loading ? '刷新中...' : '刷新路由表'}
             </button>
@@ -766,10 +765,10 @@ function App() {
           ) : (
             <p>暂无设备信息</p>
           )}
-          <button 
-            onClick={fetchConfig} 
+          <button
+            onClick={fetchConfig}
             disabled={loading}
-            style={{ marginTop: '10px' }}
+            className="refresh-table-btn"
           >
             {loading ? '刷新中...' : '更新路由表'}
           </button>
