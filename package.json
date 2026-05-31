@@ -37,7 +37,7 @@
     "eject": "react-scripts eject"
   },
   "devDependencies": {
-    "@bachi/anyproxy": "^0.1.5",
+    "@bachi/anyproxy": "^0.1.6",
     "@craco/craco": "^7.1.0",
     "axios": "^1.13.2",
     "commander": "^14.0.2",
