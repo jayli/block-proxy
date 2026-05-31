@@ -624,7 +624,17 @@ function App() {
               value={config.vpn_proxy}
               onChange={(e) => setConfig({...config, vpn_proxy: e.target.value || ""})}
             />
-            <div className="help-text">（格式：“127.0.0.1:1087”，仅调试用）</div>
+            <div className="help-text">（格式："127.0.0.1:1087"，仅调试用）</div>
+          </div>
+          <div className="setting-row">
+            <label>HTTPS MITM 解密:</label>
+            <select
+              value={config.enable_mitm || "1"}
+              onChange={(e) => setConfig({...config, enable_mitm: e.target.value})}
+            >
+              <option value="1">开启（需安装证书，支持 URL 路径过滤 + 广告重写）</option>
+              <option value="0">关闭（纯隧道转发，不拦截，零证书错误）</option>
+            </select>
           </div>
           <div className="setting-row actions">
             <button 
@@ -678,6 +688,12 @@ function App() {
             <b>Socks5（Over TLS）代理端口：</b><span>{config.socks5_port}</span> &nbsp;
             <span>{
               config.enable_socks5 === "1" ? "开启" : "关闭"
+            }</span>
+          </p>
+          <p>
+            <b>HTTPS MITM 解密：</b>
+            <span>{
+              (config.enable_mitm || "1") === "1" ? "开启（需安装证书，支持 URL 路径过滤 + 广告重写）" : "关闭（纯隧道转发，不拦截）"
             }</span>
           </p>
           <p>

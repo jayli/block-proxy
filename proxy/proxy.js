@@ -58,6 +58,7 @@ var docker_host_IP = '';
 var enable_express = "1"; // "0", "1"
 var enable_socks5 = "1";
 var enable_webinterface = "1"; // "0", "1"
+var enable_mitm = "1"; // "0", "1"，是否对 HTTPS 启用 MITM 解密（关闭后纯隧道转发，不拦截）
 // 域名判断，区分浏览器和 App
 var filtered_mitm_domains = [
   ...uaFilter.filtered_mitm_domains
@@ -279,6 +280,9 @@ async function loadConfig() {
       enable_webinterface = loadedConfig.enable_webinterface;
       config.enable_webinterface = enable_webinterface;
 
+      enable_mitm = loadedConfig.enable_mitm || "1"; // 默认开启，兼容旧配置文件缺少此字段
+      config.enable_mitm = enable_mitm;
+
       socks5Port = loadedConfig.socks5_port;
       config.socks5_port = socks5Port;
 
@@ -315,6 +319,7 @@ async function loadConfig() {
         socks5_port: socks5Port,
         enable_socks5: enable_socks5,
         enable_webinterface: enable_webinterface,
+        enable_mitm: enable_mitm,
         vpn_proxy: ""
       });
       // fs.writeFileSync(configPath, JSON.stringify({
@@ -1086,30 +1091,29 @@ function getAnyProxyOptions() {
           }
         }
 
-        // rewrite 规则判断
-        if (shouldMitm(host)) {
-          return true; // 强制 MITM
+        // rewrite 规则判断（YouTube 去广告、有道词典 VIP 等）
+        // 这些规则需要 MITM 解密 response body，仅在 enable_mitm 开启时生效
+        if (enable_mitm == "1" && shouldMitm(host)) {
+          return true; // MITM 解密，执行 rewrite 规则
         }
-
-        // HTTPS 这里只判断 ip 源和域名
-        // 域名不匹配的就直接转发
-        // 域名匹配的情况下，再去看 match_rule 的判断，放到 beforeSendRequest 中
 
         // 如果是裸IP请求，全部放行
         if (net.isIPv4(host) || net.isIPv6(host)) {
           return false;
         }
 
-        // 如果没有对应ip的匹配规则
-        let shouldBlock = shouldBlockHost(host, blockRules, "");
-        if (blockRules.length === 0) {
+        // enable_mitm 关闭时纯隧道转发，不做任何拦截
+        if (enable_mitm != "1") {
           return false;
-        } else if (shouldBlock) {
-          console.log('https 拦截', host, '接下来判断是否根据 match_rule 进行拦截');
-          // 只对配置中的域名进行 HTTPS 拦截
-          return true; // 允许 HTTPS 拦截
         }
-        return false; // 不拦截 HTTPS
+
+        let shouldBlock = shouldBlockHost(host, blockRules, "");
+        if (blockRules.length > 0 && shouldBlock) {
+          // 有证书：走 MITM 解密后在 beforeSendRequest 中做完整 URL 路径级过滤
+          console.log('https 拦截', host, '接下来判断是否根据 match_rule 进行拦截');
+          return true;
+        }
+        return false; // 不拦截 HTTPS，透明隧道转发
       },
 
       // 拦截 HTTP 请求以及 HTTPS 拆包的请求
