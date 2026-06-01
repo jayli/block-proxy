@@ -4,6 +4,7 @@ import subprocess
 import threading
 import platform
 import rumps
+from AppKit import NSImage, NSSize
 from PyObjCTools import AppHelper
 from Foundation import NSObject
 from config import Config
@@ -96,7 +97,16 @@ class SocksClient(rumps.App):
             icon_name = "christmas-sock_light_bar_off.png"
         icon_path = os.path.join(self._icon_dir(), icon_name)
         if os.path.exists(icon_path):
-            self.icon = icon_path
+            image = NSImage.alloc().initByReferencingFile_(icon_path)
+            image.setSize_(NSSize(22, 22))
+            if self._template is not None:
+                image.setTemplate_(self._template)
+            self._icon = icon_path
+            self._icon_nsimage = image
+            try:
+                self._nsapp.setStatusBarIcon()
+            except AttributeError:
+                pass
         self.title = None
 
     def _is_compiled(self):
