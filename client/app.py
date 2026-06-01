@@ -93,7 +93,7 @@ class SocksClient(rumps.App):
         if self.connected:
             icon_name = "socks_on_G_bar.png" if self.config.data["mode"] == "global" else "socks_on_M_bar.png"
         else:
-            icon_name = "christmas-sock_light_bar.png"
+            icon_name = "christmas-sock_light_bar_off.png"
         icon_path = os.path.join(self._icon_dir(), icon_name)
         if os.path.exists(icon_path):
             self.icon = icon_path
