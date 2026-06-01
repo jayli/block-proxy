@@ -134,6 +134,49 @@ async def connect_upstream_socks5(server_config, dest_addr, dest_port, ssl_ctx=N
     return reader, writer
 
 
+async def connect_upstream_http(server_config, dest_addr, dest_port, ssl_ctx=None):
+    host = server_config["address"]
+    port = server_config["port"]
+    username = server_config["username"]
+    password = server_config["password"]
+    use_tls = server_config["tls"]
+
+    reader, writer = await asyncio.wait_for(
+        asyncio.open_connection(
+            host, port, ssl=ssl_ctx if use_tls else None,
+            server_hostname=host if use_tls else None,
+        ),
+        timeout=CONNECT_TIMEOUT,
+    )
+
+    async def _handshake():
+        target = f"{dest_addr}:{dest_port}"
+        lines = [f"CONNECT {target} HTTP/1.1", f"Host: {target}"]
+        if username and password:
+            import base64
+            cred = base64.b64encode(f"{username}:{password}".encode()).decode()
+            lines.append(f"Proxy-Authorization: Basic {cred}")
+        lines.append("")
+        lines.append("")
+        writer.write("\r\n".join(lines).encode())
+        await writer.drain()
+
+        status_line = await reader.readline()
+        if not status_line:
+            raise Exception("HTTP proxy closed connection")
+        parts = status_line.decode().split(" ", 2)
+        if len(parts) < 2 or not parts[1].startswith("2"):
+            raise Exception(f"HTTP proxy CONNECT failed: {status_line.decode().strip()}")
+        while True:
+            line = await reader.readline()
+            if line in (b"\r\n", b"\n", b""):
+                break
+
+    await asyncio.wait_for(_handshake(), timeout=HANDSHAKE_TIMEOUT)
+
+    return reader, writer
+
+
 async def connect_direct(dest_addr, dest_port):
     return await asyncio.open_connection(dest_addr, dest_port)
 
@@ -211,6 +254,14 @@ class ProxyCore:
     def is_running(self):
         return self._running and self._thread is not None and self._thread.is_alive()
 
+    @property
+    def socks_port(self):
+        return self._socks_port
+
+    @property
+    def http_port(self):
+        return self._http_port
+
     async def _measure_latency(self):
         import time
         start = time.monotonic()
@@ -280,12 +331,26 @@ class ProxyCore:
 
     async def _start_servers(self):
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT)
-        self._socks_server = await asyncio.start_server(
-            self._handle_socks, "127.0.0.1", self._socks_port
-        )
-        self._http_server = await asyncio.start_server(
-            self._handle_http, "127.0.0.1", self._http_port
-        )
+        max_attempts = 100
+        for attempt in range(max_attempts):
+            try:
+                self._socks_server = await asyncio.start_server(
+                    self._handle_socks, "127.0.0.1", self._socks_port
+                )
+                self._http_server = await asyncio.start_server(
+                    self._handle_http, "127.0.0.1", self._http_port
+                )
+                return
+            except OSError as e:
+                if e.errno == 48 and attempt < max_attempts - 1:
+                    if self._socks_server:
+                        self._socks_server.close()
+                        await self._socks_server.wait_closed()
+                        self._socks_server = None
+                    self._socks_port += 1
+                    self._http_port += 1
+                else:
+                    raise
 
     async def _stop_servers(self):
         if self._socks_server:
@@ -303,6 +368,11 @@ class ProxyCore:
     async def _connect_target(self, dest_addr, dest_port):
         if self._should_direct(dest_addr):
             return await connect_direct(dest_addr, dest_port)
+        protocol = self._server_config.get("protocol", "socks5")
+        if protocol == "http":
+            return await connect_upstream_http(
+                self._server_config, dest_addr, dest_port, ssl_ctx=self._ssl_ctx
+            )
         return await connect_upstream_socks5(
             self._server_config, dest_addr, dest_port, ssl_ctx=self._ssl_ctx
         )

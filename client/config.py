@@ -4,6 +4,7 @@ import copy
 
 DEFAULT_CONFIG = {
     "server": {
+        "protocol": "socks5",
         "address": "",
         "port": 8002,
         "username": "",

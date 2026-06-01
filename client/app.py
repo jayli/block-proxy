@@ -37,6 +37,7 @@ class SocksClient(rumps.App):
         self.proxy = ProxyCore()
         self.sys_proxy = SystemProxy()
         self.connected = False
+        self._config_proc = None
 
         self._measuring = False
         self._build_menu()
@@ -56,7 +57,7 @@ class SocksClient(rumps.App):
 
     def _build_menu(self):
         self.toggle_item = rumps.MenuItem("启动代理", callback=self.toggle_proxy)
-        self.config_item = rumps.MenuItem("Socks 节点配置...", callback=self.open_config)
+        self.config_item = rumps.MenuItem("Socks/HTTP 节点配置...", callback=self.open_config)
 
         self.global_item = rumps.MenuItem("全局代理（设置系统代理）", callback=self.set_global_mode)
         self.manual_item = rumps.MenuItem("手动模式（关闭系统代理）", callback=self.set_manual_mode)
@@ -145,11 +146,17 @@ class SocksClient(rumps.App):
                         "SocksClient", "启动失败", str(e),
                     )
                 return
+            if (self.proxy.socks_port != self.config.data["local"]["socks_port"]
+                    or self.proxy.http_port != self.config.data["local"]["http_port"]):
+                self.config.data["local"]["socks_port"] = self.proxy.socks_port
+                self.config.data["local"]["http_port"] = self.proxy.http_port
+                self.config.save()
+
             if self.config.data["mode"] == "global":
                 try:
                     self.sys_proxy.enable(
-                        socks_port=self.config.data["local"]["socks_port"],
-                        http_port=self.config.data["local"]["http_port"],
+                        socks_port=self.proxy.socks_port,
+                        http_port=self.proxy.http_port,
                     )
                 except Exception as e:
                     rumps.notification(
@@ -189,10 +196,11 @@ class SocksClient(rumps.App):
         self.config.save()
         script_path = os.path.join(self._bundle_resource_dir(), "config_window.py")
         python_path = self._find_python() if self._is_compiled() else sys.executable
-        proc = subprocess.Popen([python_path, script_path, self.config.config_path])
+        self._config_proc = subprocess.Popen([python_path, script_path, self.config.config_path])
 
         def _reload_after_window():
-            proc.wait()
+            self._config_proc.wait()
+            self._config_proc = None
             old_data = self.config.data.copy()
             self.config.load()
             if self.connected and self.config.data != old_data:
@@ -208,8 +216,8 @@ class SocksClient(rumps.App):
         self._update_icon()
         if self.connected:
             self.sys_proxy.enable(
-                socks_port=self.config.data["local"]["socks_port"],
-                http_port=self.config.data["local"]["http_port"],
+                socks_port=self.proxy.socks_port,
+                http_port=self.proxy.http_port,
             )
 
     def set_manual_mode(self, sender):
@@ -267,6 +275,8 @@ class SocksClient(rumps.App):
             )
 
     def quit_app(self, sender):
+        if self._config_proc and self._config_proc.poll() is None:
+            self._config_proc.terminate()
         if self.connected:
             self.sys_proxy.disable()
             threading.Thread(target=self.proxy.stop, daemon=True).start()

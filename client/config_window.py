@@ -39,12 +39,13 @@ def show_config_window(config_path):
         config = json.load(f)
 
     def save_and_close():
+        config["server"]["protocol"] = protocol_var.get()
         config["server"]["address"] = entries["address"].get()
         config["server"]["port"] = int(entries["port"].get())
         config["server"]["username"] = entries["username"].get()
         config["server"]["password"] = entries["password"].get()
         config["server"]["tls"] = tls_var.get()
-        config["server"]["allowInsecure"] = insecure_var.get() == "true"
+        config["server"]["allowInsecure"] = insecure_var.get()
         config["local"]["socks_port"] = int(entries["socks_port"].get())
         config["local"]["http_port"] = int(entries["http_port"].get())
         config["local"]["udp"] = udp_var.get()
@@ -55,12 +56,12 @@ def show_config_window(config_path):
             json.dump(config, f, indent=2)
         root.destroy()
 
-    pos = _center_on_mouse_screen(400, 460)
+    pos = _center_on_mouse_screen(400, 490)
 
     root = tk.Tk()
-    root.title("Socks 节点配置")
+    root.title("节点配置")
     root.resizable(False, False)
-    w, h = 400, 460
+    w, h = 400, 490
     if pos:
         x, y = pos
     else:
@@ -76,6 +77,16 @@ def show_config_window(config_path):
     frame.grid_columnconfigure(1, weight=1)
 
     entries = {}
+    row = 0
+
+    ttk.Label(frame, text="协议:").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
+    protocol_var = tk.StringVar(value=config["server"].get("protocol", "socks5"))
+    protocol_combo = ttk.Combobox(
+        frame, textvariable=protocol_var, values=["socks5", "http"], state="readonly", width=10
+    )
+    protocol_combo.grid(row=row, column=1, sticky="w", pady=4)
+    row += 1
+
     fields = [
         ("address", "地址:", config["server"]["address"]),
         ("port", "端口:", str(config["server"]["port"])),
@@ -85,44 +96,43 @@ def show_config_window(config_path):
         ("http_port", "本地HTTP端口:", str(config["local"]["http_port"])),
     ]
 
-    for i, (key, label, default) in enumerate(fields):
-        ttk.Label(frame, text=label).grid(row=i, column=0, sticky="w", pady=4, padx=(0, 8))
+    for key, label, default in fields:
+        ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
         entry = ttk.Entry(frame)
         entry.insert(0, default)
-        entry.grid(row=i, column=1, sticky="ew", pady=4)
+        entry.grid(row=row, column=1, sticky="ew", pady=4)
         entries[key] = entry
-
-    row = len(fields)
+        row += 1
 
     tls_var = tk.BooleanVar(value=config["server"]["tls"])
     ttk.Label(frame, text="启用 TLS:").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
-    ttk.Checkbutton(frame, variable=tls_var).grid(
-        row=row, column=1, sticky="w", pady=4
-    )
+    tls_frame = ttk.Frame(frame)
+    tls_frame.grid(row=row, column=1, sticky="w", pady=4)
+    ttk.Checkbutton(tls_frame, variable=tls_var).pack(side="left")
+    ttk.Label(tls_frame, text="（需节点服务器支持）", foreground="gray").pack(side="left")
     row += 1
 
-    ttk.Label(frame, text="allowInsecure:").grid(row=row, column=0, sticky="w", pady=4)
-    insecure_var = tk.StringVar(
-        value="true" if config["server"]["allowInsecure"] else "false"
-    )
-    insecure_combo = ttk.Combobox(
-        frame, textvariable=insecure_var, values=["true", "false"], state="readonly", width=10
-    )
-    insecure_combo.grid(row=row, column=1, sticky="w", pady=4)
+    insecure_var = tk.BooleanVar(value=config["server"]["allowInsecure"])
+    ttk.Label(frame, text="允许不安全连接:").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
+    insecure_frame = ttk.Frame(frame)
+    insecure_frame.grid(row=row, column=1, sticky="w", pady=4)
+    ttk.Checkbutton(insecure_frame, variable=insecure_var).pack(side="left")
+    ttk.Label(insecure_frame, text="（跳过证书验证）", foreground="gray").pack(side="left")
     row += 1
 
     udp_var = tk.BooleanVar(value=config["local"]["udp"])
     ttk.Label(frame, text="启用 UDP:").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
-    ttk.Checkbutton(frame, variable=udp_var).grid(
-        row=row, column=1, sticky="w", pady=4
-    )
+    udp_frame = ttk.Frame(frame)
+    udp_frame.grid(row=row, column=1, sticky="w", pady=4)
+    ttk.Checkbutton(udp_frame, variable=udp_var).pack(side="left")
     row += 1
 
     proxy_private_var = tk.BooleanVar(value=config["local"].get("proxy_private", False))
     ttk.Label(frame, text="代理私有地址段:").grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
-    ttk.Checkbutton(frame, variable=proxy_private_var).grid(
-        row=row, column=1, sticky="w", pady=4
-    )
+    private_frame = ttk.Frame(frame)
+    private_frame.grid(row=row, column=1, sticky="w", pady=4)
+    ttk.Checkbutton(private_frame, variable=proxy_private_var).pack(side="left")
+    ttk.Label(private_frame, text="（192.168.x / 172.16.x / 10.x）", foreground="gray").pack(side="left")
     row += 1
 
     ttk.Separator(frame, orient="horizontal").grid(
