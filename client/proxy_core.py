@@ -57,6 +57,7 @@ async def relay(reader, writer):
 
 CONNECT_TIMEOUT = 10
 HANDSHAKE_TIMEOUT = 10
+LOCAL_HANDSHAKE_TIMEOUT = 30
 
 
 async def connect_upstream_socks5(server_config, dest_addr, dest_port, ssl_ctx=None):
@@ -129,7 +130,15 @@ async def connect_upstream_socks5(server_config, dest_addr, dest_port, ssl_ctx=N
         elif reply[3] == 0x04:
             await reader.readexactly(16 + 2)
 
-    await asyncio.wait_for(_handshake(), timeout=HANDSHAKE_TIMEOUT)
+    try:
+        await asyncio.wait_for(_handshake(), timeout=HANDSHAKE_TIMEOUT)
+    except Exception:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except OSError:
+            pass
+        raise
 
     return reader, writer
 
@@ -172,7 +181,15 @@ async def connect_upstream_http(server_config, dest_addr, dest_port, ssl_ctx=Non
             if line in (b"\r\n", b"\n", b""):
                 break
 
-    await asyncio.wait_for(_handshake(), timeout=HANDSHAKE_TIMEOUT)
+    try:
+        await asyncio.wait_for(_handshake(), timeout=HANDSHAKE_TIMEOUT)
+    except Exception:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except OSError:
+            pass
+        raise
 
     return reader, writer
 
@@ -245,9 +262,11 @@ class ProxyCore:
                 self._loop.stop()
             self._loop.call_soon_threadsafe(_shutdown)
         if self._thread:
-            self._thread.join(timeout=2)
-        if self._loop:
-            self._loop.close()
+            self._thread.join(timeout=5)
+            if not self._thread.is_alive() and self._loop:
+                self._loop.close()
+            elif self._loop:
+                logger.warning("proxy thread did not exit in time, skipping loop.close()")
         self._loop = None
         self._thread = None
 
@@ -383,17 +402,17 @@ class ProxyCore:
 
     async def _do_handle_socks(self, client_reader, client_writer):
         try:
-            header = await client_reader.readexactly(2)
+            header = await asyncio.wait_for(client_reader.readexactly(2), timeout=LOCAL_HANDSHAKE_TIMEOUT)
             ver, nmethods = header
             if ver != 0x05:
                 client_writer.close()
                 return
-            await client_reader.readexactly(nmethods)
+            await asyncio.wait_for(client_reader.readexactly(nmethods), timeout=LOCAL_HANDSHAKE_TIMEOUT)
 
             client_writer.write(b"\x05\x00")
             await client_writer.drain()
 
-            req = await client_reader.readexactly(4)
+            req = await asyncio.wait_for(client_reader.readexactly(4), timeout=LOCAL_HANDSHAKE_TIMEOUT)
             ver, cmd, _, atyp = req
 
             if cmd != 0x01:
@@ -405,13 +424,13 @@ class ProxyCore:
                 return
 
             if atyp == 0x01:
-                raw = await client_reader.readexactly(4)
+                raw = await asyncio.wait_for(client_reader.readexactly(4), timeout=LOCAL_HANDSHAKE_TIMEOUT)
                 dest_addr = str(ipaddress.IPv4Address(raw))
             elif atyp == 0x03:
-                length = (await client_reader.readexactly(1))[0]
-                dest_addr = (await client_reader.readexactly(length)).decode("utf-8")
+                length = (await asyncio.wait_for(client_reader.readexactly(1), timeout=LOCAL_HANDSHAKE_TIMEOUT))[0]
+                dest_addr = (await asyncio.wait_for(client_reader.readexactly(length), timeout=LOCAL_HANDSHAKE_TIMEOUT)).decode("utf-8")
             elif atyp == 0x04:
-                raw = await client_reader.readexactly(16)
+                raw = await asyncio.wait_for(client_reader.readexactly(16), timeout=LOCAL_HANDSHAKE_TIMEOUT)
                 dest_addr = str(ipaddress.IPv6Address(raw))
             else:
                 client_writer.write(
@@ -421,7 +440,7 @@ class ProxyCore:
                 client_writer.close()
                 return
 
-            port_data = await client_reader.readexactly(2)
+            port_data = await asyncio.wait_for(client_reader.readexactly(2), timeout=LOCAL_HANDSHAKE_TIMEOUT)
             dest_port = struct.unpack("!H", port_data)[0]
 
             remote_reader, remote_writer = await self._connect_target(
@@ -452,7 +471,7 @@ class ProxyCore:
 
     async def _do_handle_http(self, client_reader, client_writer):
         try:
-            raw_line = await client_reader.readline()
+            raw_line = await asyncio.wait_for(client_reader.readline(), timeout=LOCAL_HANDSHAKE_TIMEOUT)
             if not raw_line:
                 client_writer.close()
                 return
@@ -474,7 +493,7 @@ class ProxyCore:
                     port = 443
 
                 while True:
-                    header_line = await client_reader.readline()
+                    header_line = await asyncio.wait_for(client_reader.readline(), timeout=LOCAL_HANDSHAKE_TIMEOUT)
                     if header_line in (b"\r\n", b"\n", b""):
                         break
 
@@ -512,7 +531,7 @@ class ProxyCore:
 
                     headers = []
                     while True:
-                        header_line = await client_reader.readline()
+                        header_line = await asyncio.wait_for(client_reader.readline(), timeout=LOCAL_HANDSHAKE_TIMEOUT)
                         if header_line in (b"\r\n", b"\n", b""):
                             break
                         headers.append(header_line)
