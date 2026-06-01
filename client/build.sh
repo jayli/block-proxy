@@ -43,6 +43,8 @@ sips -z 128 128 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_128x128.pn
 sips -z 256 256 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_128x128@2x.png" &>/dev/null
 sips -z 256 256 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_256x256.png" &>/dev/null
 sips -z 512 512 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_256x256@2x.png" &>/dev/null
+sips -z 512 512 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_512x512.png" &>/dev/null
+sips -z 1024 1024 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_512x512@2x.png" &>/dev/null
 iconutil -c icns "$ICONSET" -o "$SCRIPT_DIR/icons/app.icns"
 rm -rf "$(dirname "$ICONSET")"
 
@@ -71,6 +73,10 @@ plutil -replace CFBundleExecutable -string "$APP_NAME" "$APP_DIR/Contents/Info.p
 plutil -replace CFBundleIdentifier -string "$BUNDLE_ID" "$APP_DIR/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$VERSION" "$APP_DIR/Contents/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$VERSION" "$APP_DIR/Contents/Info.plist"
+plutil -replace NSSupportsAutomaticIconComposition -bool false "$APP_DIR/Contents/Info.plist"
+
+echo "==> Setting custom icon (bypass Liquid Glass)..."
+fileicon set "$APP_DIR" "$SCRIPT_DIR/icons/app_icon.png"
 
 echo "==> Cleaning Nuitka build artifacts..."
 rm -rf "$DIST_DIR/main.build" "$DIST_DIR/main.dist"
