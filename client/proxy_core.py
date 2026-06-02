@@ -29,6 +29,21 @@ def is_private_ip(host):
 
 
 RELAY_IDLE_TIMEOUT = 300
+UDP_IDLE_TIMEOUT = 120
+
+
+async def write_udp_frame(writer, data):
+    frame = struct.pack("!H", len(data)) + data
+    writer.write(frame)
+    await writer.drain()
+
+
+async def read_udp_frame(reader):
+    length_data = await reader.readexactly(2)
+    length = struct.unpack("!H", length_data)[0]
+    if length == 0 or length > 65535:
+        raise Exception("invalid UDP frame length")
+    return await reader.readexactly(length)
 
 
 async def relay(reader, writer):
@@ -194,11 +209,101 @@ async def connect_upstream_http(server_config, dest_addr, dest_port, ssl_ctx=Non
     return reader, writer
 
 
+async def connect_upstream_udp_associate(server_config, ssl_ctx=None):
+    host = server_config["address"]
+    port = server_config["port"]
+    username = server_config["username"]
+    password = server_config["password"]
+    use_tls = server_config["tls"]
+
+    reader, writer = await asyncio.wait_for(
+        asyncio.open_connection(
+            host, port, ssl=ssl_ctx if use_tls else None,
+            server_hostname=host if use_tls else None,
+        ),
+        timeout=CONNECT_TIMEOUT,
+    )
+
+    async def _handshake():
+        if username and password:
+            writer.write(b"\x05\x01\x02")
+        else:
+            writer.write(b"\x05\x01\x00")
+        await writer.drain()
+
+        resp = await reader.readexactly(2)
+        if resp[0] != 0x05:
+            raise Exception("SOCKS5 version mismatch")
+
+        if resp[1] == 0x02:
+            uname = username.encode("utf-8")
+            passwd = password.encode("utf-8")
+            writer.write(
+                b"\x01"
+                + struct.pack("B", len(uname))
+                + uname
+                + struct.pack("B", len(passwd))
+                + passwd
+            )
+            await writer.drain()
+            auth_resp = await reader.readexactly(2)
+            if auth_resp[1] != 0x00:
+                raise Exception("SOCKS5 auth failed")
+        elif resp[1] == 0xFF:
+            raise Exception("SOCKS5 no acceptable auth method")
+
+        # CMD=0x03 UDP ASSOCIATE, DST.ADDR=0.0.0.0:0
+        writer.write(b"\x05\x03\x00\x01" + b"\x00" * 4 + b"\x00\x00")
+        await writer.drain()
+
+        reply = await reader.readexactly(4)
+        if reply[1] != 0x00:
+            raise Exception(f"SOCKS5 UDP ASSOCIATE failed: {reply[1]:#x}")
+
+        if reply[3] == 0x01:
+            await reader.readexactly(4 + 2)
+        elif reply[3] == 0x03:
+            length = (await reader.readexactly(1))[0]
+            await reader.readexactly(length + 2)
+        elif reply[3] == 0x04:
+            await reader.readexactly(16 + 2)
+
+    try:
+        await asyncio.wait_for(_handshake(), timeout=HANDSHAKE_TIMEOUT)
+    except Exception:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except OSError:
+            pass
+        raise
+
+    return reader, writer
+
+
 async def connect_direct(dest_addr, dest_port):
     return await asyncio.open_connection(dest_addr, dest_port)
 
 
 MAX_CONCURRENT = 256
+
+
+class _UdpRelayProtocol(asyncio.DatagramProtocol):
+    def __init__(self, tcp_writer, loop):
+        self._tcp_writer = tcp_writer
+        self._loop = loop
+        self.client_addr = None
+        self.transport = None
+
+    def connection_made(self, transport):
+        self.transport = transport
+
+    def datagram_received(self, data, addr):
+        self.client_addr = addr
+        if self._tcp_writer.is_closing():
+            return
+        frame = struct.pack("!H", len(data)) + data
+        self._tcp_writer.write(frame)
 
 
 class ProxyCore:
@@ -210,6 +315,7 @@ class ProxyCore:
         self._running = False
         self._server_config = None
         self._proxy_private = False
+        self._udp_enabled = True
         self._socks_port = 1080
         self._http_port = 1087
         self._ssl_ctx = None
@@ -235,6 +341,7 @@ class ProxyCore:
         self._socks_port = local["socks_port"]
         self._http_port = local["http_port"]
         self._proxy_private = local.get("proxy_private", False)
+        self._udp_enabled = local.get("udp", True)
         self._build_ssl_context()
 
         self._loop = asyncio.new_event_loop()
@@ -415,6 +522,10 @@ class ProxyCore:
             req = await asyncio.wait_for(client_reader.readexactly(4), timeout=LOCAL_HANDSHAKE_TIMEOUT)
             ver, cmd, _, atyp = req
 
+            if cmd == 0x03:
+                await self._handle_udp_associate(client_reader, client_writer, atyp)
+                return
+
             if cmd != 0x01:
                 client_writer.write(
                     b"\x05\x07\x00\x01" + b"\x00" * 4 + b"\x00\x00"
@@ -459,6 +570,90 @@ class ProxyCore:
         except Exception:
             pass
         finally:
+            try:
+                client_writer.close()
+                await client_writer.wait_closed()
+            except OSError:
+                pass
+
+    async def _handle_udp_associate(self, client_reader, client_writer, atyp):
+        # 消费掉请求中剩余的地址和端口字段
+        try:
+            if atyp == 0x01:
+                await asyncio.wait_for(client_reader.readexactly(4 + 2), timeout=LOCAL_HANDSHAKE_TIMEOUT)
+            elif atyp == 0x03:
+                length = (await asyncio.wait_for(client_reader.readexactly(1), timeout=LOCAL_HANDSHAKE_TIMEOUT))[0]
+                await asyncio.wait_for(client_reader.readexactly(length + 2), timeout=LOCAL_HANDSHAKE_TIMEOUT)
+            elif atyp == 0x04:
+                await asyncio.wait_for(client_reader.readexactly(16 + 2), timeout=LOCAL_HANDSHAKE_TIMEOUT)
+        except Exception:
+            client_writer.close()
+            return
+
+        protocol = self._server_config.get("protocol", "socks5")
+        udp_enabled = getattr(self, "_udp_enabled", True)
+        if protocol != "socks5" or not udp_enabled:
+            client_writer.write(b"\x05\x07\x00\x01" + b"\x00" * 4 + b"\x00\x00")
+            await client_writer.drain()
+            client_writer.close()
+            return
+
+        try:
+            remote_reader, remote_writer = await connect_upstream_udp_associate(
+                self._server_config, ssl_ctx=self._ssl_ctx
+            )
+        except Exception:
+            client_writer.write(b"\x05\x05\x00\x01" + b"\x00" * 4 + b"\x00\x00")
+            await client_writer.drain()
+            client_writer.close()
+            return
+
+        loop = asyncio.get_event_loop()
+        transport, udp_relay = await loop.create_datagram_endpoint(
+            lambda: _UdpRelayProtocol(remote_writer, loop),
+            local_addr=("127.0.0.1", 0),
+        )
+        relay_addr = transport.get_extra_info("sockname")
+        relay_port = relay_addr[1]
+
+        # 回复客户端 UDP relay 地址
+        reply = b"\x05\x00\x00\x01\x7f\x00\x00\x01" + struct.pack("!H", relay_port)
+        client_writer.write(reply)
+        await client_writer.drain()
+
+        async def _tcp_to_udp():
+            try:
+                while True:
+                    frame_data = await asyncio.wait_for(
+                        read_udp_frame(remote_reader), timeout=UDP_IDLE_TIMEOUT
+                    )
+                    if udp_relay.client_addr:
+                        transport.sendto(frame_data, udp_relay.client_addr)
+            except (asyncio.TimeoutError, asyncio.IncompleteReadError,
+                    ConnectionResetError, BrokenPipeError, OSError):
+                pass
+
+        async def _wait_control_close():
+            try:
+                await client_reader.read(1)
+            except (ConnectionResetError, BrokenPipeError, OSError):
+                pass
+
+        tasks = [
+            asyncio.ensure_future(_tcp_to_udp()),
+            asyncio.ensure_future(_wait_control_close()),
+        ]
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in tasks:
+                t.cancel()
+        finally:
+            transport.close()
+            remote_writer.close()
+            try:
+                await remote_writer.wait_closed()
+            except OSError:
+                pass
             try:
                 client_writer.close()
                 await client_writer.wait_closed()
