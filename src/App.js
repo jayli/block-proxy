@@ -77,7 +77,7 @@ function App() {
         } else if (data.ips.length >= 1) {
           localIp = data.ips[0].address;
         }
-        QRCode.toCanvas(document.getElementById('qrcode'), `http://${localIp}:8003/fetchCrtFile`);
+        QRCode.toCanvas(document.getElementById('qrcode'), `${window.location.origin}/fetchCrtFile`);
       } else {
         showToast('获取服务器IP失败', 'error');
       }
@@ -702,7 +702,7 @@ function App() {
           <p>
             <span>
               扫码安装证书：
-              <a href={`http://${getIpAddress()}:8003/fetchCrtFile`} target="_blank">下载</a>
+              <a href={`${window.location.origin}/fetchCrtFile`} target="_blank">下载</a>
             </span><br />
             <canvas id="qrcode"></canvas>
           </p>
