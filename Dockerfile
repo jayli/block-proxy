@@ -36,7 +36,8 @@ WORKDIR /app
 # 从构建阶段复制文件 (现在复制的是为正确架构构建的 node_modules)
 COPY --from=builder --chown=nodeuser:nodejs /app /app
 
-# 复制证书
+# 复制证书（清理旧域名证书缓存，确保用新 rootCA 重新签发）
+RUN rm -rf /root/.anyproxy/certificates
 COPY cert/rootCA.key /root/.anyproxy/certificates/
 COPY cert/rootCA.crt /root/.anyproxy/certificates/
 # COPY init_permissions.sh /app/

@@ -492,7 +492,29 @@ function getMacByIp(ipAddress) {
 // 保存代理服务器实例的变量
 let proxyServerInstance = null;
 
+function ensureRootCA() {
+  const anyproxyDir = path.join(os.homedir(), '.anyproxy', 'certificates');
+  const targetCrt = path.join(anyproxyDir, 'rootCA.crt');
+  const targetKey = path.join(anyproxyDir, 'rootCA.key');
+  const srcCrt = path.join(__dirname, '../cert/rootCA.crt');
+  const srcKey = path.join(__dirname, '../cert/rootCA.key');
+
+  if (fs.existsSync(targetCrt) && fs.existsSync(targetKey)) {
+    return;
+  }
+
+  if (!fs.existsSync(srcCrt) || !fs.existsSync(srcKey)) {
+    return;
+  }
+
+  fs.mkdirSync(anyproxyDir, { recursive: true });
+  fs.copyFileSync(srcCrt, targetCrt);
+  fs.copyFileSync(srcKey, targetKey);
+  console.log('✅ 已将 cert/rootCA.* 复制到 ~/.anyproxy/certificates/');
+}
+
 function startProxyServer() {
+  ensureRootCA();
   // Check if root CA is needed
   if (!AnyProxy.utils.certMgr.ifRootCAFileExists()) {
     AnyProxy.utils.certMgr.generateRootCA((error, keyPath) => {
