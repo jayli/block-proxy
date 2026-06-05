@@ -9,11 +9,13 @@ const BACKUP_FILE_PATH = path.join(__dirname, '../config_backup.json');
 // 传入的是对象
 async function writeConfig(newData) {
   try {
-    await fs.writeFile(CONFIG_FILE_PATH, JSON.stringify(newData, null, 2), 'utf8');
-    // console.log('Config file written successfully');
+    const jsonStr = JSON.stringify(newData, null, 2);
+    await fs.writeFile(CONFIG_FILE_PATH, jsonStr, 'utf8');
+    // 写入成功后同步更新备份，确保 backup 始终是最新有效版本
+    await backupConfig(newData);
   } catch (error) {
     console.error('Error writing config file:', error.message);
-    throw error; // 或者根据需要处理错误
+    throw error;
   }
 }
 
