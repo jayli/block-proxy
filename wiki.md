@@ -93,6 +93,12 @@ module.exports = {
 
 ### Docker 部署 - 端口绑定模式（Windows/Mac）
 
+先导入：
+
+`docker load -i block-proxy.tar`
+
+然后：
+
 ```bash
 docker run --init -d --restart=unless-stopped --user=root \
   -v "$(pwd)/":/app/config \
