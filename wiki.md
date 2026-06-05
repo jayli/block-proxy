@@ -22,6 +22,12 @@ docker login --username=hi50078584@aliyun.com crpi-x1zji86f6jpcd7t1.cn-hangzhou.
 
 ### Docker 部署 - host 网络模式（推荐）
 
+先导入：
+
+`docker load -i block-proxy.tar`
+
+然后：
+
 网关里为了方便获取子网机器 IP 和 MAC 地址，容器需要和宿主机共享同一个网络：
 
 ```bash
@@ -93,11 +99,6 @@ module.exports = {
 
 ### Docker 部署 - 端口绑定模式（Windows/Mac）
 
-先导入：
-
-`docker load -i block-proxy.tar`
-
-然后：
 
 ```bash
 docker run --init -d --restart=unless-stopped --user=root \
