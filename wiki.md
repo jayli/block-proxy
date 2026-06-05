@@ -75,7 +75,7 @@ module.exports = {
   MyRule: [{
     type: 'beforeSendRequest',
     host: 'example.com',
-    regexp: '^https?://example\\.com/blocked',
+    regexp: "/123/v1/(browse|next)",
     callback: async function(url, request, response) {
       return {
         response: {
