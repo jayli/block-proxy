@@ -72,6 +72,12 @@ class LogWindow:
 
         self.current_tab = "access"
         self.show_access()
+        self._bring_to_front()
+
+    def _bring_to_front(self):
+        self.root.lift()
+        self.root.attributes("-topmost", True)
+        self.root.after(100, lambda: self.root.attributes("-topmost", False))
 
     def show_access(self):
         self.current_tab = "access"
