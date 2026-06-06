@@ -324,19 +324,46 @@ class SocksClient(rumps.App):
         threading.Thread(target=_check, daemon=True).start()
 
     def _start_health_check(self):
+        MAX_RESTART_ATTEMPTS = 3
+        RESTART_DELAY = 2
+
         def check():
+            import time
+            restart_count = 0
             while True:
-                import time
                 time.sleep(5)
-                if self.connected and not self.proxy.is_running():
-                    def _handle_disconnect():
+                if not self.connected:
+                    restart_count = 0
+                    continue
+                if self.proxy.is_running():
+                    restart_count = 0
+                    continue
+
+                from logger import crash_logger
+                crash_logger.warning("Proxy thread died, attempting restart (%d/%d)",
+                                     restart_count + 1, MAX_RESTART_ATTEMPTS)
+
+                if restart_count >= MAX_RESTART_ATTEMPTS:
+                    def _notify_failed():
                         self._disconnect()
                         rumps.notification(
                             "SocksClient",
                             "代理已断开",
-                            "代理进程意外退出",
+                            f"代理连续 {MAX_RESTART_ATTEMPTS} 次重启失败，已停止",
                         )
-                    AppHelper.callAfter(_handle_disconnect)
+                    AppHelper.callAfter(_notify_failed)
+                    restart_count = 0
+                    continue
+
+                time.sleep(RESTART_DELAY)
+                try:
+                    self.proxy.stop()
+                    self.proxy.start(self.config.data)
+                    restart_count = 0
+                    crash_logger.warning("Proxy restarted successfully")
+                except Exception as e:
+                    restart_count += 1
+                    crash_logger.warning("Proxy restart failed: %s", e, exc_info=True)
 
         t = threading.Thread(target=check, daemon=True)
         t.start()
