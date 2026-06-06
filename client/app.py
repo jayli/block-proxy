@@ -139,14 +139,12 @@ class SocksClient(rumps.App):
                 self.proxy.start(self.config.data)
             except OSError as e:
                 if e.errno == 48:
-                    rumps.notification(
-                        "SocksClient", "启动失败",
-                        f"端口被占用，请检查端口是否已被其他程序使用",
-                    )
+                    msg = "端口被占用，请检查端口是否已被其他程序使用"
                 else:
-                    rumps.notification(
-                        "SocksClient", "启动失败", str(e),
-                    )
+                    msg = str(e)
+                AppHelper.callAfter(
+                    lambda: rumps.notification("SocksClient", "启动失败", msg)
+                )
                 return
             if (self.proxy.socks_port != self.config.data["local"]["socks_port"]
                     or self.proxy.http_port != self.config.data["local"]["http_port"]):
@@ -161,8 +159,9 @@ class SocksClient(rumps.App):
                         http_port=self.proxy.http_port,
                     )
                 except Exception as e:
-                    rumps.notification(
-                        "SocksClient", "系统代理设置失败", str(e),
+                    err_msg = str(e)
+                    AppHelper.callAfter(
+                        lambda: rumps.notification("SocksClient", "系统代理设置失败", err_msg)
                     )
 
             def _update_ui():
@@ -211,8 +210,10 @@ class SocksClient(rumps.App):
             old_data = self.config.data.copy()
             self.config.load()
             if self.connected and self.config.data != old_data:
-                self._disconnect()
-                self._connect()
+                def _reconnect():
+                    self._disconnect()
+                    self._connect()
+                AppHelper.callAfter(_reconnect)
 
         threading.Thread(target=_reload_after_window, daemon=True).start()
 
@@ -328,12 +329,14 @@ class SocksClient(rumps.App):
                 import time
                 time.sleep(5)
                 if self.connected and not self.proxy.is_running():
-                    self._disconnect()
-                    rumps.notification(
-                        "SocksClient",
-                        "代理已断开",
-                        "代理进程意外退出",
-                    )
+                    def _handle_disconnect():
+                        self._disconnect()
+                        rumps.notification(
+                            "SocksClient",
+                            "代理已断开",
+                            "代理进程意外退出",
+                        )
+                    AppHelper.callAfter(_handle_disconnect)
 
         t = threading.Thread(target=check, daemon=True)
         t.start()
