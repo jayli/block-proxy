@@ -19,6 +19,8 @@ def acquire_lock():
 
 def main():
     lock = acquire_lock()
+    from logger import setup_logging
+    setup_logging()
     from app import SocksClient
     client = SocksClient()
     client.run()
