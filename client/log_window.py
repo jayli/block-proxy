@@ -1,10 +1,20 @@
 import os
+import platform
 import sys
 import tkinter as tk
 from tkinter import ttk
 
 LOG_DIR = os.path.expanduser("~/Library/Application Support/SocksClient/logs")
 LINES_TO_SHOW = 100
+
+
+def _macos_setup():
+    try:
+        from AppKit import NSApp
+        NSApp.setActivationPolicy_(1)
+        NSApp.activateIgnoringOtherApps_(True)
+    except ImportError:
+        pass
 
 
 def read_last_lines(filepath, n):
@@ -117,4 +127,6 @@ class LogWindow:
 
 
 if __name__ == "__main__":
+    if platform.system() == "Darwin":
+        _macos_setup()
     LogWindow().run()
