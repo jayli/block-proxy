@@ -8,6 +8,15 @@ import threading
 
 logger = logging.getLogger("proxy_core")
 
+from logger import access_logger, crash_logger
+
+
+def _log_access(dest_addr, dest_port, method, direct, ok):
+    route = "direct" if direct else "proxy"
+    status = "ok" if ok else "fail"
+    access_logger.info(f"{method} | {dest_addr}:{dest_port} | {route} | {status}")
+
+
 PRIVATE_NETWORKS = [
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("10.0.0.0/8"),
@@ -554,9 +563,18 @@ class ProxyCore:
             port_data = await asyncio.wait_for(client_reader.readexactly(2), timeout=LOCAL_HANDSHAKE_TIMEOUT)
             dest_port = struct.unpack("!H", port_data)[0]
 
-            remote_reader, remote_writer = await self._connect_target(
-                dest_addr, dest_port
-            )
+            direct = self._should_direct(dest_addr)
+            try:
+                remote_reader, remote_writer = await self._connect_target(
+                    dest_addr, dest_port
+                )
+            except Exception as e:
+                _log_access(dest_addr, dest_port, "CONNECT", direct, False)
+                if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
+                    crash_logger.warning(f"SOCKS5 connect failed: {dest_addr}:{dest_port}", exc_info=True)
+                return
+
+            _log_access(dest_addr, dest_port, "CONNECT", direct, True)
 
             client_writer.write(
                 b"\x05\x00\x00\x01" + b"\x00" * 4 + b"\x00\x00"
@@ -567,8 +585,9 @@ class ProxyCore:
                 relay(client_reader, remote_writer),
                 relay(remote_reader, client_writer),
             )
-        except Exception:
-            pass
+        except Exception as e:
+            if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
+                crash_logger.warning("SOCKS5 handler unexpected error", exc_info=True)
         finally:
             try:
                 client_writer.close()
@@ -602,7 +621,11 @@ class ProxyCore:
             remote_reader, remote_writer = await connect_upstream_udp_associate(
                 self._server_config, ssl_ctx=self._ssl_ctx
             )
-        except Exception:
+            _log_access("UDP-ASSOCIATE", 0, "UDP", False, True)
+        except Exception as e:
+            _log_access("UDP-ASSOCIATE", 0, "UDP", False, False)
+            if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
+                crash_logger.warning("UDP associate failed", exc_info=True)
             client_writer.write(b"\x05\x05\x00\x01" + b"\x00" * 4 + b"\x00\x00")
             await client_writer.drain()
             client_writer.close()
@@ -692,9 +715,18 @@ class ProxyCore:
                     if header_line in (b"\r\n", b"\n", b""):
                         break
 
-                remote_reader, remote_writer = await self._connect_target(
-                    host, port
-                )
+                direct = self._should_direct(host)
+                try:
+                    remote_reader, remote_writer = await self._connect_target(
+                        host, port
+                    )
+                except Exception as e:
+                    _log_access(host, port, "CONNECT", direct, False)
+                    if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
+                        crash_logger.warning(f"HTTP CONNECT failed: {host}:{port}", exc_info=True)
+                    return
+
+                _log_access(host, port, "CONNECT", direct, True)
 
                 client_writer.write(
                     b"HTTP/1.1 200 Connection Established\r\n\r\n"
@@ -731,9 +763,18 @@ class ProxyCore:
                             break
                         headers.append(header_line)
 
-                    remote_reader, remote_writer = await self._connect_target(
-                        host, port
-                    )
+                    direct = self._should_direct(host)
+                    try:
+                        remote_reader, remote_writer = await self._connect_target(
+                            host, port
+                        )
+                    except Exception as e:
+                        _log_access(host, port, method, direct, False)
+                        if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
+                            crash_logger.warning(f"HTTP request failed: {host}:{port}", exc_info=True)
+                        return
+
+                    _log_access(host, port, method, direct, True)
 
                     request_line = f"{method} {path} {parts[2]}\r\n".encode()
                     remote_writer.write(request_line)
@@ -749,8 +790,9 @@ class ProxyCore:
                 else:
                     client_writer.close()
                     return
-        except Exception:
-            pass
+        except Exception as e:
+            if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
+                crash_logger.warning("HTTP handler unexpected error", exc_info=True)
         finally:
             try:
                 client_writer.close()
