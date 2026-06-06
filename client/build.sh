@@ -58,6 +58,7 @@ $PYTHON -m nuitka \
     --macos-app-mode=ui-element \
     --include-data-dir=icons=icons \
     --include-data-files=config_window.py=config_window.py \
+    --include-data-files=log_window.py=log_window.py \
     --enable-plugin=no-qt \
     --output-dir="$DIST_DIR" \
     main.py
