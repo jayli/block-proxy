@@ -63,6 +63,7 @@ class SocksClient(rumps.App):
         self.manual_item = rumps.MenuItem("手动模式（关闭系统代理）", callback=self.set_manual_mode)
 
         self.about_item = rumps.MenuItem("关于", callback=self.show_about)
+        self.log_item = rumps.MenuItem("查看日志...", callback=self.open_log)
         self.quit_item = rumps.MenuItem("退出", callback=self.quit_app)
 
         self.menu = [
@@ -72,6 +73,7 @@ class SocksClient(rumps.App):
             self.global_item,
             self.manual_item,
             None,
+            self.log_item,
             self.about_item,
             None,
             self.quit_item,
@@ -181,6 +183,11 @@ class SocksClient(rumps.App):
 
     def open_config(self, sender):
         self._show_config_window()
+
+    def open_log(self, sender):
+        script_path = os.path.join(self._bundle_resource_dir(), "log_window.py")
+        python_path = self._find_python() if self._is_compiled() else sys.executable
+        subprocess.Popen([python_path, script_path])
 
     def _find_python(self):
         for p in [
