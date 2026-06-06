@@ -16,10 +16,14 @@ access_logger = logging.getLogger("socksclient.access")
 crash_logger = logging.getLogger("socksclient.crash")
 
 _crash_file = None
+_initialized = False
 
 
 def setup_logging(log_dir=None):
-    global _crash_file
+    global _crash_file, _initialized
+    if _initialized:
+        return
+    _initialized = True
 
     if log_dir is None:
         log_dir = DEFAULT_LOG_DIR
@@ -51,9 +55,9 @@ def setup_logging(log_dir=None):
     crash_logger.addHandler(crash_handler)
     crash_logger.setLevel(logging.WARNING)
 
-    # faulthandler — writes C-level tracebacks directly to crash.log fd
-    crash_log_path = os.path.join(log_dir, "crash.log")
-    _crash_file = open(crash_log_path, "a")
+    # faulthandler — writes C-level tracebacks to a separate fault.log
+    fault_log_path = os.path.join(log_dir, "fault.log")
+    _crash_file = open(fault_log_path, "a")
     faulthandler.enable(file=_crash_file)
 
     # sys.excepthook — uncaught Python exceptions

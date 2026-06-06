@@ -1,7 +1,7 @@
 import os
+import shutil
 import sys
 import tempfile
-import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -10,6 +10,17 @@ class TestSetupLogging:
     def setup_method(self):
         self.tmp_dir = tempfile.mkdtemp()
         self.log_dir = os.path.join(self.tmp_dir, "logs")
+
+    def teardown_method(self):
+        from logger import access_logger, crash_logger
+        import logger
+        access_logger.handlers.clear()
+        crash_logger.handlers.clear()
+        logger._initialized = False
+        if logger._crash_file and not logger._crash_file.closed:
+            logger._crash_file.close()
+        logger._crash_file = None
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def test_creates_log_directory(self):
         from logger import setup_logging
