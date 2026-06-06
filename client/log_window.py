@@ -127,6 +127,7 @@ class LogWindow:
 
 
 if __name__ == "__main__":
+    window = LogWindow()
     if platform.system() == "Darwin":
-        _macos_setup()
-    LogWindow().run()
+        window.root.after(50, _macos_setup)
+    window.run()
