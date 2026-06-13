@@ -1,6 +1,6 @@
 {
   "name": "block-proxy",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "Small-scale network mitm proxy filter",
   "bin": {
     "block-proxy": "bin/start.js"
@@ -37,7 +37,7 @@
     "eject": "react-scripts eject"
   },
   "devDependencies": {
-    "@bachi/anyproxy": "^0.1.6",
+    "@bachi/anyproxy": "^0.1.8",
     "@craco/craco": "^7.1.0",
     "axios": "^1.13.2",
     "commander": "^14.0.2",
