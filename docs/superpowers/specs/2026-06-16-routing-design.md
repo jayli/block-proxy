@@ -73,9 +73,9 @@ message GeoSiteList {
 
 ### 解析策略
 
-- **启动预热**：`ProxyCore.start()` 时如果 routing 启用，在后台线程中预加载 geodata（不阻塞事件循环）
+- **选择性启动加载**：`ProxyCore.start()` 时如果 routing 启用，构造 `RoutingEngine` 并同步加载 geodata；当前 app 已在后台线程调用 `_connect()`，因此加载不会阻塞主 UI，也发生在 asyncio event loop 启动前，不会阻塞请求处理
 - **缓存**：加载后缓存到 RoutingEngine 实例变量，整个代理生命周期内只解析一次
-- **按需加载**：仅加载实际用到的文件（有 geosite 规则才加载 geosite.dat，有 geoip 规则才加载 geoip.dat）
+- **按规则选择文件**：仅加载实际用到的文件（有 geosite 规则才加载 geosite.dat，有 geoip 规则才加载 geoip.dat）
 - **加载失败降级**：文件不存在或解析异常时，对应类型规则全部不命中（包括取反规则也不命中），日志记录 warning
 - **geosite** → `{tag: [DomainRule]}` 字典，key 为小写 country_code
 - **geoip** → `{code: [IPv4Network/IPv6Network]}` 字典
@@ -95,7 +95,7 @@ message GeoSiteList {
 统一使用一个 helper 函数定位 geodata 目录，避免 `app.py` 用 `_bundle_resource_dir()` 而 `proxy_core.py` 用 `os.path.dirname(__file__)` 的不一致：
 
 ```python
-# 在 routing.py 或 proxy_core.py 中
+# 在 routing.py 中
 def _geodata_dir():
     """geodata 目录：编译后用 executable 同级目录，开发时用 __file__ 同级目录"""
     if "__compiled__" in globals() or getattr(sys, "frozen", False):
@@ -121,21 +121,22 @@ geoip:!cn        # 匹配非中国 IP（取反）
 **完整优先级链（从高到低）：**
 
 ```python
-def _connect_target(dest_addr, dest_port, is_domain):
+def _select_route(dest_addr, is_domain):
     # 0. 私网 IP 直连（最高优先级，不受 routing 开关影响）
     if _should_direct(dest_addr):  # 现有逻辑：私有地址段
-        return connect_direct(...)
+        return "direct"
 
     # 1. routing 未启用 → 走上游代理
     if not routing_enabled:
-        return connect_upstream(...)
+        return "proxy"
 
     # 2. routing.resolve() 判断
-    action = routing.resolve(dest_addr, is_domain)
-    if action == "direct":
+    return routing.resolve(dest_addr, is_domain)  # "direct" or "proxy"
+
+def _connect_target(dest_addr, dest_port, route):
+    if route == "direct":
         return connect_direct(...)
-    else:  # "proxy" 或 resolve 返回 default
-        return connect_upstream(...)
+    return connect_upstream(...)
 ```
 
 **routing.resolve() 内部优先级：**
@@ -179,7 +180,7 @@ def resolve(host: str, is_domain: bool) -> str:
 
 **安全策略（防止取反规则灾难性误路由）：**
 
-当 geodata 文件缺失、解析失败、或引用了未知 tag 时，基础匹配结果视为"未知"（而非"不匹配"）。取反规则对"未知"结果仍然返回"不匹配"——即取反规则只有在基础数据确认存在时才生效。
+当 geodata 文件缺失、解析失败、或引用了未知 tag 时，基础匹配结果视为"未知"（而非"不匹配"）。取反规则对"未知"结果仍然返回"不匹配"——即取反规则只有在基础数据确认存在且 tag 确认存在时才生效。
 
 ```python
 # 伪代码
@@ -187,6 +188,10 @@ def _match_rule(rule_type, code, negated, host, is_domain):
     data_available = _check_data_loaded(rule_type)
     if not data_available:
         # 数据不可用 → 无论是否取反，都不命中
+        return False
+    if not _tag_exists(rule_type, code):
+        # tag 不存在通常是配置拼写错误 → 无论是否取反，都不命中
+        logger.warning("Unknown routing tag: %s:%s", rule_type, code)
         return False
 
     base_match = _do_match(rule_type, code, host, is_domain)
@@ -197,7 +202,7 @@ def _match_rule(rule_type, code, negated, host, is_domain):
 
 这意味着：
 - geodata 全部缺失 → 所有规则（包括取反）都不命中 → 走默认动作 → 安全降级
-- 未知 tag（如 `geosite:nonexistent`）→ 基础匹配 False → 取反后 True → 命中。**这是预期行为**，用户应对自己配置的 tag 负责
+- 未知 tag（如 `geosite:nonexistent`）→ 所有相关规则（包括 `geosite:!nonexistent`）都不命中，日志记录 warning，避免拼写错误导致大面积误路由
 - geodata 文件加载异常 → 该类型所有规则不命中 → 安全降级
 
 ### proxy_core.py 集成
@@ -215,6 +220,8 @@ def _match_rule(rule_type, code, negated, host, is_domain):
 4. **routing 未启用时**（`routing.enabled == False`）：跳过路由判断，所有流量走代理（现有行为不变）
 
 5. **UDP ASSOCIATE**：不参与分流，始终走上游 SOCKS5 UDP ASSOCIATE 通道。原因：UDP 目标地址可能是任意端口/IP，做分流需要额外的 DNS 解析和协议解析，复杂度高且收益低。
+
+6. **访问日志 route 标记**：连接前先调用 `_select_route()` 得到本次尝试的 route（`"direct"` 或 `"proxy"`），调用方用该结果写 access log，不能继续用 `_should_direct(host)` 推断，否则 geosite/geoip 命中的直连流量会被误记为 proxy。失败日志也使用 `_select_route()` 的结果，确保连接失败时仍能看到尝试路径。
 
 ## 配置存储
 
@@ -353,7 +360,8 @@ Socks/HTTP 节点配置...
 ### routing_window 测试
 
 - 验证 config.json 读写：规则列表、enabled 状态、默认规则
-- 验证空行和注释行过滤
+- 验证空行过滤、注释行保留在配置中
+- 验证运行时 `parse_rules()` 忽略注释行
 
 ### proxy_core 集成测试
 
