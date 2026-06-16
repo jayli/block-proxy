@@ -1,9 +1,10 @@
+import ipaddress
 import os
 import sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from geodata_loader import parse_geosite_data
+from geodata_loader import parse_geosite_data, parse_geoip_data
 
 # ---- Protobuf encoding helpers (same as test_proto_parser.py) ----
 
@@ -113,3 +114,74 @@ class TestParseGeosite:
 
         result = parse_geosite_data(data)
         assert "cn" in result
+
+
+# ---- GeoIP-specific protobuf builders ----
+
+def _build_cidr(ip_bytes, prefix):
+    """Build a CIDR message: ip=field1(bytes), prefix=field2(varint)"""
+    return _encode_bytes_field(1, ip_bytes) + _encode_varint_field(2, prefix)
+
+
+def _build_geoip(country_code, cidrs):
+    """Build a GeoIP message: country_code=field1, cidr[]=field2"""
+    msg = _encode_string_field(1, country_code)
+    for cidr_bytes in cidrs:
+        msg += _encode_message_field(2, cidr_bytes)
+    return msg
+
+
+def _build_geoip_list(entries):
+    """Build GeoIPList: entry[]=field1"""
+    msg = b""
+    for entry_bytes in entries:
+        msg += _encode_message_field(1, entry_bytes)
+    return msg
+
+
+class TestParseGeoip:
+    def test_single_entry_single_cidr(self):
+        ip_bytes = ipaddress.IPv4Address("5.62.60.0").packed
+        cidr = _build_cidr(ip_bytes, 24)
+        entry = _build_geoip("ru", [cidr])
+        data = _build_geoip_list([entry])
+
+        result = parse_geoip_data(data)
+        assert "ru" in result
+        assert len(result["ru"]) == 1
+        assert result["ru"][0] == ipaddress.IPv4Network("5.62.60.0/24")
+
+    def test_multiple_cidrs_per_country(self):
+        ip1 = ipaddress.IPv4Address("1.0.0.0").packed
+        ip2 = ipaddress.IPv4Address("1.0.1.0").packed
+        cidr1 = _build_cidr(ip1, 24)
+        cidr2 = _build_cidr(ip2, 24)
+        entry = _build_geoip("au", [cidr1, cidr2])
+        data = _build_geoip_list([entry])
+
+        result = parse_geoip_data(data)
+        assert len(result["au"]) == 2
+        assert ipaddress.IPv4Network("1.0.0.0/24") in result["au"]
+        assert ipaddress.IPv4Network("1.0.1.0/24") in result["au"]
+
+    def test_ipv6_cidr(self):
+        ip_bytes = ipaddress.IPv6Address("2001:db8::").packed
+        cidr = _build_cidr(ip_bytes, 32)
+        entry = _build_geoip("test6", [cidr])
+        data = _build_geoip_list([entry])
+
+        result = parse_geoip_data(data)
+        assert "test6" in result
+        assert result["test6"][0] == ipaddress.IPv6Network("2001:db8::/32")
+
+    def test_empty_data(self):
+        assert parse_geoip_data(b"") == {}
+
+    def test_country_code_lowercase(self):
+        ip_bytes = ipaddress.IPv4Address("10.0.0.0").packed
+        cidr = _build_cidr(ip_bytes, 8)
+        entry = _build_geoip("US", [cidr])
+        data = _build_geoip_list([entry])
+
+        result = parse_geoip_data(data)
+        assert "us" in result

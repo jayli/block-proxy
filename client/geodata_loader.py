@@ -3,6 +3,7 @@ Load and parse Xray/V2Ray compatible geoip.dat and geosite.dat files.
 Uses the proto_parser module for zero-dependency protobuf parsing.
 """
 
+import ipaddress
 import logging
 import os
 from proto_parser import parse_message, get_string, get_bytes, get_varint, get_message
@@ -44,5 +45,46 @@ def parse_geosite_data(data):
 
         if domains:
             result[country_code] = domains
+
+    return result
+
+
+def parse_geoip_data(data):
+    """Parse GeoIPList protobuf bytes into a dict.
+
+    Returns: {country_code(str): [ipaddress.IPv4Network/IPV6Network, ...]}
+    country_code is lowercased.
+    """
+    result = {}
+    top_fields = parse_message(data)
+
+    for fn, wt, val in top_fields:
+        if fn != 1 or wt != 2:
+            continue
+        # Each field 1 is a GeoIP message
+        geoip_fields = parse_message(val)
+        country_code = get_string(geoip_fields, 1, "").lower()
+        if not country_code:
+            continue
+
+        networks = []
+        for gfn, gwt, gval in geoip_fields:
+            if gfn != 2 or gwt != 2:
+                continue
+            # Each field 2 is a CIDR message
+            cidr_fields = parse_message(gval)
+            ip_bytes = get_bytes(cidr_fields, 1, b"")
+            prefix = get_varint(cidr_fields, 2, 0)
+            if not ip_bytes:
+                continue
+            try:
+                addr = ipaddress.ip_address(ip_bytes)
+                net = ipaddress.ip_network(f"{addr}/{prefix}", strict=False)
+                networks.append(net)
+            except ValueError:
+                continue
+
+        if networks:
+            result[country_code] = networks
 
     return result
