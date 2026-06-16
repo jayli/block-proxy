@@ -137,3 +137,52 @@ class RoutingEngine:
         except ValueError:
             return False
         return any(addr in net for net in networks)
+
+    def resolve(self, host, is_domain):
+        """Resolve a host to 'direct' or 'proxy'.
+
+        Returns None if routing is disabled (caller should use default proxy behavior).
+
+        Priority: direct rules > proxy rules > default action.
+        Domain targets only match geosite rules; IP targets only match geoip rules.
+
+        Safety: when geodata is unavailable, negated rules do NOT match
+        (prevents catastrophic mis-routing on data load failure).
+        """
+        if not self._enabled:
+            return None
+
+        def _match_rules(rules):
+            for rule_type, code, negated in rules:
+                if rule_type == "geosite":
+                    if not is_domain:
+                        continue
+                    # Data unavailable or unknown tag → rules must not match.
+                    # This is especially important for negated rules.
+                    if not self._geosite_tag_known(code):
+                        if self._geosite_available():
+                            logger.warning("Unknown geosite tag: %s", code)
+                        continue
+                    matched = self._match_geosite(host, code)
+                elif rule_type == "geoip":
+                    if is_domain:
+                        continue
+                    if not self._geoip_code_known(code):
+                        if self._geoip_available():
+                            logger.warning("Unknown geoip code: %s", code)
+                        continue
+                    matched = self._match_geoip(host, code)
+                else:
+                    continue
+
+                if negated:
+                    matched = not matched
+                if matched:
+                    return True
+            return False
+
+        if _match_rules(self._direct_rules):
+            return "direct"
+        if _match_rules(self._proxy_rules):
+            return "proxy"
+        return self._default_action
