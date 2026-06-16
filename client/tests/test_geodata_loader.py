@@ -4,7 +4,7 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from geodata_loader import parse_geosite_data, parse_geoip_data
+from geodata_loader import parse_geosite_data, parse_geoip_data, GeodataLoader
 
 # ---- Protobuf encoding helpers (same as test_proto_parser.py) ----
 
@@ -185,3 +185,76 @@ class TestParseGeoip:
 
         result = parse_geoip_data(data)
         assert "us" in result
+
+
+class TestGeodataLoader:
+    def test_load_geosite_from_file(self, tmp_path):
+        domain = _build_domain(2, "google.com")
+        entry = _build_geosite("google", [domain])
+        data = _build_geosite_list([entry])
+
+        geosite_path = tmp_path / "geosite.dat"
+        geosite_path.write_bytes(data)
+
+        loader = GeodataLoader(str(tmp_path), load_geosite=True, load_geoip=False)
+        assert loader.geosite_available
+        assert not loader.geoip_available
+        result = loader.get_geosite("google")
+        assert result == [("domain", "google.com")]
+
+    def test_load_geoip_from_file(self, tmp_path):
+        ip_bytes = ipaddress.IPv4Address("5.62.60.0").packed
+        cidr = _build_cidr(ip_bytes, 24)
+        entry = _build_geoip("ru", [cidr])
+        data = _build_geoip_list([entry])
+
+        geoip_path = tmp_path / "geoip.dat"
+        geoip_path.write_bytes(data)
+
+        loader = GeodataLoader(str(tmp_path), load_geosite=False, load_geoip=True)
+        assert loader.geoip_available
+        assert not loader.geosite_available
+        result = loader.get_geoip("ru")
+        assert len(result) == 1
+        assert result[0] == ipaddress.IPv4Network("5.62.60.0/24")
+
+    def test_missing_file_returns_empty(self, tmp_path):
+        loader = GeodataLoader(str(tmp_path), load_geosite=True, load_geoip=True)
+        assert loader.geosite_available is False
+        assert loader.geoip_available is False
+        assert loader.get_geosite("google") == []
+        assert loader.get_geoip("cn") == []
+
+    def test_unknown_country_returns_empty(self, tmp_path):
+        domain = _build_domain(2, "google.com")
+        entry = _build_geosite("google", [domain])
+        data = _build_geosite_list([entry])
+        (tmp_path / "geosite.dat").write_bytes(data)
+
+        loader = GeodataLoader(str(tmp_path), load_geosite=True, load_geoip=False)
+        assert loader.get_geosite("nonexistent") == []
+
+    def test_caching_second_call_no_reparse(self, tmp_path):
+        domain = _build_domain(2, "google.com")
+        entry = _build_geosite("google", [domain])
+        data = _build_geosite_list([entry])
+        geosite_path = tmp_path / "geosite.dat"
+        geosite_path.write_bytes(data)
+
+        loader = GeodataLoader(str(tmp_path), load_geosite=True, load_geoip=False)
+        # Delete file after first load
+        geosite_path.unlink()
+        # Second call should still return cached data
+        result = loader.get_geosite("google")
+        assert result == [("domain", "google.com")]
+
+    def test_selective_loading_skips_geoip(self, tmp_path):
+        ip_bytes = ipaddress.IPv4Address("5.62.60.0").packed
+        cidr = _build_cidr(ip_bytes, 24)
+        entry = _build_geoip("ru", [cidr])
+        data = _build_geoip_list([entry])
+        (tmp_path / "geoip.dat").write_bytes(data)
+
+        loader = GeodataLoader(str(tmp_path), load_geosite=True, load_geoip=False)
+        assert not loader.geoip_available
+        assert loader.get_geoip("ru") == []

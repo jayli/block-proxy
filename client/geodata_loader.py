@@ -88,3 +88,68 @@ def parse_geoip_data(data):
             result[country_code] = networks
 
     return result
+
+
+class GeodataLoader:
+    """Selective eager-loading geodata file parser."""
+
+    def __init__(self, data_dir, load_geosite=True, load_geoip=True):
+        self._data_dir = data_dir
+        self._geosite_cache = {}  # {tag: [(type, value), ...]}
+        self._geoip_cache = {}    # {code: [IPv4Network/IPv6Network, ...]}
+        self._geosite_loaded = False
+        self._geoip_loaded = False
+        if load_geosite:
+            self._load_geosite()
+        if load_geoip:
+            self._load_geoip()
+
+    def _load_geosite(self):
+        geosite_path = os.path.join(self._data_dir, "geosite.dat")
+        if os.path.exists(geosite_path):
+            try:
+                with open(geosite_path, "rb") as f:
+                    self._geosite_cache = parse_geosite_data(f.read())
+                self._geosite_loaded = True
+                logger.info("Loaded geosite.dat: %d tags", len(self._geosite_cache))
+            except Exception:
+                logger.warning("Failed to parse geosite.dat", exc_info=True)
+        else:
+            logger.warning("geosite.dat not found: %s", geosite_path)
+
+    def _load_geoip(self):
+        geoip_path = os.path.join(self._data_dir, "geoip.dat")
+        if os.path.exists(geoip_path):
+            try:
+                with open(geoip_path, "rb") as f:
+                    self._geoip_cache = parse_geoip_data(f.read())
+                self._geoip_loaded = True
+                logger.info("Loaded geoip.dat: %d codes", len(self._geoip_cache))
+            except Exception:
+                logger.warning("Failed to parse geoip.dat", exc_info=True)
+        else:
+            logger.warning("geoip.dat not found: %s", geoip_path)
+
+    @property
+    def geosite_available(self):
+        return self._geosite_loaded
+
+    @property
+    def geoip_available(self):
+        return self._geoip_loaded
+
+    def get_geosite(self, tag):
+        """Get domain rules for a geosite tag. Returns list of (type, value)."""
+        return self._geosite_cache.get(tag.lower(), [])
+
+    def has_geosite(self, tag):
+        """Return True when the geosite tag exists in loaded data."""
+        return tag.lower() in self._geosite_cache
+
+    def get_geoip(self, code):
+        """Get CIDR networks for a geoip country code. Returns list of IPNetwork."""
+        return self._geoip_cache.get(code.lower(), [])
+
+    def has_geoip(self, code):
+        """Return True when the geoip code exists in loaded data."""
+        return code.lower() in self._geoip_cache
