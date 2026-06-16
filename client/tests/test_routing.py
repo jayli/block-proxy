@@ -384,3 +384,29 @@ class TestConnectTargetRouting:
             assert route == "proxy"
             mock_upstream.assert_called_once()
             mock_direct.assert_not_called()
+
+
+from routing_window import _parse_rules_text, _rules_to_text
+
+
+class TestRoutingWindowUtils:
+    def test_parse_rules_text_basic(self):
+        result = _parse_rules_text("geosite:cn\ngeoip:cn\n")
+        assert result == ["geosite:cn", "geoip:cn"]
+
+    def test_parse_rules_text_skips_empty(self):
+        result = _parse_rules_text("geosite:cn\n\n  \ngeoip:cn\n")
+        assert result == ["geosite:cn", "geoip:cn"]
+
+    def test_parse_rules_text_preserves_comments(self):
+        result = _parse_rules_text("# my comments\ngeosite:cn\n# another")
+        assert result == ["# my comments", "geosite:cn", "# another"]
+
+    def test_rules_to_text(self):
+        rules = ["geosite:cn", "geoip:cn"]
+        assert _rules_to_text(rules) == "geosite:cn\ngeoip:cn"
+
+    def test_round_trip(self):
+        original = ["# 中国域名", "geosite:cn", "geoip:cn"]
+        text = _rules_to_text(original)
+        assert _parse_rules_text(text) == original
