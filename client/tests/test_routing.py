@@ -273,3 +273,114 @@ class TestResolve:
             geosite_data={"cn": [("domain", "baidu.com")]},
         )
         assert engine.resolve("google.com", is_domain=True) == "proxy"  # unknown tag → negated must NOT match
+
+
+import asyncio
+
+
+class TestProxyCoreRouting:
+    """Test that ProxyCore integrates routing correctly."""
+
+    def test_routing_none_when_disabled(self):
+        config = {"enabled": False, "direct_rules": [], "proxy_rules": [], "default": "proxy"}
+        engine = RoutingEngine(config, "/nonexistent")
+        assert engine.resolve("baidu.com", is_domain=True) is None
+
+    def test_routing_with_config(self):
+        config = {
+            "enabled": True,
+            "direct_rules": ["geosite:cn"],
+            "proxy_rules": [],
+            "default": "proxy",
+        }
+        engine = RoutingEngine(config, "/nonexistent")
+        assert engine._enabled is True
+        assert len(engine._direct_rules) == 1
+        assert engine._direct_rules[0] == ("geosite", "cn", False)
+
+
+class TestConnectTargetRouting:
+    """Test _connect_target routing integration with mocks."""
+
+    @staticmethod
+    def _run(coro):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    def test_routing_direct_calls_connect_direct(self):
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from proxy_core import ProxyCore
+        pc = ProxyCore()
+        pc._server_config = {"protocol": "socks5", "address": "upstream", "port": 8002,
+                             "username": "", "password": "", "tls": False, "allowInsecure": True}
+        pc._ssl_ctx = None
+        pc._proxy_private = False
+        mock_routing = MagicMock()
+        mock_routing.resolve.return_value = "direct"
+        pc._routing = mock_routing
+        with patch("proxy_core.connect_direct", new_callable=AsyncMock) as mock_direct, \
+             patch("proxy_core.connect_upstream_socks5", new_callable=AsyncMock) as mock_upstream:
+            mock_direct.return_value = (AsyncMock(), AsyncMock())
+            _, _, route = self._run(pc._connect_target("example.com", 80, is_domain=True))
+            assert route == "direct"
+            mock_direct.assert_called_once_with("example.com", 80)
+            mock_upstream.assert_not_called()
+
+    def test_routing_proxy_calls_connect_upstream(self):
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from proxy_core import ProxyCore
+        pc = ProxyCore()
+        pc._server_config = {"protocol": "socks5", "address": "upstream", "port": 8002,
+                             "username": "", "password": "", "tls": False, "allowInsecure": True}
+        pc._ssl_ctx = None
+        pc._proxy_private = False
+        mock_routing = MagicMock()
+        mock_routing.resolve.return_value = "proxy"
+        pc._routing = mock_routing
+        with patch("proxy_core.connect_direct", new_callable=AsyncMock) as mock_direct, \
+             patch("proxy_core.connect_upstream_socks5", new_callable=AsyncMock) as mock_upstream:
+            mock_upstream.return_value = (AsyncMock(), AsyncMock())
+            _, _, route = self._run(pc._connect_target("example.com", 443, is_domain=True))
+            assert route == "proxy"
+            mock_upstream.assert_called_once()
+            mock_direct.assert_not_called()
+
+    def test_private_ip_bypasses_routing(self):
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from proxy_core import ProxyCore
+        pc = ProxyCore()
+        pc._server_config = {"protocol": "socks5", "address": "upstream", "port": 8002,
+                             "username": "", "password": "", "tls": False, "allowInsecure": True}
+        pc._ssl_ctx = None
+        pc._proxy_private = False
+        mock_routing = MagicMock()
+        mock_routing.resolve.return_value = "proxy"  # routing would say proxy, but private IP overrides
+        pc._routing = mock_routing
+        with patch("proxy_core.connect_direct", new_callable=AsyncMock) as mock_direct, \
+             patch("proxy_core.connect_upstream_socks5", new_callable=AsyncMock) as mock_upstream:
+            mock_direct.return_value = (AsyncMock(), AsyncMock())
+            _, _, route = self._run(pc._connect_target("192.168.1.1", 80, is_domain=False))
+            assert route == "direct"
+            mock_direct.assert_called_once_with("192.168.1.1", 80)
+            mock_upstream.assert_not_called()
+            mock_routing.resolve.assert_not_called()  # private IP check comes first
+
+    def test_routing_disabled_uses_upstream(self):
+        from unittest.mock import AsyncMock, patch
+        from proxy_core import ProxyCore
+        pc = ProxyCore()
+        pc._server_config = {"protocol": "socks5", "address": "upstream", "port": 8002,
+                             "username": "", "password": "", "tls": False, "allowInsecure": True}
+        pc._ssl_ctx = None
+        pc._proxy_private = False
+        pc._routing = None
+        with patch("proxy_core.connect_direct", new_callable=AsyncMock) as mock_direct, \
+             patch("proxy_core.connect_upstream_socks5", new_callable=AsyncMock) as mock_upstream:
+            mock_upstream.return_value = (AsyncMock(), AsyncMock())
+            _, _, route = self._run(pc._connect_target("example.com", 443, is_domain=True))
+            assert route == "proxy"
+            mock_upstream.assert_called_once()
+            mock_direct.assert_not_called()

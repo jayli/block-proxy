@@ -329,6 +329,7 @@ class ProxyCore:
         self._http_port = 1087
         self._ssl_ctx = None
         self._semaphore = None
+        self._routing = None
 
     def _build_ssl_context(self):
         server = self._server_config
@@ -352,6 +353,11 @@ class ProxyCore:
         self._proxy_private = local.get("proxy_private", False)
         self._udp_enabled = local.get("udp", True)
         self._build_ssl_context()
+
+        # Initialize routing engine (geodata loaded selectively in RoutingEngine.__init__)
+        from routing import RoutingEngine, _geodata_dir
+        routing_config = user_config.get("routing", {})
+        self._routing = RoutingEngine(routing_config, _geodata_dir())
 
         self._loop = asyncio.new_event_loop()
         started = threading.Event()
@@ -500,9 +506,39 @@ class ProxyCore:
             return False
         return is_private_ip(host)
 
-    async def _connect_target(self, dest_addr, dest_port):
+    def _select_route(self, dest_addr, is_domain=None):
+        if is_domain is None:
+            # Auto-detect: try parsing as IP address
+            try:
+                ipaddress.ip_address(dest_addr)
+                is_domain = False
+            except ValueError:
+                is_domain = True
+
+        # 0. Private IP check (highest priority, always direct, not affected by routing)
         if self._should_direct(dest_addr):
-            return await connect_direct(dest_addr, dest_port)
+            return "direct"
+
+        # 1. Routing check (if enabled)
+        if self._routing:
+            route = self._routing.resolve(dest_addr, is_domain)
+            if route == "direct":
+                return "direct"
+            # route == "proxy" or resolve returned default → fall through to upstream
+
+        # 2. Fallback: upstream proxy
+        return "proxy"
+
+    async def _connect_target(self, dest_addr, dest_port, is_domain=None, route=None):
+        if route is None:
+            route = self._select_route(dest_addr, is_domain=is_domain)
+        if route == "direct":
+            reader, writer = await connect_direct(dest_addr, dest_port)
+            return reader, writer, "direct"
+        reader, writer = await self._connect_upstream(dest_addr, dest_port)
+        return reader, writer, "proxy"
+
+    async def _connect_upstream(self, dest_addr, dest_port):
         protocol = self._server_config.get("protocol", "socks5")
         if protocol == "http":
             return await connect_upstream_http(
@@ -563,10 +599,18 @@ class ProxyCore:
             port_data = await asyncio.wait_for(client_reader.readexactly(2), timeout=LOCAL_HANDSHAKE_TIMEOUT)
             dest_port = struct.unpack("!H", port_data)[0]
 
-            direct = self._should_direct(dest_addr)
+            # Determine if target is a domain or IP
             try:
-                remote_reader, remote_writer = await self._connect_target(
-                    dest_addr, dest_port
+                ipaddress.ip_address(dest_addr)
+                is_domain = False
+            except ValueError:
+                is_domain = True
+
+            route = self._select_route(dest_addr, is_domain=is_domain)
+            direct = route == "direct"
+            try:
+                remote_reader, remote_writer, route = await self._connect_target(
+                    dest_addr, dest_port, is_domain=is_domain, route=route
                 )
             except Exception as e:
                 _log_access(dest_addr, dest_port, "CONNECT", direct, False)
@@ -715,10 +759,17 @@ class ProxyCore:
                     if header_line in (b"\r\n", b"\n", b""):
                         break
 
-                direct = self._should_direct(host)
                 try:
-                    remote_reader, remote_writer = await self._connect_target(
-                        host, port
+                    ipaddress.ip_address(host)
+                    is_domain = False
+                except ValueError:
+                    is_domain = True
+
+                route = self._select_route(host, is_domain=is_domain)
+                direct = route == "direct"
+                try:
+                    remote_reader, remote_writer, route = await self._connect_target(
+                        host, port, is_domain=is_domain, route=route
                     )
                 except Exception as e:
                     _log_access(host, port, "CONNECT", direct, False)
@@ -763,10 +814,17 @@ class ProxyCore:
                             break
                         headers.append(header_line)
 
-                    direct = self._should_direct(host)
                     try:
-                        remote_reader, remote_writer = await self._connect_target(
-                            host, port
+                        ipaddress.ip_address(host)
+                        is_domain = False
+                    except ValueError:
+                        is_domain = True
+
+                    route = self._select_route(host, is_domain=is_domain)
+                    direct = route == "direct"
+                    try:
+                        remote_reader, remote_writer, route = await self._connect_target(
+                            host, port, is_domain=is_domain, route=route
                         )
                     except Exception as e:
                         _log_access(host, port, method, direct, False)
