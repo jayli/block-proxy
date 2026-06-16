@@ -38,6 +38,7 @@ class SocksClient(rumps.App):
         self.sys_proxy = SystemProxy()
         self.connected = False
         self._config_proc = None
+        self._routing_proc = None
 
         self._measuring = False
         self._build_menu()
@@ -58,6 +59,7 @@ class SocksClient(rumps.App):
     def _build_menu(self):
         self.toggle_item = rumps.MenuItem("启动代理", callback=self.toggle_proxy)
         self.config_item = rumps.MenuItem("Socks/HTTP 节点配置...", callback=self.open_config)
+        self.routing_item = rumps.MenuItem("分流规则...", callback=self.open_routing)
 
         self.global_item = rumps.MenuItem("全局代理（设置系统代理）", callback=self.set_global_mode)
         self.manual_item = rumps.MenuItem("手动模式（关闭系统代理）", callback=self.set_manual_mode)
@@ -69,6 +71,7 @@ class SocksClient(rumps.App):
         self.menu = [
             self.toggle_item,
             self.config_item,
+            self.routing_item,
             None,
             self.global_item,
             self.manual_item,
@@ -183,6 +186,31 @@ class SocksClient(rumps.App):
     def open_config(self, sender):
         self._show_config_window()
 
+    def open_routing(self, sender):
+        self._show_routing_window()
+
+    def _show_routing_window(self):
+        self.config.save()
+        script_path = os.path.join(self._bundle_resource_dir(), "routing_window.py")
+        python_path = self._find_python() if self._is_compiled() else sys.executable
+        self._routing_proc = subprocess.Popen(
+            [python_path, script_path, self.config.config_path]
+        )
+
+        def _reload_after_routing_window():
+            self._routing_proc.wait()
+            self._routing_proc = None
+            old_routing = self.config.data.get("routing", {})
+            self.config.load()
+            new_routing = self.config.data.get("routing", {})
+            if self.connected and new_routing != old_routing:
+                def _reconnect():
+                    self._disconnect()
+                    self._connect()
+                AppHelper.callAfter(_reconnect)
+
+        threading.Thread(target=_reload_after_routing_window, daemon=True).start()
+
     def open_log(self, sender):
         script_path = os.path.join(self._bundle_resource_dir(), "log_window.py")
         python_path = self._find_python() if self._is_compiled() else sys.executable
@@ -285,6 +313,8 @@ class SocksClient(rumps.App):
     def quit_app(self, sender):
         if self._config_proc and self._config_proc.poll() is None:
             self._config_proc.terminate()
+        if self._routing_proc and self._routing_proc.poll() is None:
+            self._routing_proc.terminate()
         if self.connected:
             self.sys_proxy.disable()
             threading.Thread(target=self.proxy.stop, daemon=True).start()
