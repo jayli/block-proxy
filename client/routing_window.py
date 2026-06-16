@@ -1,18 +1,48 @@
+"""
+SocksClient routing rules window.
+Pure PyObjC implementation (no tkinter dependency).
+Launched as a subprocess from the main status bar app.
+"""
+
 import json
+import objc
 import os
 import platform
 import sys
-import tkinter as tk
-from tkinter import ttk
+
+from Foundation import NSObject
+from AppKit import (
+    NSApplication,
+    NSApplicationActivationPolicyAccessory,
+    NSWindow,
+    NSWindowStyleMaskTitled,
+    NSWindowStyleMaskClosable,
+    NSWindowStyleMaskMiniaturizable,
+    NSWindowStyleMaskResizable,
+    NSBackingStoreBuffered,
+    NSTextField,
+    NSButton,
+    NSButtonTypeSwitch,
+    NSPopUpButton,
+    NSTabView,
+    NSTabViewItem,
+    NSView,
+    NSApp,
+    NSScrollView,
+    NSTextView,
+    NSBezelBorder,
+    NSFont,
+    NSColor,
+)
 
 
-def _macos_setup():
-    try:
-        from AppKit import NSApp
-        NSApp.setActivationPolicy_(1)  # NSApplicationActivationPolicyAccessory
-        NSApp.activateIgnoringOtherApps_(True)
-    except ImportError:
-        pass
+BEZEL_ROUNDED = 1
+WINDOW_STYLE = (
+    NSWindowStyleMaskTitled
+    | NSWindowStyleMaskClosable
+    | NSWindowStyleMaskMiniaturizable
+    | NSWindowStyleMaskResizable
+)
 
 
 def _center_on_mouse_screen(w, h):
@@ -23,134 +53,218 @@ def _center_on_mouse_screen(w, h):
             primary_h = NSScreen.screens()[0].frame().size.height
             for screen in NSScreen.screens():
                 sf = screen.frame()
-                if (sf.origin.x <= mouse_loc.x < sf.origin.x + sf.size.width and
-                        sf.origin.y <= mouse_loc.y < sf.origin.y + sf.size.height):
+                if (
+                    sf.origin.x <= mouse_loc.x < sf.origin.x + sf.size.width
+                    and sf.origin.y <= mouse_loc.y < sf.origin.y + sf.size.height
+                ):
                     vf = screen.visibleFrame()
                     x = int(vf.origin.x + (vf.size.width - w) / 2)
-                    y = int(primary_h - vf.origin.y - vf.size.height +
-                            (vf.size.height - h) / 2)
+                    y = int(
+                        primary_h
+                        - vf.origin.y
+                        - vf.size.height
+                        + (vf.size.height - h) / 2
+                    )
                     return x, y
         except Exception:
             pass
     return None
 
 
+class _RoutingWindowDelegate(NSObject):
+    def windowWillClose_(self, notification):
+        NSApp.stopModal()
+
+
+def _rules_to_text(rules):
+    return "\n".join(rules)
+
+
 def _parse_rules_text(text):
-    """Parse a multi-line text into a list of rule lines (preserving comments for storage)."""
     lines = []
     for line in text.split("\n"):
         stripped = line.strip()
-        if stripped:  # keep non-empty lines including comments
+        if stripped:
             lines.append(stripped)
     return lines
 
 
-def _rules_to_text(rules):
-    """Convert a list of rule strings to multi-line text."""
-    return "\n".join(rules)
+class RoutingWindowController(NSObject):
+
+    def initWithConfigPath_(self, config_path):
+        self = objc.super(RoutingWindowController, self).init()
+        if self is None:
+            return None
+        self._config_path = config_path
+        with open(config_path, "r") as f:
+            self._config = json.load(f)
+        self._routing = self._config.get("routing", {
+            "enabled": False,
+            "direct_rules": [],
+            "proxy_rules": [],
+            "default": "proxy",
+        })
+        self._build_window()
+        return self
+
+    def _build_window(self):
+        routing = self._routing
+        w, h = 460, 480
+        pos = _center_on_mouse_screen(w, h)
+        if pos is None:
+            from AppKit import NSScreen
+            x = int((NSScreen.mainScreen().frame().size.width - w) / 2)
+            y = int((NSScreen.mainScreen().frame().size.height - h) / 2)
+        else:
+            x, y = pos
+
+        origin = ((x, y), (w, h))
+        win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            origin, WINDOW_STYLE, NSBackingStoreBuffered, False
+        )
+        win.setTitle_("分流规则")
+        win.setDelegate_(self._delegate())
+
+        content = win.contentView()
+        p = 15
+
+        # ---- bottom bar (114px): default | 6px | checkbox | 8px | save+hint ----
+        bar_h = 114
+
+        default_lbl = NSTextField.labelWithString_("默认规则:")
+        default_lbl.setFrame_(((p, 92), (58, 17)))
+        content.addSubview_(default_lbl)
+
+        default_popup = NSPopUpButton.alloc().initWithFrame_(
+            ((p + 60, 88), (80, 22))
+        )
+        default_popup.addItemsWithTitles_(["proxy", "direct"])
+        default_popup.selectItemWithTitle_(routing.get("default", "proxy"))
+        content.addSubview_(default_popup)
+        self._default_popup = default_popup
+
+        enabled_cb = NSButton.alloc().initWithFrame_(
+            ((p, 60), (w - 2 * p, 22))
+        )
+        enabled_cb.setButtonType_(NSButtonTypeSwitch)
+        enabled_cb.setTitle_("启用分流规则")
+        enabled_cb.setState_(1 if routing.get("enabled", False) else 0)
+        content.addSubview_(enabled_cb)
+        self._enabled_cb = enabled_cb
+
+        btn = NSButton.alloc().initWithFrame_(((w - 110, 27), (100, 28)))
+        btn.setTitle_("保存")
+        btn.setBezelStyle_(BEZEL_ROUNDED)
+        btn.setTarget_(self)
+        btn.setAction_("saveAndClose:")
+        content.addSubview_(btn)
+
+        hint = NSTextField.labelWithString_(
+            "domain:example.com  geosite:cn  geoip:!cn     # 开头为注释"
+        )
+        hint.setFont_(NSFont.systemFontOfSize_(10))
+        hint.setTextColor_(NSColor.disabledControlTextColor())
+        hint.setFrame_(((p, 32), (w - 130, 14)))
+        content.addSubview_(hint)
+
+        # ---- tab view: fills space above bottom bar ----
+        tab_bottom = bar_h + 8
+        tab_top = h - 12
+        tab_h = tab_top - tab_bottom
+
+        tab = NSTabView.alloc().initWithFrame_(
+            ((p, tab_bottom), (w - 2 * p, tab_h))
+        )
+        content.addSubview_(tab)
+
+        self._direct_text = self._add_tab(tab, "直连规则", routing.get("direct_rules", []))
+        self._proxy_text = self._add_tab(tab, "代理规则", routing.get("proxy_rules", []))
+
+        self._window = win
+
+    def _add_tab(self, tab_view, title, rules):
+        # Use the tab view's content rect — this already excludes the tab bar
+        cr = tab_view.contentRect()
+        item_view = NSView.alloc().initWithFrame_(cr)
+        item_view.setAutoresizingMask_(18)  # NSViewWidthSizable | NSViewHeightSizable
+
+        # ScrollView fills the item view with small margin
+        scroll_margin = 4
+        scroll_frame = (
+            (scroll_margin, scroll_margin),
+            (cr.size.width - 2 * scroll_margin, cr.size.height - 2 * scroll_margin),
+        )
+        scroll = NSScrollView.alloc().initWithFrame_(scroll_frame)
+        scroll.setHasVerticalScroller_(True)
+        scroll.setHasHorizontalScroller_(False)
+        scroll.setBorderType_(NSBezelBorder)
+        scroll.setAutoresizingMask_(18)
+
+        # Text view — set as document view the correct way
+        text_view = NSTextView.alloc().initWithFrame_(
+            ((0, 0), (scroll.contentSize().width, scroll.contentSize().height))
+        )
+        text_view.setMinSize_((0, scroll.contentSize().height))
+        text_view.setMaxSize_((float("inf"), float("inf")))
+        text_view.setVerticallyResizable_(True)
+        text_view.setHorizontallyResizable_(False)
+        text_view.setAutoresizingMask_(2)  # NSViewWidthSizable
+        text_view.setString_(_rules_to_text(rules))
+        text_view.setFont_(NSFont.userFixedPitchFontOfSize_(12))
+        text_view.setRichText_(False)
+
+        scroll.setDocumentView_(text_view)
+        item_view.addSubview_(scroll)
+
+        # Scroll to top so first line is visible
+        text_view.scrollRangeToVisible_((0, 0))
+
+        tab_item = NSTabViewItem.alloc().initWithIdentifier_(title)
+        tab_item.setLabel_(title)
+        tab_item.setView_(item_view)
+        tab_view.addTabViewItem_(tab_item)
+
+        return text_view
+
+    def _delegate(self):
+        delegate = _RoutingWindowDelegate.alloc().init()
+        self._delegate_ref = delegate
+        return delegate
+
+    def show(self):
+        self._window.center()
+        self._window.makeKeyAndOrderFront_(None)
+        NSApp.activateIgnoringOtherApps_(True)
+
+    def saveAndClose_(self, sender):
+        config = self._config
+        config["routing"] = {
+            "enabled": bool(self._enabled_cb.state()),
+            "direct_rules": _parse_rules_text(self._direct_text.string()),
+            "proxy_rules": _parse_rules_text(self._proxy_text.string()),
+            "default": self._default_popup.titleOfSelectedItem(),
+        }
+
+        with open(self._config_path, "w") as f:
+            json.dump(config, f, indent=2)
+
+        self._window.close()
+        NSApp.stopModal()
 
 
 def show_routing_window(config_path):
-    with open(config_path, "r") as f:
-        config = json.load(f)
-
-    routing = config.get("routing", {
-        "enabled": False,
-        "direct_rules": [],
-        "proxy_rules": [],
-        "default": "proxy",
-    })
-
-    def save_and_close():
-        config["routing"] = {
-            "enabled": enabled_var.get(),
-            "direct_rules": _parse_rules_text(direct_text.get("1.0", tk.END)),
-            "proxy_rules": _parse_rules_text(proxy_text.get("1.0", tk.END)),
-            "default": default_var.get(),
-        }
-        with open(config_path, "w") as f:
-            json.dump(config, f, indent=2)
-        root.destroy()
-
-    pos = _center_on_mouse_screen(400, 450)
-
-    root = tk.Tk()
-    root.title("分流规则")
-    root.resizable(False, False)
-    w, h = 400, 450
-    if pos:
-        x, y = pos
-    else:
-        x = (root.winfo_screenwidth() - w) // 2
-        y = (root.winfo_screenheight() - h) // 2
-    root.geometry(f"{w}x{h}+{x}+{y}")
-
-    if platform.system() == "Darwin":
-        root.after(50, _macos_setup)
-
-    frame = ttk.Frame(root, padding=15)
-    frame.pack(fill="both", expand=True)
-
-    # Tab notebook
-    notebook = ttk.Notebook(frame)
-    notebook.pack(fill="both", expand=True, pady=(0, 10))
-
-    # Direct rules tab
-    direct_frame = ttk.Frame(notebook, padding=5)
-    notebook.add(direct_frame, text="直连规则")
-
-    direct_text = tk.Text(direct_frame, width=42, height=14, font=("Menlo", 12))
-    direct_text.pack(fill="both", expand=True)
-    direct_text.insert("1.0", _rules_to_text(routing.get("direct_rules", [])))
-
-    # Proxy rules tab
-    proxy_frame = ttk.Frame(notebook, padding=5)
-    notebook.add(proxy_frame, text="代理规则")
-
-    proxy_text = tk.Text(proxy_frame, width=42, height=14, font=("Menlo", 12))
-    proxy_text.pack(fill="both", expand=True)
-    proxy_text.insert("1.0", _rules_to_text(routing.get("proxy_rules", [])))
-
-    # Default action
-    default_frame = ttk.Frame(frame)
-    default_frame.pack(fill="x", pady=(0, 8))
-    ttk.Label(default_frame, text="默认规则:").pack(side="left", padx=(0, 5))
-    default_var = tk.StringVar(value=routing.get("default", "proxy"))
-    default_combo = ttk.Combobox(
-        default_frame, textvariable=default_var,
-        values=["proxy", "direct"], state="readonly", width=8,
-    )
-    default_combo.pack(side="left")
-
-    # Enabled checkbox
-    enabled_var = tk.BooleanVar(value=routing.get("enabled", False))
-    ttk.Checkbutton(frame, text="启用分流规则", variable=enabled_var).pack(
-        anchor="w", pady=(0, 10)
-    )
-
-    # Hint
-    hint_frame = ttk.Frame(frame)
-    hint_frame.pack(fill="x", pady=(0, 5))
-    ttk.Label(
-        hint_frame,
-        text="每行一条规则，如 domain:example.com  geosite:cn  geoip:!cn\n"
-             "# 开头为注释，domain 匹配域名及子域名，geoip 仅对 IP 生效",
-        foreground="gray",
-        justify="left",
-    ).pack(anchor="w")
-
-    # Save button
-    ttk.Button(frame, text="保存", command=save_and_close).pack(pady=(5, 0))
-
-    root.lift()
-    root.attributes("-topmost", True)
-    if platform.system() != "Darwin":
-        root.after(100, lambda: root.focus_force())
-    root.mainloop()
+    ctrl = RoutingWindowController.alloc().initWithConfigPath_(config_path)
+    if ctrl is None:
+        return
+    ctrl.show()
+    NSApp.runModalForWindow_(ctrl._window)
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("Usage: python routing_window.py <config_path>")
         sys.exit(1)
+
+    app = NSApplication.sharedApplication()
+    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
     show_routing_window(sys.argv[1])

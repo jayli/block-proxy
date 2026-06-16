@@ -11,10 +11,12 @@ logger = logging.getLogger("proxy_core")
 from logger import access_logger, crash_logger
 
 
-def _log_access(dest_addr, dest_port, method, direct, ok):
+def _log_access(dest_addr, dest_port, method, direct, error=None):
     route = "direct" if direct else "proxy"
-    status = "ok" if ok else "fail"
-    access_logger.info(f"{method} | {dest_addr}:{dest_port} | {route} | {status}")
+    if error:
+        access_logger.info(f"{method} | {dest_addr}:{dest_port} | {route} | {error}")
+    else:
+        access_logger.info(f"{method} | {dest_addr}:{dest_port} | {route}")
 
 
 PRIVATE_NETWORKS = [
@@ -613,12 +615,12 @@ class ProxyCore:
                     dest_addr, dest_port, is_domain=is_domain, route=route
                 )
             except Exception as e:
-                _log_access(dest_addr, dest_port, "CONNECT", direct, False)
+                _log_access(dest_addr, dest_port, "CONNECT", direct, str(e))
                 if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
                     crash_logger.warning(f"SOCKS5 connect failed: {dest_addr}:{dest_port}", exc_info=True)
                 return
 
-            _log_access(dest_addr, dest_port, "CONNECT", direct, True)
+            _log_access(dest_addr, dest_port, "CONNECT", direct)
 
             client_writer.write(
                 b"\x05\x00\x00\x01" + b"\x00" * 4 + b"\x00\x00"
@@ -665,9 +667,9 @@ class ProxyCore:
             remote_reader, remote_writer = await connect_upstream_udp_associate(
                 self._server_config, ssl_ctx=self._ssl_ctx
             )
-            _log_access("UDP-ASSOCIATE", 0, "UDP", False, True)
+            _log_access("UDP-ASSOCIATE", 0, "UDP", False)
         except Exception as e:
-            _log_access("UDP-ASSOCIATE", 0, "UDP", False, False)
+            _log_access("UDP-ASSOCIATE", 0, "UDP", False, str(e))
             if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
                 crash_logger.warning("UDP associate failed", exc_info=True)
             client_writer.write(b"\x05\x05\x00\x01" + b"\x00" * 4 + b"\x00\x00")
@@ -772,12 +774,12 @@ class ProxyCore:
                         host, port, is_domain=is_domain, route=route
                     )
                 except Exception as e:
-                    _log_access(host, port, "CONNECT", direct, False)
+                    _log_access(host, port, "CONNECT", direct, str(e))
                     if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
                         crash_logger.warning(f"HTTP CONNECT failed: {host}:{port}", exc_info=True)
                     return
 
-                _log_access(host, port, "CONNECT", direct, True)
+                _log_access(host, port, "CONNECT", direct)
 
                 client_writer.write(
                     b"HTTP/1.1 200 Connection Established\r\n\r\n"
@@ -827,12 +829,12 @@ class ProxyCore:
                             host, port, is_domain=is_domain, route=route
                         )
                     except Exception as e:
-                        _log_access(host, port, method, direct, False)
+                        _log_access(host, port, method, direct, str(e))
                         if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
                             crash_logger.warning(f"HTTP request failed: {host}:{port}", exc_info=True)
                         return
 
-                    _log_access(host, port, method, direct, True)
+                    _log_access(host, port, method, direct)
 
                     request_line = f"{method} {path} {parts[2]}\r\n".encode()
                     remote_writer.write(request_line)

@@ -1,12 +1,34 @@
+"""
+SocksClient — macOS status bar proxy client.
+Pure PyObjC implementation (no rumps dependency).
+"""
+
+import objc
 import os
 import sys
+import platform
 import subprocess
 import threading
-import platform
-import rumps
-from AppKit import NSImage, NSSize
-from PyObjCTools import AppHelper
-from Foundation import NSObject
+
+from Foundation import (
+    NSObject,
+    NSUserNotification,
+    NSUserNotificationCenter,
+)
+from AppKit import (
+    NSApplication,
+    NSApplicationActivationPolicyAccessory,
+    NSStatusBar,
+    NSVariableStatusItemLength,
+    NSMenu,
+    NSMenuItem,
+    NSSize,
+    NSImage,
+    NSApp,
+    NSAlert,
+    NSCommandKeyMask,
+)
+
 from config import Config
 from proxy_core import ProxyCore
 from system_proxy import SystemProxy
@@ -20,18 +42,37 @@ def _is_tahoe_or_newer():
         return False
 
 
-class _MenuOpenDelegate(NSObject):
+def _is_compiled():
+    return "__compiled__" in globals() or getattr(sys, "frozen", False)
+
+
+def _bundle_resource_dir():
+    if _is_compiled():
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _icon_dir():
+    return os.path.join(_bundle_resource_dir(), "icons")
+
+
+class _MenuDelegate(NSObject):
+    """Menu delegate — fires latency check when menu is opened."""
+
     def menuWillOpen_(self, menu):
         cb = getattr(self, "_on_open", None)
         if cb:
             cb()
 
 
-class SocksClient(rumps.App):
-    def __init__(self):
-        super().__init__("SocksClient", quit_button=None)
-        self.template = _is_tahoe_or_newer()
+class AppController(NSObject):
 
+    def init(self):
+        self = objc.super(AppController, self).init()
+        if self is None:
+            return None
+
+        self._template = _is_tahoe_or_newer()
         self.config = Config()
         self.config.load()
         self.proxy = ProxyCore()
@@ -39,94 +80,104 @@ class SocksClient(rumps.App):
         self.connected = False
         self._config_proc = None
         self._routing_proc = None
-
         self._measuring = False
+
+        self._build_status_item()
         self._build_menu()
-        self._setup_menu_delegate()
         self._update_icon()
         self._start_health_check()
 
-    def run(self, **options):
-        if not _is_tahoe_or_newer():
-            def _fix_highlight():
-                try:
-                    self._nsapp.nsstatusitem.setHighlightMode_(False)
-                except Exception:
-                    pass
-            AppHelper.callAfter(_fix_highlight)
-        super().run(**options)
+        return self
 
-    def _build_menu(self):
-        self.toggle_item = rumps.MenuItem("启动代理", callback=self.toggle_proxy)
-        self.config_item = rumps.MenuItem("Socks/HTTP 节点配置...", callback=self.open_config)
-        self.routing_item = rumps.MenuItem("分流规则...", callback=self.open_routing)
+    # ------------------------------------------------------------------
+    # Status bar item
+    # ------------------------------------------------------------------
 
-        self.global_item = rumps.MenuItem("全局代理（设置系统代理）", callback=self.set_global_mode)
-        self.manual_item = rumps.MenuItem("手动模式（关闭系统代理）", callback=self.set_manual_mode)
-
-        self.about_item = rumps.MenuItem("关于", callback=self.show_about)
-        self.log_item = rumps.MenuItem("查看日志...", callback=self.open_log)
-        self.quit_item = rumps.MenuItem("退出", callback=self.quit_app)
-
-        self.menu = [
-            self.toggle_item,
-            self.config_item,
-            self.routing_item,
-            None,
-            self.global_item,
-            self.manual_item,
-            None,
-            self.log_item,
-            self.about_item,
-            None,
-            self.quit_item,
-        ]
-
-        try:
-            from AppKit import NSCommandKeyMask
-            self.quit_item._menuitem.setKeyEquivalent_("q")
-            self.quit_item._menuitem.setKeyEquivalentModifierMask_(NSCommandKeyMask)
-        except Exception:
-            pass
-
-        self._update_mode_menu()
-
-    def _update_mode_menu(self):
-        is_global = self.config.data["mode"] == "global"
-        self.global_item.state = 1 if is_global else 0
-        self.manual_item.state = 1 if not is_global else 0
+    def _build_status_item(self):
+        self._status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(
+            NSVariableStatusItemLength
+        )
 
     def _update_icon(self):
         if self.connected:
-            icon_name = "socks_on_G_bar.png" if self.config.data["mode"] == "global" else "socks_on_M_bar.png"
+            icon_name = (
+                "socks_on_G_bar.png"
+                if self.config.data["mode"] == "global"
+                else "socks_on_M_bar.png"
+            )
         else:
             icon_name = "christmas-sock_light_bar_off.png"
-        icon_path = os.path.join(self._icon_dir(), icon_name)
-        if os.path.exists(icon_path):
-            image = NSImage.alloc().initByReferencingFile_(icon_path)
-            image.setSize_(NSSize(22, 22))
-            if self._template is not None:
-                image.setTemplate_(self._template)
-            self._icon = icon_path
-            self._icon_nsimage = image
-            try:
-                self._nsapp.setStatusBarIcon()
-            except AttributeError:
-                pass
-        self.title = None
 
-    def _is_compiled(self):
-        return "__compiled__" in globals() or getattr(sys, "frozen", False)
+        icon_path = os.path.join(_icon_dir(), icon_name)
+        if not os.path.exists(icon_path):
+            return
 
-    def _bundle_resource_dir(self):
-        if self._is_compiled():
-            return os.path.dirname(sys.executable)
-        return os.path.dirname(os.path.abspath(__file__))
+        image = NSImage.alloc().initByReferencingFile_(icon_path)
+        if image is None:
+            return
+        image.setSize_(NSSize(22, 22))
+        if self._template is not None:
+            image.setTemplate_(self._template)
+        self._status_item.button().setImage_(image)
 
-    def _icon_dir(self):
-        return os.path.join(self._bundle_resource_dir(), "icons")
+    # ------------------------------------------------------------------
+    # Menu
+    # ------------------------------------------------------------------
 
-    def toggle_proxy(self, sender):
+    def _build_menu(self):
+        menu = NSMenu.alloc().init()
+        menu.setAutoenablesItems_(False)
+
+        self.toggle_item = self._add_menu_item(
+            menu, "启动代理", "toggleProxy:"
+        )
+        self._add_menu_item(menu, "Socks/HTTP 节点配置...", "openConfig:")
+        self._add_menu_item(menu, "分流规则...", "openRouting:")
+        menu.addItem_(NSMenuItem.separatorItem())
+
+        self.global_item = self._add_menu_item(
+            menu, "全局代理（设置系统代理）", "setGlobalMode:"
+        )
+        self.manual_item = self._add_menu_item(
+            menu, "手动模式（关闭系统代理）", "setManualMode:"
+        )
+        self._update_mode_menu()
+        menu.addItem_(NSMenuItem.separatorItem())
+
+        self._add_menu_item(menu, "查看日志...", "openLog:")
+        self._add_menu_item(menu, "关于", "showAbout:")
+        menu.addItem_(NSMenuItem.separatorItem())
+
+        quit_item = self._add_menu_item(menu, "退出", "quitApp:")
+        quit_item.setKeyEquivalent_("q")
+        quit_item.setKeyEquivalentModifierMask_(NSCommandKeyMask)
+
+        # Delegate for latency measurement on menu-open
+        delegate = _MenuDelegate.alloc().init()
+        delegate._on_open = self._on_menu_open
+        menu.setDelegate_(delegate)
+        self._menu_delegate = delegate  # keep alive
+
+        self._status_item.setValue_forKey_(menu, "menu")
+        self._menu = menu
+
+    def _add_menu_item(self, menu, title, action):
+        item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, action, "")
+        item.setTarget_(self)
+        item.setEnabled_(True)
+        menu.addItem_(item)
+        return item
+
+    def _update_mode_menu(self):
+        is_global = self.config.data["mode"] == "global"
+        self.global_item.setState_(1 if is_global else 0)
+        self.manual_item.setState_(1 if not is_global else 0)
+
+    # ------------------------------------------------------------------
+    # Proxy toggle
+    # ------------------------------------------------------------------
+
+    def toggleProxy_(self, sender):
         if self.connected:
             self._disconnect()
         else:
@@ -134,23 +185,29 @@ class SocksClient(rumps.App):
 
     def _connect(self):
         if not self.config.is_configured():
-            rumps.alert("请先配置节点信息")
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_("请先配置节点信息")
+            alert.addButtonWithTitle_("好")
+            alert.runModal()
             return
 
         def _start():
             try:
                 self.proxy.start(self.config.data)
             except OSError as e:
-                if e.errno == 48:
-                    msg = "端口被占用，请检查端口是否已被其他程序使用"
-                else:
-                    msg = str(e)
-                AppHelper.callAfter(
-                    lambda: rumps.notification("SocksClient", "启动失败", msg)
+                self._run_on_main(
+                    lambda: self._show_notification(
+                        "SocksClient", "启动失败",
+                        "端口被占用，请检查端口是否已被其他程序使用"
+                        if e.errno == 48 else str(e),
+                    )
                 )
                 return
-            if (self.proxy.socks_port != self.config.data["local"]["socks_port"]
-                    or self.proxy.http_port != self.config.data["local"]["http_port"]):
+
+            if (
+                self.proxy.socks_port != self.config.data["local"]["socks_port"]
+                or self.proxy.http_port != self.config.data["local"]["http_port"]
+            ):
                 self.config.data["local"]["socks_port"] = self.proxy.socks_port
                 self.config.data["local"]["http_port"] = self.proxy.http_port
                 self.config.save()
@@ -162,58 +219,64 @@ class SocksClient(rumps.App):
                         http_port=self.proxy.http_port,
                     )
                 except Exception as e:
-                    err_msg = str(e)
-                    AppHelper.callAfter(
-                        lambda: rumps.notification("SocksClient", "系统代理设置失败", err_msg)
+                    self._run_on_main(
+                        lambda: self._show_notification(
+                            "SocksClient", "系统代理设置失败", str(e)
+                        )
                     )
 
-            def _update_ui():
-                self.connected = True
-                self.toggle_item.title = "关闭代理"
-                self._update_icon()
-
-            AppHelper.callAfter(_update_ui)
+            self._run_on_main(self._on_connected)
 
         threading.Thread(target=_start, daemon=True).start()
+
+    def _on_connected(self):
+        self.connected = True
+        self.toggle_item.setTitle_("关闭代理")
+        self._update_icon()
 
     def _disconnect(self):
         self.sys_proxy.disable()
         self.proxy.stop()
         self.connected = False
-        self.toggle_item.title = "启动代理"
+        self.toggle_item.setTitle_("启动代理")
         self._update_icon()
 
-    def open_config(self, sender):
+    # ------------------------------------------------------------------
+    # Mode switching
+    # ------------------------------------------------------------------
+
+    def setGlobalMode_(self, sender):
+        self.config.data["mode"] = "global"
+        self.config.save()
+        self._update_mode_menu()
+        self._update_icon()
+        if self.connected:
+            self.sys_proxy.enable(
+                socks_port=self.proxy.socks_port,
+                http_port=self.proxy.http_port,
+            )
+
+    def setManualMode_(self, sender):
+        self.config.data["mode"] = "manual"
+        self.config.save()
+        self._update_mode_menu()
+        self._update_icon()
+        if self.connected:
+            self.sys_proxy.disable()
+
+    # ------------------------------------------------------------------
+    # Subprocess windows
+    # ------------------------------------------------------------------
+
+    def openConfig_(self, sender):
         self._show_config_window()
 
-    def open_routing(self, sender):
+    def openRouting_(self, sender):
         self._show_routing_window()
 
-    def _show_routing_window(self):
-        self.config.save()
-        script_path = os.path.join(self._bundle_resource_dir(), "routing_window.py")
-        python_path = self._find_python() if self._is_compiled() else sys.executable
-        self._routing_proc = subprocess.Popen(
-            [python_path, script_path, self.config.config_path]
-        )
-
-        def _reload_after_routing_window():
-            self._routing_proc.wait()
-            self._routing_proc = None
-            old_routing = self.config.data.get("routing", {})
-            self.config.load()
-            new_routing = self.config.data.get("routing", {})
-            if self.connected and new_routing != old_routing:
-                def _reconnect():
-                    self._disconnect()
-                    self._connect()
-                AppHelper.callAfter(_reconnect)
-
-        threading.Thread(target=_reload_after_routing_window, daemon=True).start()
-
-    def open_log(self, sender):
-        script_path = os.path.join(self._bundle_resource_dir(), "log_window.py")
-        python_path = self._find_python() if self._is_compiled() else sys.executable
+    def openLog_(self, sender):
+        script_path = os.path.join(_bundle_resource_dir(), "log_window.py")
+        python_path = self._find_python() if _is_compiled() else sys.executable
         subprocess.Popen([python_path, script_path])
 
     def _find_python(self):
@@ -228,137 +291,90 @@ class SocksClient(rumps.App):
 
     def _show_config_window(self):
         self.config.save()
-        script_path = os.path.join(self._bundle_resource_dir(), "config_window.py")
-        python_path = self._find_python() if self._is_compiled() else sys.executable
-        self._config_proc = subprocess.Popen([python_path, script_path, self.config.config_path])
+        script_path = os.path.join(_bundle_resource_dir(), "config_window.py")
+        python_path = self._find_python() if _is_compiled() else sys.executable
+        self._config_proc = subprocess.Popen(
+            [python_path, script_path, self.config.config_path]
+        )
 
-        def _reload_after_window():
+        def _reload_after():
             self._config_proc.wait()
             self._config_proc = None
             old_data = self.config.data.copy()
             self.config.load()
             if self.connected and self.config.data != old_data:
-                def _reconnect():
-                    self._disconnect()
-                    self._connect()
-                AppHelper.callAfter(_reconnect)
+                self._run_on_main(self._reconnect)
 
-        threading.Thread(target=_reload_after_window, daemon=True).start()
+        threading.Thread(target=_reload_after, daemon=True).start()
 
-    def set_global_mode(self, sender):
-        self.config.data["mode"] = "global"
+    def _show_routing_window(self):
         self.config.save()
-        self._update_mode_menu()
-        self._update_icon()
-        if self.connected:
-            self.sys_proxy.enable(
-                socks_port=self.proxy.socks_port,
-                http_port=self.proxy.http_port,
-            )
+        script_path = os.path.join(_bundle_resource_dir(), "routing_window.py")
+        python_path = self._find_python() if _is_compiled() else sys.executable
+        self._routing_proc = subprocess.Popen(
+            [python_path, script_path, self.config.config_path]
+        )
 
-    def set_manual_mode(self, sender):
-        self.config.data["mode"] = "manual"
-        self.config.save()
-        self._update_mode_menu()
-        self._update_icon()
-        if self.connected:
-            self.sys_proxy.disable()
+        def _reload_after():
+            self._routing_proc.wait()
+            self._routing_proc = None
+            old_routing = self.config.data.get("routing", {})
+            self.config.load()
+            new_routing = self.config.data.get("routing", {})
+            if self.connected and new_routing != old_routing:
+                self._run_on_main(self._reconnect)
 
-    def show_about(self, sender):
-        try:
-            from AppKit import (
-                NSAlert, NSTextField, NSMutableAttributedString,
-                NSAttributedString, NSFont, NSColor, NSMakeRect,
-                NSApp,
-            )
-            from Foundation import NSURL, NSRange
+        threading.Thread(target=_reload_after, daemon=True).start()
 
-            NSApp.activateIgnoringOtherApps_(True)
-            alert = NSAlert.alloc().init()
-            alert.setMessageText_("关于 SocksClient")
-            alert.addButtonWithTitle_("好")
+    def _reconnect(self):
+        self._disconnect()
+        self._connect()
 
-            url = "https://github.com/jayli/block-proxy"
-            text = f"项目：block-proxy\n作者：lijing00333\n地址：{url}\n版本：v0.1.0"
+    # ------------------------------------------------------------------
+    # About
+    # ------------------------------------------------------------------
 
-            attr_str = NSMutableAttributedString.alloc().initWithString_(text)
-            full_range = NSRange(0, len(text))
-            font = NSFont.systemFontOfSize_(13)
-            attr_str.addAttribute_value_range_("NSFont", font, full_range)
+    def showAbout_(self, sender):
+        NSApp.activateIgnoringOtherApps_(True)
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_("关于 SocksClient")
+        alert.setInformativeText_(
+            "项目：block-proxy\n"
+            "作者：lijing00333\n"
+            "地址：https://github.com/jayli/block-proxy\n"
+            "版本：v0.1.0"
+        )
+        alert.addButtonWithTitle_("好")
+        alert.runModal()
 
-            link_start = text.index(url)
-            link_range = NSRange(link_start, len(url))
-            attr_str.addAttribute_value_range_("NSLink", NSURL.URLWithString_(url), link_range)
-            attr_str.addAttribute_value_range_("NSColor", NSColor.linkColor(), link_range)
+    # ------------------------------------------------------------------
+    # Quit
+    # ------------------------------------------------------------------
 
-            text_field = NSTextField.wrappingLabelWithString_("")
-            text_field.setAttributedStringValue_(attr_str)
-            text_field.setAllowsEditingTextAttributes_(True)
-            text_field.setSelectable_(True)
-            text_field.setFrame_(NSMakeRect(0, 0, 300, 80))
+    def quitApp_(self, sender):
+        NSApp.terminate_(self)
 
-            alert.setAccessoryView_(text_field)
-            alert.runModal()
-        except Exception:
-            rumps.alert(
-                title="关于 SocksClient",
-                message=(
-                    "项目：block-proxy\n"
-                    "作者：lijing00333\n"
-                    "地址：https://github.com/jayli/block-proxy\n"
-                    "版本：v0.1.0"
-                ),
-            )
-
-    def quit_app(self, sender):
+    def applicationWillTerminate_(self, notification):
         if self._config_proc and self._config_proc.poll() is None:
             self._config_proc.terminate()
         if self._routing_proc and self._routing_proc.poll() is None:
             self._routing_proc.terminate()
         if self.connected:
             self.sys_proxy.disable()
-            threading.Thread(target=self.proxy.stop, daemon=True).start()
-        rumps.quit_application()
+            self.proxy.stop()
 
-    def _setup_menu_delegate(self):
-        try:
-            delegate = _MenuOpenDelegate.alloc().init()
-            delegate._on_open = self._on_menu_open
-            self._menu._menu.setDelegate_(delegate)
-            self._menu_delegate = delegate
-        except Exception:
-            pass
-
-    def _on_menu_open(self):
-        if not self.connected or self._measuring:
-            return
-
-        self._measuring = True
-
-        def _check():
-            try:
-                latency = self.proxy.measure_latency()
-
-                def _update():
-                    if not self.connected:
-                        return
-                    if latency is not None:
-                        self.toggle_item.title = f"关闭代理（{latency}ms）"
-                    else:
-                        self.toggle_item.title = "关闭代理（超时）"
-
-                AppHelper.callAfter(_update)
-            finally:
-                self._measuring = False
-
-        threading.Thread(target=_check, daemon=True).start()
+    # ------------------------------------------------------------------
+    # Health check
+    # ------------------------------------------------------------------
 
     def _start_health_check(self):
-        MAX_RESTART_ATTEMPTS = 3
+        MAX_RESTARTS = 3
         RESTART_DELAY = 2
 
-        def check():
+        def _loop():
             import time
+            from logger import crash_logger
+
             restart_count = 0
             while True:
                 time.sleep(5)
@@ -369,19 +385,16 @@ class SocksClient(rumps.App):
                     restart_count = 0
                     continue
 
-                from logger import crash_logger
-                crash_logger.warning("Proxy thread died, attempting restart (%d/%d)",
-                                     restart_count + 1, MAX_RESTART_ATTEMPTS)
+                restart_count += 1
+                crash_logger.warning(
+                    "Proxy thread died, attempting restart (%d/%d)",
+                    restart_count, MAX_RESTARTS,
+                )
 
-                if restart_count >= MAX_RESTART_ATTEMPTS:
-                    def _notify_failed():
-                        self._disconnect()
-                        rumps.notification(
-                            "SocksClient",
-                            "代理已断开",
-                            f"代理连续 {MAX_RESTART_ATTEMPTS} 次重启失败，已停止",
-                        )
-                    AppHelper.callAfter(_notify_failed)
+                if restart_count > MAX_RESTARTS:
+                    self._run_on_main(
+                        lambda: self._on_health_failed(MAX_RESTARTS)
+                    )
                     restart_count = 0
                     continue
 
@@ -392,8 +405,85 @@ class SocksClient(rumps.App):
                     restart_count = 0
                     crash_logger.warning("Proxy restarted successfully")
                 except Exception as e:
-                    restart_count += 1
-                    crash_logger.warning("Proxy restart failed: %s", e, exc_info=True)
+                    crash_logger.warning(
+                        "Proxy restart failed: %s", e, exc_info=True
+                    )
 
-        t = threading.Thread(target=check, daemon=True)
-        t.start()
+        threading.Thread(target=_loop, daemon=True).start()
+
+    def _on_health_failed(self, max_restarts):
+        self._disconnect()
+        alert = NSAlert.alloc().init()
+        alert.setMessageText_("代理已断开")
+        alert.setInformativeText_(
+            f"代理连续 {max_restarts} 次重启失败，已停止"
+        )
+        alert.addButtonWithTitle_("好")
+        alert.runModal()
+
+    # ------------------------------------------------------------------
+    # Menu-open latency check
+    # ------------------------------------------------------------------
+
+    def _on_menu_open(self):
+        if not self.connected or self._measuring:
+            return
+        self._measuring = True
+
+        def _check():
+            try:
+                latency = self.proxy.measure_latency()
+
+                def _update():
+                    if not self.connected:
+                        return
+                    self.toggle_item.setTitle_(
+                        f"关闭代理（{latency}ms）"
+                        if latency is not None
+                        else "关闭代理（超时）"
+                    )
+
+                self._run_on_main(_update)
+            finally:
+                self._measuring = False
+
+        threading.Thread(target=_check, daemon=True).start()
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _run_on_main(self, fn):
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "_executeCallback:", fn, False
+        )
+
+    def _executeCallback_(self, fn):
+        fn()
+
+    def _show_notification(self, title, subtitle, message):
+        try:
+            notif = NSUserNotification.alloc().init()
+            notif.setTitle_(title)
+            notif.setSubtitle_(subtitle)
+            notif.setInformativeText_(message)
+            NSUserNotificationCenter.defaultUserNotificationCenter().deliverNotification_(
+                notif
+            )
+        except Exception:
+            pass
+
+
+class SocksClient:
+    """Compatibility wrapper — same API as the old rumps-based class."""
+
+    def run(self):
+        app = NSApplication.sharedApplication()
+        app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+
+        ctrl = AppController.alloc().init()
+        if ctrl is None:
+            raise RuntimeError("Failed to initialize AppController")
+        self._ctrl = ctrl  # keep alive
+        app.setDelegate_(ctrl)
+        app.run()
