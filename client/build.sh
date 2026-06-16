@@ -59,6 +59,8 @@ $PYTHON -m nuitka \
     --include-data-dir=icons=icons \
     --include-data-files=config_window.py=config_window.py \
     --include-data-files=log_window.py=log_window.py \
+    --include-data-files=routing_window.py=routing_window.py \
+    --include-data-dir=geodata=geodata \
     --enable-plugin=no-qt \
     --output-dir="$DIST_DIR" \
     main.py
