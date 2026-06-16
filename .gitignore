@@ -30,3 +30,6 @@ yarn-error.log*
 # python
 .venv
 
+# worktrees
+.worktrees/
+
