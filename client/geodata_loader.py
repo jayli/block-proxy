@@ -130,6 +130,11 @@ class GeodataLoader:
         else:
             logger.warning("geoip.dat not found: %s", geoip_path)
 
+    def load_geoip(self):
+        """Load geoip.dat. Safe to call after construction (e.g. from a background thread)."""
+        if not self._geoip_loaded:
+            self._load_geoip()
+
     @property
     def geosite_available(self):
         return self._geosite_loaded

@@ -133,8 +133,8 @@ def show_routing_window(config_path):
     hint_frame.pack(fill="x", pady=(0, 5))
     ttk.Label(
         hint_frame,
-        text="每行一条规则，如 geosite:cn  geoip:!cn\n"
-             "# 开头为注释，geoip 仅对 IP 目标生效（不解析域名）",
+        text="每行一条规则，如 domain:example.com  geosite:cn  geoip:!cn\n"
+             "# 开头为注释，domain 匹配域名及子域名，geoip 仅对 IP 生效",
         foreground="gray",
         justify="left",
     ).pack(anchor="w")

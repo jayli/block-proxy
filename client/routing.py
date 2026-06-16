@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import sys
+import threading
 
 from geodata_loader import GeodataLoader
 
@@ -24,11 +25,12 @@ def _geodata_dir():
 def parse_rules(rule_strings):
     """Parse a list of rule strings into structured rule tuples.
 
-    Each rule string format: "geosite:tag" or "geoip:code" (with optional "!" for negation)
+    Each rule string format: "domain:pattern", "geosite:tag", or "geoip:code"
+    (with optional "!" for negation on geoip/geosite).
     Returns: [(type, code, negated), ...]
-      type: "geosite" or "geoip"
-      code: country/tag name (lowercase)
-      negated: bool (True if "!" prefix)
+      type: "domain", "geosite", or "geoip"
+      code: the value after colon (lowercase)
+      negated: bool (True if "!" prefix, only for geosite/geoip)
 
     Invalid or empty lines are silently skipped.
     """
@@ -46,7 +48,7 @@ def parse_rules(rule_strings):
         prefix = prefix.lower().strip()
         code = code.strip().lower()
 
-        if prefix not in ("geosite", "geoip"):
+        if prefix not in ("domain", "geosite", "geoip"):
             logger.warning("Unknown rule type: %s", prefix)
             continue
         if not code:
@@ -78,12 +80,13 @@ class RoutingEngine:
         needs_geoip = any(rule_type == "geoip" for rule_type, _, _ in all_rules)
         self._loader = None
         if self._enabled and (needs_geosite or needs_geoip):
-            # Selective eager load at construction (called from proxy start thread, not event loop).
             self._loader = GeodataLoader(
                 geodata_dir,
                 load_geosite=needs_geosite,
-                load_geoip=needs_geoip,
+                load_geoip=False,  # geoip loaded in background to avoid blocking startup
             )
+            if needs_geoip:
+                threading.Thread(target=self._loader.load_geoip, daemon=True).start()
 
     def _geosite_available(self):
         return self._loader is not None and self._loader.geosite_available
@@ -96,6 +99,13 @@ class RoutingEngine:
 
     def _geoip_code_known(self, code):
         return self._geoip_available() and self._loader.has_geoip(code)
+
+    def _match_domain(self, host, pattern):
+        """Check if a domain matches a simple domain pattern.
+        No geodata needed — exact match or subdomain suffix match.
+        """
+        host_lower = host.lower()
+        return host_lower == pattern or host_lower.endswith("." + pattern)
 
     def _match_geosite(self, host, code):
         """Check if a domain matches geosite rules for the given country code.
@@ -154,7 +164,11 @@ class RoutingEngine:
 
         def _match_rules(rules):
             for rule_type, code, negated in rules:
-                if rule_type == "geosite":
+                if rule_type == "domain":
+                    if not is_domain:
+                        continue
+                    matched = self._match_domain(host, code)
+                elif rule_type == "geosite":
                     if not is_domain:
                         continue
                     # Data unavailable or unknown tag → rules must not match.
