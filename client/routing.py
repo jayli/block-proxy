@@ -122,3 +122,18 @@ class RoutingEngine:
                 except re.error:
                     pass
         return False
+
+    def _match_geoip(self, host, code):
+        """Check if an IP address matches geoip CIDR ranges for the given country code.
+        Returns False if geoip data is not available (safe fallback).
+        """
+        if not self._geoip_available():
+            return False
+        if not self._geoip_code_known(code):
+            return False
+        networks = self._loader.get_geoip(code)
+        try:
+            addr = ipaddress.ip_address(host)
+        except ValueError:
+            return False
+        return any(addr in net for net in networks)

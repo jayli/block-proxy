@@ -101,3 +101,46 @@ class TestMatchGeosite:
     def test_empty_rules_returns_false(self):
         engine = self._make_engine({"cn": []})
         assert engine._match_geosite("baidu.com", "cn") is False
+
+
+class TestMatchGeoip:
+    def _make_engine(self, geoip_data=None):
+        from unittest.mock import MagicMock
+        engine = RoutingEngine.__new__(RoutingEngine)
+        engine._enabled = True
+        engine._default_action = "proxy"
+        engine._direct_rules = []
+        engine._proxy_rules = []
+        mock_loader = MagicMock()
+        mock_loader.geosite_available = False
+        mock_loader.geoip_available = True
+        mock_loader.get_geoip = lambda code: (geoip_data or {}).get(code, [])
+        mock_loader.has_geoip = lambda code: code in (geoip_data or {})
+        engine._loader = mock_loader
+        return engine
+
+    def test_ipv4_in_cidr(self):
+        engine = self._make_engine({"cn": [ipaddress.ip_network("1.2.3.0/24")]})
+        assert engine._match_geoip("1.2.3.100", "cn") is True
+        assert engine._match_geoip("1.2.3.0", "cn") is True
+        assert engine._match_geoip("1.2.3.255", "cn") is True
+        assert engine._match_geoip("1.2.4.0", "cn") is False
+
+    def test_ipv6_in_cidr(self):
+        engine = self._make_engine({"test": [ipaddress.ip_network("2001:db8::/32")]})
+        assert engine._match_geoip("2001:db8::1", "test") is True
+        assert engine._match_geoip("2001:db9::1", "test") is False
+
+    def test_multiple_cidrs(self):
+        engine = self._make_engine({"cn": [ipaddress.ip_network("1.2.3.0/24"), ipaddress.ip_network("10.0.0.0/8")]})
+        assert engine._match_geoip("1.2.3.50", "cn") is True
+        assert engine._match_geoip("10.1.2.3", "cn") is True
+        assert engine._match_geoip("8.8.8.8", "cn") is False
+
+    def test_unknown_code_returns_false(self):
+        engine = self._make_engine({"cn": [ipaddress.ip_network("1.2.3.0/24")]})
+        assert engine._match_geoip("1.2.3.50", "us") is False
+
+    def test_invalid_ip_returns_false(self):
+        engine = self._make_engine({"cn": [ipaddress.ip_network("1.2.3.0/24")]})
+        assert engine._match_geoip("not-an-ip", "cn") is False
