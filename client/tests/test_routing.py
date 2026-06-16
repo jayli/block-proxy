@@ -4,7 +4,7 @@ import ipaddress
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from routing import parse_rules
+from routing import parse_rules, RoutingEngine
 
 
 class TestParseRules:
@@ -50,3 +50,54 @@ class TestParseRules:
         assert len(rules) == 2
         assert rules[0] == ("geosite", "cn", False)
         assert rules[1] == ("geoip", "us", False)
+
+
+class TestMatchGeosite:
+    def _make_engine(self, geosite_data=None):
+        """Create a RoutingEngine with mock geosite data."""
+        from unittest.mock import MagicMock
+        engine = RoutingEngine.__new__(RoutingEngine)
+        engine._enabled = True
+        engine._default_action = "proxy"
+        engine._direct_rules = []
+        engine._proxy_rules = []
+        mock_loader = MagicMock()
+        mock_loader.geosite_available = True
+        mock_loader.geoip_available = False
+        mock_loader.get_geosite = lambda tag: (geosite_data or {}).get(tag, [])
+        mock_loader.has_geosite = lambda tag: tag in (geosite_data or {})
+        engine._loader = mock_loader
+        return engine
+
+    def test_domain_suffix_match(self):
+        engine = self._make_engine({"cn": [("domain", "baidu.com")]})
+        assert engine._match_geosite("baidu.com", "cn") is True
+        assert engine._match_geosite("www.baidu.com", "cn") is True
+        assert engine._match_geosite("a.b.baidu.com", "cn") is True
+        assert engine._match_geosite("notbaidu.com", "cn") is False
+
+    def test_domain_full_match(self):
+        engine = self._make_engine({"cn": [("full", "qq.com")]})
+        assert engine._match_geosite("qq.com", "cn") is True
+        assert engine._match_geosite("www.qq.com", "cn") is False
+        assert engine._match_geosite("notqq.com", "cn") is False
+
+    def test_domain_plain_match(self):
+        engine = self._make_engine({"cn": [("plain", "baidu")]})
+        assert engine._match_geosite("baidu.com", "cn") is True
+        assert engine._match_geosite("mybaidusite.com", "cn") is True
+        assert engine._match_geosite("google.com", "cn") is False
+
+    def test_domain_regex_match(self):
+        engine = self._make_engine({"cn": [("regex", r"^test\d+\.com$")]})
+        assert engine._match_geosite("test123.com", "cn") is True
+        assert engine._match_geosite("test.com", "cn") is False
+        assert engine._match_geosite("atest123.com", "cn") is False
+
+    def test_unknown_tag_returns_false(self):
+        engine = self._make_engine({"cn": [("domain", "baidu.com")]})
+        assert engine._match_geosite("baidu.com", "us") is False
+
+    def test_empty_rules_returns_false(self):
+        engine = self._make_engine({"cn": []})
+        assert engine._match_geosite("baidu.com", "cn") is False

@@ -63,3 +63,62 @@ def parse_rules(rule_strings):
 
         rules.append((prefix, code, negated))
     return rules
+
+
+class RoutingEngine:
+    """Routing engine that resolves hosts to 'direct' or 'proxy' actions."""
+
+    def __init__(self, config, geodata_dir):
+        self._enabled = config.get("enabled", False)
+        self._default_action = config.get("default", "proxy")
+        self._direct_rules = parse_rules(config.get("direct_rules", []))
+        self._proxy_rules = parse_rules(config.get("proxy_rules", []))
+        all_rules = self._direct_rules + self._proxy_rules
+        needs_geosite = any(rule_type == "geosite" for rule_type, _, _ in all_rules)
+        needs_geoip = any(rule_type == "geoip" for rule_type, _, _ in all_rules)
+        self._loader = None
+        if self._enabled and (needs_geosite or needs_geoip):
+            # Selective eager load at construction (called from proxy start thread, not event loop).
+            self._loader = GeodataLoader(
+                geodata_dir,
+                load_geosite=needs_geosite,
+                load_geoip=needs_geoip,
+            )
+
+    def _geosite_available(self):
+        return self._loader is not None and self._loader.geosite_available
+
+    def _geoip_available(self):
+        return self._loader is not None and self._loader.geoip_available
+
+    def _geosite_tag_known(self, code):
+        return self._geosite_available() and self._loader.has_geosite(code)
+
+    def _geoip_code_known(self, code):
+        return self._geoip_available() and self._loader.has_geoip(code)
+
+    def _match_geosite(self, host, code):
+        """Check if a domain matches geosite rules for the given country code.
+        Returns False if geosite data or tag is not available (safe fallback).
+        """
+        if not self._geosite_tag_known(code):
+            return False
+        rules = self._loader.get_geosite(code)
+        host_lower = host.lower()
+        for rule_type, value in rules:
+            if rule_type == "full":
+                if host_lower == value:
+                    return True
+            elif rule_type == "domain":
+                if host_lower == value or host_lower.endswith("." + value):
+                    return True
+            elif rule_type == "plain":
+                if value in host_lower:
+                    return True
+            elif rule_type == "regex":
+                try:
+                    if re.search(value, host_lower):
+                        return True
+                except re.error:
+                    pass
+        return False
