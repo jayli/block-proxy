@@ -18,6 +18,12 @@ DEFAULT_CONFIG = {
         "udp": True,
     },
     "mode": "global",
+    "routing": {
+        "enabled": False,
+        "direct_rules": [],
+        "proxy_rules": [],
+        "default": "proxy",
+    },
 }
 
 DEFAULT_CONFIG_DIR = os.path.expanduser(
@@ -36,10 +42,21 @@ class Config:
         if os.path.exists(self.config_path):
             with open(self.config_path, "r") as f:
                 self.data = json.load(f)
+            self._fill_defaults()
         else:
             self.data = copy.deepcopy(DEFAULT_CONFIG)
             self.save()
         return self.data
+
+    def _fill_defaults(self):
+        """Recursively fill missing fields (including sub-fields)"""
+        for key, value in DEFAULT_CONFIG.items():
+            if key not in self.data:
+                self.data[key] = copy.deepcopy(value)
+            elif isinstance(value, dict):
+                for sub_key, sub_value in value.items():
+                    if sub_key not in self.data[key]:
+                        self.data[key][sub_key] = copy.deepcopy(sub_value)
 
     def save(self):
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)

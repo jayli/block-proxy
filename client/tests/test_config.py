@@ -70,3 +70,46 @@ class TestConfig:
         self.config.load()
         self.config.data["server"]["address"] = "10.0.0.1"
         assert self.config.is_configured() is True
+
+    def test_routing_defaults_in_new_config(self):
+        data = self.config.load()
+        assert "routing" in data
+        assert data["routing"]["enabled"] is False
+        assert data["routing"]["direct_rules"] == []
+        assert data["routing"]["proxy_rules"] == []
+        assert data["routing"]["default"] == "proxy"
+
+    def test_old_config_gets_routing_defaults(self):
+        old = {
+            "server": {
+                "protocol": "socks5", "address": "example.com", "port": 8002,
+                "username": "", "password": "", "tls": True, "allowInsecure": True,
+            },
+            "local": {"socks_port": 1080, "http_port": 1087, "udp": True},
+            "mode": "global",
+        }
+        with open(self.config_path, "w") as f:
+            json.dump(old, f)
+        data = self.config.load()
+        assert "routing" in data
+        assert data["routing"]["enabled"] is False
+        assert data["routing"]["default"] == "proxy"
+
+    def test_partial_routing_gets_sub_defaults(self):
+        """routing exists but missing sub-fields, auto-fill"""
+        partial = {
+            "server": {
+                "protocol": "socks5", "address": "x.com", "port": 8002,
+                "username": "", "password": "", "tls": True, "allowInsecure": True,
+            },
+            "local": {"socks_port": 1080, "http_port": 1087, "udp": True},
+            "mode": "global",
+            "routing": {"enabled": True},  # missing direct_rules, proxy_rules, default
+        }
+        with open(self.config_path, "w") as f:
+            json.dump(partial, f)
+        data = self.config.load()
+        assert data["routing"]["enabled"] is True  # retain original value
+        assert data["routing"]["direct_rules"] == []  # filled
+        assert data["routing"]["proxy_rules"] == []
+        assert data["routing"]["default"] == "proxy"
