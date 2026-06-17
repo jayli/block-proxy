@@ -144,7 +144,11 @@ class AppController(NSObject):
         self._update_mode_menu()
         menu.addItem_(NSMenuItem.separatorItem())
 
-        self._add_menu_item(menu, "查看日志...", "openLog:")
+        log_item = self._add_menu_item(menu, "查看日志...", "openLog:")
+        from AppKit import NSImage
+        log_image = NSImage.imageWithSystemSymbolName_accessibilityDescription_("doc.text", None)
+        if log_image:
+            log_item.setImage_(log_image)
         self._add_menu_item(menu, "关于", "showAbout:")
         menu.addItem_(NSMenuItem.separatorItem())
 

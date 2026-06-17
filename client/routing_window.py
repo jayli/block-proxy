@@ -253,39 +253,52 @@ class RoutingWindowController(NSObject):
         )
         default_popup.addItemsWithTitles_(["proxy", "direct"])
         default_popup.selectItemWithTitle_(routing.get("default", "proxy"))
+        default_popup.setTarget_(self)
+        default_popup.setAction_("onRoutingChanged:")
         content.addSubview_(default_popup)
         self._default_popup = default_popup
 
         enabled_cb = NSButton.alloc().initWithFrame_(
-            ((p, 60), (w - 2 * p, 22))
+            ((p, 60), (100, 22))
         )
         enabled_cb.setButtonType_(NSButtonTypeSwitch)
         enabled_cb.setTitle_("启用分流规则")
         enabled_cb.setState_(1 if routing.get("enabled", False) else 0)
+        enabled_cb.setTarget_(self)
+        enabled_cb.setAction_("onRoutingChanged:")
         content.addSubview_(enabled_cb)
         self._enabled_cb = enabled_cb
 
-        btn = NSButton.alloc().initWithFrame_(((w - 110, 27), (100, 28)))
+        routing_hint = NSTextField.labelWithString_("")
+        routing_hint.setFont_(NSFont.systemFontOfSize_(10))
+        routing_hint.setTextColor_(NSColor.secondaryLabelColor())
+        routing_hint.setFrame_(((p + 105, 59), (w - 2 * p - 110, 18)))
+        content.addSubview_(routing_hint)
+        self._routing_hint = routing_hint
+
+        btn = NSButton.alloc().initWithFrame_(((w - 110, 23), (100, 28)))
         btn.setTitle_("保存")
         btn.setBezelStyle_(BEZEL_ROUNDED)
         btn.setTarget_(self)
         btn.setAction_("saveAndClose:")
         content.addSubview_(btn)
 
-        check_btn = NSButton.alloc().initWithFrame_(((w - 220, 27), (100, 28)))
+        check_btn = NSButton.alloc().initWithFrame_(((w - 220, 23), (100, 28)))
         check_btn.setTitle_("检查规则")
         check_btn.setBezelStyle_(BEZEL_ROUNDED)
         check_btn.setTarget_(self)
         check_btn.setAction_("checkRules:")
         content.addSubview_(check_btn)
 
-        hint = NSTextField.labelWithString_(
-            "domain:example.com  geosite:cn  geoip:!cn     # 开头为注释"
-        )
-        hint.setFont_(NSFont.systemFontOfSize_(10))
-        hint.setTextColor_(NSColor.disabledControlTextColor())
-        hint.setFrame_(((p, 12), (w - 230, 14)))
-        content.addSubview_(hint)
+        hint_y = 12
+        hint_h = 14
+        for line in ["domain:example.com", "geosite:cn", "geoip:!cn     # 开头为注释"]:
+            hint = NSTextField.labelWithString_(line)
+            hint.setFont_(NSFont.systemFontOfSize_(10))
+            hint.setTextColor_(NSColor.disabledControlTextColor())
+            hint.setFrame_(((p, hint_y), (w - 230, hint_h)))
+            content.addSubview_(hint)
+            hint_y += hint_h
 
         # ---- tab view: fills space above bottom bar ----
         tab_bottom = bar_h + 8
@@ -299,6 +312,8 @@ class RoutingWindowController(NSObject):
 
         self._direct_text = self._add_tab(tab, "直连规则", routing.get("direct_rules", []))
         self._proxy_text = self._add_tab(tab, "代理规则", routing.get("proxy_rules", []))
+
+        self._updateRoutingHint()
 
         self._window = win
 
@@ -345,6 +360,24 @@ class RoutingWindowController(NSObject):
         tab_view.addTabViewItem_(tab_item)
 
         return text_view
+
+    def onRoutingChanged_(self, sender):
+        self._updateRoutingHint()
+
+    def _updateRoutingHint(self):
+        enabled = bool(self._enabled_cb.state())
+        default = self._default_popup.titleOfSelectedItem()
+        if enabled:
+            if default == "proxy":
+                hint = "（根据当前规则分流，默认走代理）"
+            else:
+                hint = "（根据当前规则分流，默认走直连）"
+        else:
+            if default == "proxy":
+                hint = "（未启用分流，流量全部走代理）"
+            else:
+                hint = "（未启用分流，流量全部走直连）"
+        self._routing_hint.setStringValue_(hint)
 
     def _delegate(self):
         delegate = _RoutingWindowDelegate.alloc().init()
