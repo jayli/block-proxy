@@ -168,6 +168,27 @@ docker run --init -d --restart=unless-stopped --user=root \
 
 下载地址：[GitHub Release](https://github.com/jayli/block-proxy/releases/latest)
 
+如果通过客户端代理访问 BlockProxy 服务端时，如果服务端开启了 MITM，客户端则必须安装证书。参照下文的安装证书部分。
+
+我常用的代理规则：
+
+```
+geosite:netflix
+geosite:disney
+geosite:github
+geosite:youtube
+geosite:google
+domain:www.youtube.com
+domain:netflix.com
+domain:fastly.jsdelivr.net
+geosite:anthropic
+geosite:claude
+geosite:category-ntp
+geoip:netflix
+geosite:gfw
+geosite:npmjs
+```
+
 ---
 
 ## 4）防火墙配置：禁止设备直连
