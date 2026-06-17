@@ -20,7 +20,6 @@ from AppKit import (
     NSWindowStyleMaskTitled,
     NSWindowStyleMaskClosable,
     NSWindowStyleMaskMiniaturizable,
-    NSWindowStyleMaskResizable,
     NSBackingStoreBuffered,
     NSTextField,
     NSButton,
@@ -46,7 +45,6 @@ WINDOW_STYLE = (
     NSWindowStyleMaskTitled
     | NSWindowStyleMaskClosable
     | NSWindowStyleMaskMiniaturizable
-    | NSWindowStyleMaskResizable
 )
 
 

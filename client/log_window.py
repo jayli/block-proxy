@@ -18,7 +18,6 @@ from AppKit import (
     NSWindowStyleMaskTitled,
     NSWindowStyleMaskClosable,
     NSWindowStyleMaskMiniaturizable,
-    NSWindowStyleMaskResizable,
     NSBackingStoreBuffered,
     NSButton,
     NSSegmentedControl,
@@ -51,7 +50,6 @@ WINDOW_STYLE = (
     NSWindowStyleMaskTitled
     | NSWindowStyleMaskClosable
     | NSWindowStyleMaskMiniaturizable
-    | NSWindowStyleMaskResizable
 )
 
 # access.log: "2026-06-17 14:30:22 | CONNECT | host:443 | proxy [| error]"
@@ -145,7 +143,6 @@ class LogWindowController(NSObject):
             ((x, y), (w, h)), WINDOW_STYLE, NSBackingStoreBuffered, False
         )
         win.setTitle_("SocksClient 日志")
-        win.setMinSize_((650, 400))
         win.setDelegate_(self)
 
         content = win.contentView()
