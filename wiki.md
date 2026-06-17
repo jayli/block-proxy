@@ -178,15 +178,22 @@ geosite:disney
 geosite:github
 geosite:youtube
 geosite:google
-domain:www.youtube.com
-domain:netflix.com
-domain:fastly.jsdelivr.net
 geosite:anthropic
 geosite:claude
 geosite:category-ntp
 geoip:netflix
 geosite:gfw
 geosite:npmjs
+geosite:category-ai-!cn
+domain:www.youtube.com
+domain:netflix.com
+domain:fastly.jsdelivr.net
+domain:perf.qzz.io
+domain:clawhub.ai
+domain:baidu.com
+domain:freedom.gov
+domain:deepseek.com
+domain:ytimg.com
 ```
 
 ---
