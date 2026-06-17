@@ -1,133 +1,465 @@
+"""
+SocksClient log viewer window.
+Pure PyObjC implementation with NSTableView and real-time file tailing.
+Launched as a subprocess from the main status bar app.
+"""
+
+import objc
 import os
 import platform
+import re
 import sys
-import tkinter as tk
-from tkinter import ttk
+
+from Foundation import NSObject, NSRunLoop, NSTimer
+from AppKit import (
+    NSApplication,
+    NSApplicationActivationPolicyAccessory,
+    NSWindow,
+    NSWindowStyleMaskTitled,
+    NSWindowStyleMaskClosable,
+    NSWindowStyleMaskMiniaturizable,
+    NSWindowStyleMaskResizable,
+    NSBackingStoreBuffered,
+    NSButton,
+    NSSegmentedControl,
+    NSSegmentStyleTexturedRounded,
+    NSTableView,
+    NSTableColumn,
+    NSScrollView,
+    NSBezelBorder,
+    NSApp,
+    NSMenu,
+    NSMenuItem,
+    NSColor,
+    NSScreen,
+    NSEvent,
+    NSLeftTextAlignment,
+    NSCenterTextAlignment,
+    NSTableColumnUserResizingMask,
+    NSViewWidthSizable,
+    NSViewHeightSizable,
+)
+
 
 LOG_DIR = os.path.expanduser("~/Library/Application Support/SocksClient/logs")
-LINES_TO_SHOW = 100
+MAX_LINES = 5000
+INITIAL_LINES = 500
+POLL_SEC = 0.5
+ROW_HEIGHT = 20.0
+
+WINDOW_STYLE = (
+    NSWindowStyleMaskTitled
+    | NSWindowStyleMaskClosable
+    | NSWindowStyleMaskMiniaturizable
+    | NSWindowStyleMaskResizable
+)
+
+# access.log: "2026-06-17 14:30:22 | CONNECT | host:443 | proxy [| error]"
+_ACCESS_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\s*\|\s*"
+    r"(\w+)\s*\|\s*(.+?)\s*\|\s*(direct|proxy)"
+    r"(?:\s*\|\s*(.+))?$"
+)
+
+# crash.log: "2026-06-17 14:30:22 | WARNING | message"
+_CRASH_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s*\|\s*"
+    r"(\w+)\s*\|\s*(.*)$"
+)
+
+_ROUTE_LABEL = {"proxy": "代理", "direct": "直连"}
 
 
-def _macos_setup():
-    try:
-        from AppKit import NSApp
-        NSApp.setActivationPolicy_(1)
+class LogDataSource(NSObject):
+    """NSTableView data source and delegate."""
+
+    def initWithEntries_controller_(self, entries, controller):
+        self = objc.super(LogDataSource, self).init()
+        if self is None:
+            return None
+        self._entries = entries
+        self._controller = controller
+        return self
+
+    def numberOfRowsInTableView_(self, tv):
+        return len(self._entries)
+
+    def tableView_objectValueForTableColumn_row_(self, tv, col, row):
+        if row >= len(self._entries):
+            return ""
+        entry = self._entries[row]
+        ident = col.identifier()
+        if ident == "route":
+            return _ROUTE_LABEL.get(entry.get("route", ""), entry.get("route", ""))
+        return entry.get(ident, "")
+
+    def tableView_willDisplayCell_forTableColumn_row_(self, tv, cell, col, row):
+        if row >= len(self._entries):
+            return
+        entry = self._entries[row]
+        if entry.get("error"):
+            cell.setTextColor_(NSColor.systemRedColor())
+        elif entry.get("route") == "proxy":
+            cell.setTextColor_(NSColor.systemGreenColor())
+        else:
+            cell.setTextColor_(NSColor.labelColor())
+
+
+class LogWindowController(NSObject):
+
+    def init(self):
+        self = objc.super(LogWindowController, self).init()
+        if self is None:
+            return None
+
+        self._entries = []
+        self._current_tab = "access"
+
+        # File tail state
+        self._file_path = os.path.join(LOG_DIR, "access.log")
+        self._file_inode = None
+        self._file_offset = 0
+        self._timer = None
+        self._auto_scroll = True
+        self._scroll_guard = False
+
+        self._build_window()
+        self._initial_load()
+        self._start_tail()
+        return self
+
+    # ------------------------------------------------------------------
+    # Window
+    # ------------------------------------------------------------------
+
+    def _build_window(self):
+        w, h = 800, 500
+        pos = _center_on_mouse_screen(w, h)
+        if pos is None:
+            x = (NSScreen.mainScreen().frame().size.width - w) // 2
+            y = (NSScreen.mainScreen().frame().size.height - h) // 2
+        else:
+            x, y = pos
+
+        win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            ((x, y), (w, h)), WINDOW_STYLE, NSBackingStoreBuffered, False
+        )
+        win.setTitle_("SocksClient 日志")
+        win.setMinSize_((650, 400))
+        win.setDelegate_(self)
+
+        content = win.contentView()
+        p = 12
+
+        # -- toolbar: segmented toggle + buttons --
+        toggle = NSSegmentedControl.alloc().initWithFrame_(
+            ((p, h - 42), (160, 26))
+        )
+        toggle.setSegmentCount_(2)
+        toggle.setLabel_forSegment_("Access", 0)
+        toggle.setLabel_forSegment_("Crash", 1)
+        toggle.setSelectedSegment_(0)
+        toggle.setSegmentStyle_(NSSegmentStyleTexturedRounded)
+        toggle.setTarget_(self)
+        toggle.setAction_("onTabSwitch:")
+        content.addSubview_(toggle)
+        self._toggle = toggle
+
+        btn_x = w - p
+        for title, action, bw in [
+            ("关闭", "onClose:", 60),
+            ("清空", "onClear:", 60),
+        ]:
+            btn_x -= bw
+            btn = NSButton.alloc().initWithFrame_(((btn_x, h - 44), (bw, 28)))
+            btn.setTitle_(title)
+            btn.setBezelStyle_(1)
+            btn.setTarget_(self)
+            btn.setAction_(action)
+            content.addSubview_(btn)
+            btn_x -= 8
+
+        # -- table view --
+        ds = LogDataSource.alloc().initWithEntries_controller_(
+            self._entries, self
+        )
+        self._ds = ds
+
+        tv = NSTableView.alloc().initWithFrame_(
+            ((0, 0), (w - 2 * p, h - 70))
+        )
+
+        for ident, header, cw, align in [
+            ("date",      "日期",      90,  NSLeftTextAlignment),
+            ("time",      "时间",      70,  NSLeftTextAlignment),
+            ("host_port", "域名:端口", 260, NSLeftTextAlignment),
+            ("route",     "路由",      60,  NSCenterTextAlignment),
+            ("error",     "错误",      200, NSLeftTextAlignment),
+        ]:
+            col = NSTableColumn.alloc().initWithIdentifier_(ident)
+            col.headerCell().setStringValue_(header)
+            col.setWidth_(cw)
+            col.setResizingMask_(NSTableColumnUserResizingMask)
+            col.dataCell().setAlignment_(align)
+            tv.addTableColumn_(col)
+
+        tv.setUsesAlternatingRowBackgroundColors_(True)
+        tv.setRowHeight_(ROW_HEIGHT)
+        tv.setDataSource_(ds)
+        tv.setDelegate_(ds)
+        tv.setAllowsColumnSelection_(False)
+        self._tv = tv
+
+        sv = NSScrollView.alloc().initWithFrame_(
+            ((p, 10), (w - 2 * p, h - 64))
+        )
+        sv.setDocumentView_(tv)
+        sv.setBorderType_(NSBezelBorder)
+        sv.setHasVerticalScroller_(True)
+        sv.setHasHorizontalScroller_(False)
+        sv.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+        content.addSubview_(sv)
+        self._sv = sv
+
+        from Foundation import NSNotificationCenter
+        NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
+            self, "_onScroll:", "NSViewBoundsDidChangeNotification",
+            sv.contentView(),
+        )
+
+        self._window = win
+
+    # ------------------------------------------------------------------
+    # File tail
+    # ------------------------------------------------------------------
+
+    def _start_tail(self):
+        timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            POLL_SEC, self, "_poll:", None, True
+        )
+        NSRunLoop.currentRunLoop().addTimer_forMode_(
+            timer, "kCFRunLoopCommonModes"
+        )
+        self._timer = timer
+
+    def _stop_tail(self):
+        if self._timer:
+            self._timer.invalidate()
+            self._timer = None
+
+    def _poll_(self, timer):
+        path = self._file_path
+        try:
+            stat = os.stat(path)
+        except FileNotFoundError:
+            if self._file_inode is not None:
+                self._file_inode = None
+                self._file_offset = 0
+            return
+
+        if self._file_inode is None:
+            # New file — read initial batch
+            self._file_inode = stat.st_ino
+            self._file_offset = stat.st_size
+            lines = self._read_last(INITIAL_LINES)
+            if lines:
+                self._add_entries(lines)
+            return
+
+        if stat.st_ino != self._file_inode or stat.st_size < self._file_offset:
+            # Rotated or truncated
+            self._file_inode = stat.st_ino
+            self._file_offset = 0
+
+        if stat.st_size > self._file_offset:
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    f.seek(self._file_offset)
+                    new = f.read()
+                self._file_offset = stat.st_size
+                lines = [l for l in new.split("\n") if l.strip()]
+                if lines:
+                    self._add_entries(lines)
+            except (IOError, OSError):
+                pass
+
+    def _read_last(self, n):
+        try:
+            with open(self._file_path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+            return lines[-n:]
+        except (FileNotFoundError, IOError):
+            return []
+
+    def _initial_load(self):
+        lines = self._read_last(INITIAL_LINES)
+        if lines:
+            self._file_offset = os.path.getsize(self._file_path)
+            self._file_inode = os.stat(self._file_path).st_ino
+            self._add_entries(lines)
+
+    # ------------------------------------------------------------------
+    # Parsing
+    # ------------------------------------------------------------------
+
+    def _parse_lines(self, lines):
+        entries = []
+        is_access = self._current_tab == "access"
+        for line in lines:
+            line = line.rstrip("\n\r")
+            if not line:
+                continue
+            if is_access:
+                m = _ACCESS_RE.match(line)
+                if m:
+                    entries.append({
+                        "date": m.group(1),
+                        "time": m.group(2),
+                        "host_port": m.group(4).strip(),
+                        "route": m.group(5).strip(),
+                        "error": (m.group(6) or "").strip(),
+                    })
+            else:
+                m = _CRASH_RE.match(line)
+                if m:
+                    dt = m.group(1)
+                    entries.append({
+                        "date": dt[:10],
+                        "time": dt[11:].strip(),
+                        "host_port": m.group(2).strip(),
+                        "route": "",
+                        "error": m.group(3).strip(),
+                    })
+        return entries
+
+    def _add_entries(self, lines):
+        parsed = self._parse_lines(lines)
+        if not parsed:
+            return
+        self._entries.extend(parsed)
+        excess = len(self._entries) - MAX_LINES
+        if excess > 0:
+            del self._entries[:excess]
+        self._reload_table()
+        if self._auto_scroll and self._entries:
+            self._scroll_guard = True
+            self._tv.scrollRowToVisible_(len(self._entries) - 1)
+            self._scroll_guard = False
+
+    def _reload_table(self):
+        self._tv.noteNumberOfRowsChanged()
+        self._tv.reloadData()
+
+    def _is_near_bottom(self):
+        try:
+            cv = self._sv.contentView()
+            doc_h = self._tv.frame().size.height
+            vis_h = cv.bounds().size.height
+            scroll_y = cv.bounds().origin.y
+            return (doc_h - scroll_y - vis_h) < (ROW_HEIGHT * 3)
+        except Exception:
+            return True
+
+    # ------------------------------------------------------------------
+    # Delegate (window close)
+    # ------------------------------------------------------------------
+
+    def show(self):
+        self._window.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
-    except ImportError:
-        pass
 
+    def windowWillClose_(self, notification):
+        self._stop_tail()
+        NSApp.terminate_(None)
 
-def read_last_lines(filepath, n):
-    if not os.path.exists(filepath):
-        return []
-    try:
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-        return lines[-n:][::-1]
-    except Exception:
-        return []
+    # ------------------------------------------------------------------
+    # Actions
+    # ------------------------------------------------------------------
 
-
-class LogWindow:
-    def __init__(self):
-        self.root = tk.Tk()
-        self.root.title("SocksClient 日志")
-        self.root.geometry("750x500")
-        self.root.minsize(600, 400)
-
-        btn_frame = tk.Frame(self.root)
-        btn_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
-
-        self.access_btn = tk.Button(
-            btn_frame, text="Access", command=self.show_access, width=10
+    def onTabSwitch_(self, sender):
+        self._stop_tail()
+        self._file_inode = None
+        self._file_offset = 0
+        self._current_tab = "access" if sender.selectedSegment() == 0 else "crash"
+        self._file_path = os.path.join(
+            LOG_DIR, "access.log" if self._current_tab == "access" else "crash.log"
         )
-        self.access_btn.pack(side=tk.LEFT, padx=(0, 5))
+        self._entries.clear()
+        self._reload_table()
+        self._initial_load()
+        self._start_tail()
 
-        self.crash_btn = tk.Button(
-            btn_frame, text="Crash", command=self.show_crash, width=10
-        )
-        self.crash_btn.pack(side=tk.LEFT, padx=(0, 5))
+    def onClear_(self, sender):
+        self._entries.clear()
+        self._file_offset = 0
+        self._file_inode = None
+        self._reload_table()
 
-        refresh_btn = tk.Button(
-            btn_frame, text="刷新", command=self.refresh, width=8
-        )
-        refresh_btn.pack(side=tk.LEFT, padx=(0, 5))
+    def onClose_(self, sender):
+        self._window.close()
 
-        close_btn = tk.Button(
-            btn_frame, text="关闭", command=self.root.destroy, width=8
-        )
-        close_btn.pack(side=tk.RIGHT)
+    def _onScroll_(self, notification):
+        if self._scroll_guard:
+            return
+        self._auto_scroll = self._is_near_bottom()
 
-        text_frame = tk.Frame(self.root)
-        text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
-        scrollbar = tk.Scrollbar(text_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+def _center_on_mouse_screen(w, h):
+    if platform.system() == "Darwin":
+        try:
+            mouse_loc = NSEvent.mouseLocation()
+            primary_h = NSScreen.screens()[0].frame().size.height
+            for screen in NSScreen.screens():
+                sf = screen.frame()
+                if (
+                    sf.origin.x <= mouse_loc.x < sf.origin.x + sf.size.width
+                    and sf.origin.y <= mouse_loc.y < sf.origin.y + sf.size.height
+                ):
+                    vf = screen.visibleFrame()
+                    x = int(vf.origin.x + (vf.size.width - w) / 2)
+                    y = int(
+                        primary_h
+                        - vf.origin.y
+                        - vf.size.height
+                        + (vf.size.height - h) / 2
+                    )
+                    return x, y
+        except Exception:
+            pass
+    return None
 
-        self.text = tk.Text(
-            text_frame,
-            wrap=tk.NONE,
-            yscrollcommand=scrollbar.set,
-            font=("Menlo", 11),
-            state=tk.DISABLED,
-        )
-        self.text.pack(fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self.text.yview)
 
-        h_scrollbar = tk.Scrollbar(text_frame, orient=tk.HORIZONTAL, command=self.text.xview)
-        h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
-        self.text.config(xscrollcommand=h_scrollbar.set)
+def _setup_menu():
+    """Minimal menu so Cmd+W / Cmd+Q work."""
+    main_menu = NSMenu.alloc().initWithTitle_("MainMenu")
 
-        self.text.tag_configure("crash", foreground="red")
+    app_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("", "", "")
+    main_menu.addItem_(app_item)
+    app_menu = NSMenu.alloc().initWithTitle_("")
+    app_item.setSubmenu_(app_menu)
 
-        self.current_tab = "access"
-        self.show_access()
-        self._bring_to_front()
+    edit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Edit", "", "")
+    main_menu.addItem_(edit_item)
+    edit_menu = NSMenu.alloc().initWithTitle_("Edit")
+    edit_item.setSubmenu_(edit_menu)
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Undo", "undo:", "z")
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Redo", "redo:", "Z")
+    edit_menu.addItem_(NSMenuItem.separatorItem())
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Cut", "cut:", "x")
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Copy", "copy:", "c")
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Paste", "paste:", "v")
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Select All", "selectAll:", "a")
 
-    def _bring_to_front(self):
-        self.root.lift()
-        self.root.attributes("-topmost", True)
-        self.root.after(100, lambda: self.root.attributes("-topmost", False))
-
-    def show_access(self):
-        self.current_tab = "access"
-        self.access_btn.config(relief=tk.SUNKEN)
-        self.crash_btn.config(relief=tk.RAISED)
-        lines = read_last_lines(os.path.join(LOG_DIR, "access.log"), LINES_TO_SHOW)
-        self._display(lines)
-
-    def show_crash(self):
-        self.current_tab = "crash"
-        self.crash_btn.config(relief=tk.SUNKEN)
-        self.access_btn.config(relief=tk.RAISED)
-        lines = read_last_lines(os.path.join(LOG_DIR, "crash.log"), LINES_TO_SHOW)
-        self._display(lines, tag="crash")
-
-    def refresh(self):
-        if self.current_tab == "access":
-            self.show_access()
-        else:
-            self.show_crash()
-
-    def _display(self, lines, tag=None):
-        self.text.config(state=tk.NORMAL)
-        self.text.delete("1.0", tk.END)
-        if not lines:
-            self.text.insert(tk.END, "(暂无日志)")
-        else:
-            for line in lines:
-                if tag:
-                    self.text.insert(tk.END, line, tag)
-                else:
-                    self.text.insert(tk.END, line)
-        self.text.config(state=tk.DISABLED)
-
-    def run(self):
-        self.root.mainloop()
+    NSApp.setMainMenu_(main_menu)
 
 
 if __name__ == "__main__":
-    window = LogWindow()
-    if platform.system() == "Darwin":
-        window.root.after(50, _macos_setup)
-    window.run()
+    app = NSApplication.sharedApplication()
+    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+    _setup_menu()
+
+    ctrl = LogWindowController.alloc().init()
+    if ctrl is None:
+        sys.exit(1)
+    ctrl.show()
+    app.run()
