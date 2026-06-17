@@ -388,6 +388,11 @@ class LogWindowController(NSObject):
 
     def onClear_(self, sender):
         self._entries.clear()
+        try:
+            with open(self._file_path, "w") as f:
+                f.truncate(0)
+        except (FileNotFoundError, IOError):
+            pass
         self._file_offset = 0
         self._file_inode = None
         self._reload_table()
