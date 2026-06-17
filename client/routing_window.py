@@ -33,6 +33,8 @@ from AppKit import (
     NSBezelBorder,
     NSFont,
     NSColor,
+    NSMenu,
+    NSMenuItem,
 )
 
 
@@ -43,6 +45,31 @@ WINDOW_STYLE = (
     | NSWindowStyleMaskMiniaturizable
     | NSWindowStyleMaskResizable
 )
+
+
+def _setup_minimal_menu():
+    """Create a minimal main menu with Edit items so Cmd+C/V/X/A/Z work."""
+    main_menu = NSMenu.alloc().initWithTitle_("MainMenu")
+
+    app_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("", "", "")
+    main_menu.addItem_(app_item)
+    app_menu = NSMenu.alloc().initWithTitle_("")
+    app_item.setSubmenu_(app_menu)
+
+    edit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Edit", "", "")
+    main_menu.addItem_(edit_item)
+    edit_menu = NSMenu.alloc().initWithTitle_("Edit")
+    edit_item.setSubmenu_(edit_menu)
+
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Undo", "undo:", "z")
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Redo", "redo:", "Z")
+    edit_menu.addItem_(NSMenuItem.separatorItem())
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Cut", "cut:", "x")
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Copy", "copy:", "c")
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Paste", "paste:", "v")
+    edit_menu.addItemWithTitle_action_keyEquivalent_("Select All", "selectAll:", "a")
+
+    NSApp.setMainMenu_(main_menu)
 
 
 def _center_on_mouse_screen(w, h):
@@ -267,4 +294,5 @@ if __name__ == "__main__":
 
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+    _setup_minimal_menu()
     show_routing_window(sys.argv[1])
