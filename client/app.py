@@ -80,6 +80,7 @@ class AppController(NSObject):
         self.connected = False
         self._config_proc = None
         self._routing_proc = None
+        self._log_proc = None
         self._measuring = False
 
         self._build_status_item()
@@ -274,15 +275,21 @@ class AppController(NSObject):
     # ------------------------------------------------------------------
 
     def openConfig_(self, sender):
+        if self._config_proc and self._config_proc.poll() is None:
+            return
         self._show_config_window()
 
     def openRouting_(self, sender):
+        if self._routing_proc and self._routing_proc.poll() is None:
+            return
         self._show_routing_window()
 
     def openLog_(self, sender):
+        if self._log_proc and self._log_proc.poll() is None:
+            return
         script_path = os.path.join(_bundle_resource_dir(), "log_window.py")
         python_path = self._find_python() if _is_compiled() else sys.executable
-        subprocess.Popen([python_path, script_path])
+        self._log_proc = subprocess.Popen([python_path, script_path])
 
     def _find_python(self):
         for p in [
@@ -364,6 +371,8 @@ class AppController(NSObject):
             self._config_proc.terminate()
         if self._routing_proc and self._routing_proc.poll() is None:
             self._routing_proc.terminate()
+        if self._log_proc and self._log_proc.poll() is None:
+            self._log_proc.terminate()
         if self.connected:
             self.sys_proxy.disable()
             self.proxy.stop()
