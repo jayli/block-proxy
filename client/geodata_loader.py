@@ -4,7 +4,6 @@ Uses the proto_parser module for zero-dependency protobuf parsing.
 """
 
 import ipaddress
-import json
 import logging
 import os
 from proto_parser import parse_message, get_string, get_bytes, get_varint, get_message
@@ -92,28 +91,18 @@ def parse_geoip_data(data):
 
 
 class GeodataLoader:
-    """Selective eager-loading geodata file parser.
+    """Selective eager-loading geodata file parser."""
 
-    If tag_cache_path is set, a small JSON file containing only the tag/code
-    names is written after loading — used by subprocess tools (e.g. the
-    routing window) to check tag existence without re-parsing the full
-    protobuf files.
-    """
-
-    def __init__(self, data_dir, load_geosite=True, load_geoip=True,
-                 tag_cache_path=None):
+    def __init__(self, data_dir, load_geosite=True, load_geoip=True):
         self._data_dir = data_dir
         self._geosite_cache = {}  # {tag: [(type, value), ...]}
         self._geoip_cache = {}    # {code: [IPv4Network/IPv6Network, ...]}
         self._geosite_loaded = False
         self._geoip_loaded = False
-        self._tag_cache_path = tag_cache_path
         if load_geosite:
             self._load_geosite()
         if load_geoip:
             self._load_geoip()
-        if tag_cache_path:
-            self._export_tags()
 
     def _load_geosite(self):
         geosite_path = os.path.join(self._data_dir, "geosite.dat")
@@ -140,19 +129,6 @@ class GeodataLoader:
                 logger.warning("Failed to parse geoip.dat", exc_info=True)
         else:
             logger.warning("geoip.dat not found: %s", geoip_path)
-
-    def _export_tags(self):
-        """Write a tiny JSON with only geosite/geoip tag names for subprocess use."""
-        try:
-            data = {
-                "geosite": sorted(self._geosite_cache.keys()) if self._geosite_loaded else [],
-                "geoip": sorted(self._geoip_cache.keys()) if self._geoip_loaded else [],
-            }
-            os.makedirs(os.path.dirname(self._tag_cache_path), exist_ok=True)
-            with open(self._tag_cache_path, "w") as f:
-                json.dump(data, f)
-        except Exception:
-            logger.debug("Failed to write tag cache", exc_info=True)
 
     def load_geoip(self):
         """Load geoip.dat. Safe to call after construction (e.g. from a background thread)."""
@@ -182,26 +158,3 @@ class GeodataLoader:
     def has_geoip(self, code):
         """Return True when the geoip code exists in loaded data."""
         return code.lower() in self._geoip_cache
-
-
-def load_geodata_tags(cache_path):
-    """Load pre-computed geosite/geoip tag names from a JSON cache file.
-
-    Returns (geosite_tags, geoip_codes) as sets of lowercase strings,
-    or (None, None) if the cache file doesn't exist or is invalid.
-
-    This avoids parsing the full ~29 MB protobuf files when only tag
-    existence checks are needed (e.g. rule validation in a subprocess).
-    """
-    try:
-        if not os.path.exists(cache_path):
-            return None, None
-        with open(cache_path, "r") as f:
-            data = json.load(f)
-        geosite = set(data.get("geosite", []))
-        geoip = set(data.get("geoip", []))
-        if not geosite and not geoip:
-            return None, None
-        return geosite, geoip
-    except Exception:
-        return None, None

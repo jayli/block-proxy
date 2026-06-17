@@ -32,6 +32,9 @@ if ! $PYTHON -m nuitka --version &>/dev/null; then
     exit 1
 fi
 
+echo "==> Generating geodata_tags.json..."
+$PYTHON "$SCRIPT_DIR/scripts/gen_geodata_tags.py"
+
 echo "==> Generating app.icns from app_icon.png..."
 ICONSET=$(mktemp -d)/app.iconset
 mkdir -p "$ICONSET"

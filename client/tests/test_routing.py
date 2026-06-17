@@ -416,35 +416,46 @@ class TestValidateRules:
     """Tests for validate_rules — the rule validation function used by routing_window."""
 
     @staticmethod
-    def _geodata_dir():
-        return os.path.join(os.path.dirname(__file__), "..", "geodata")
+    def _load_tags():
+        """Load pre-generated geodata_tags.json from the geodata/ directory."""
+        import json
+        tag_path = os.path.join(os.path.dirname(__file__), "..", "geodata", "geodata_tags.json")
+        if not os.path.exists(tag_path):
+            # Fallback: parse from .dat files if JSON not yet generated
+            from geodata_loader import GeodataLoader
+            loader = GeodataLoader(os.path.join(os.path.dirname(__file__), "..", "geodata"))
+            return set(loader._geosite_cache.keys()), set(loader._geoip_cache.keys())
+        with open(tag_path, "r") as f:
+            data = json.load(f)
+        return set(data.get("geosite", [])), set(data.get("geoip", []))
 
     def test_all_valid_no_errors(self):
+        geosite_tags, geoip_codes = self._load_tags()
         text = "domain:example.com\ngeosite:cn\ngeoip:!cn\n"
-        errors = validate_rules(text, text, self._geodata_dir())
+        errors = validate_rules(text, text, geosite_tags=geosite_tags, geoip_codes=geoip_codes)
         assert errors == []
 
     def test_empty_and_comments_return_no_errors(self):
-        errors = validate_rules("", "# comment\n\n  ", self._geodata_dir())
+        errors = validate_rules("", "# comment\n\n  ")
         assert errors == []
 
     def test_missing_colon(self):
-        errors = validate_rules("invalidline", "", self._geodata_dir())
+        errors = validate_rules("invalidline", "")
         assert len(errors) == 1
         assert "缺少冒号" in errors[0]
 
     def test_unknown_type(self):
-        errors = validate_rules("faketype:value", "", self._geodata_dir())
+        errors = validate_rules("faketype:value", "")
         assert len(errors) == 1
         assert "未知规则类型" in errors[0]
 
     def test_empty_code(self):
-        errors = validate_rules("domain:", "", self._geodata_dir())
+        errors = validate_rules("domain:", "")
         assert len(errors) == 1
         assert "值为空" in errors[0]
 
     def test_empty_code_after_negation(self):
-        errors = validate_rules("geosite:!", "", self._geodata_dir())
+        errors = validate_rules("geosite:!", "")
         assert len(errors) == 1
         assert "取反后值为空" in errors[0]
 
@@ -456,7 +467,7 @@ class TestValidateRules:
             "domain:-startswithdash.com",
         ]
         for case in cases:
-            errors = validate_rules(case, "", self._geodata_dir())
+            errors = validate_rules(case, "")
             assert len(errors) == 1, f"expected error for: {case}"
             assert "域名格式" in errors[0], f"got: {errors[0]}"
 
@@ -468,60 +479,58 @@ class TestValidateRules:
             "domain:a.io",
         ]
         for case in cases:
-            errors = validate_rules(case, "", self._geodata_dir())
+            errors = validate_rules(case, "")
             assert errors == [], f"unexpected error for {case}: {errors}"
 
     def test_known_geosite_tag_passes(self):
-        errors = validate_rules("geosite:cn", "", self._geodata_dir())
+        geosite_tags, _ = self._load_tags()
+        errors = validate_rules("geosite:cn", "", geosite_tags=geosite_tags)
         assert errors == []
 
     def test_unknown_geosite_tag_reported(self):
-        errors = validate_rules("geosite:nonexistent-tag-xyz", "", self._geodata_dir())
+        geosite_tags, _ = self._load_tags()
+        errors = validate_rules("geosite:nonexistent-tag-xyz", "", geosite_tags=geosite_tags)
         assert len(errors) == 1
         assert "geosite.dat 中不存在" in errors[0]
 
     def test_known_geoip_code_passes(self):
-        errors = validate_rules("geoip:cn", "", self._geodata_dir())
+        _, geoip_codes = self._load_tags()
+        errors = validate_rules("geoip:cn", "", geoip_codes=geoip_codes)
         assert errors == []
 
     def test_unknown_geoip_code_reported(self):
-        errors = validate_rules("geoip:nonexistent-code-xyz", "", self._geodata_dir())
+        _, geoip_codes = self._load_tags()
+        errors = validate_rules("geoip:nonexistent-code-xyz", "", geoip_codes=geoip_codes)
         assert len(errors) == 1
         assert "geoip.dat 中不存在" in errors[0]
 
     def test_geosite_negated_valid(self):
-        errors = validate_rules("geosite:!cn", "", self._geodata_dir())
+        geosite_tags, _ = self._load_tags()
+        errors = validate_rules("geosite:!cn", "", geosite_tags=geosite_tags)
         assert errors == []
 
     def test_geoip_negated_valid(self):
-        errors = validate_rules("geoip:!us", "", self._geodata_dir())
+        _, geoip_codes = self._load_tags()
+        errors = validate_rules("geoip:!us", "", geoip_codes=geoip_codes)
         assert errors == []
 
     def test_mixed_valid_and_invalid(self):
+        geosite_tags, _ = self._load_tags()
         text = "domain:good.com\n# comment\ndomain:bad format\ngeosite:cn\nfaketype:x\n"
-        errors = validate_rules(text, "", self._geodata_dir())
+        errors = validate_rules(text, "", geosite_tags=geosite_tags)
         assert len(errors) == 2
         assert any("域名格式" in e for e in errors)
         assert any("未知规则类型" in e for e in errors)
 
     def test_source_label_in_errors(self):
-        errors = validate_rules("badrule", "domain:bad", self._geodata_dir())
+        errors = validate_rules("badrule", "domain:bad")
         assert len(errors) == 2
         assert "直连规则" in errors[0]
         assert "代理规则" in errors[1]
 
-    def test_no_geodata_dir_handles_gracefully(self):
-        # Non-existent directory — loader won't find .dat files, skip geosite/geoip checks
+    def test_no_tags_provided_skips_geosite_geoip_checks(self):
+        # When tags are not provided (None), geosite/geoip checks are silently skipped
         text = "geosite:cn\ngeoip:cn\ndomain:good.com\n"
-        errors = validate_rules(text, text, "/nonexistent/dir")
+        errors = validate_rules(text, text)
         # domain checks still work; geosite/geoip checks are skipped silently
-        assert errors == []
-
-    def test_missing_geodata_files(self, tmp_path):
-        # Empty temp dir — no .dat files to load
-        errors = validate_rules(
-            "geosite:cn\ngeoip:cn\ndomain:ok.com\n",
-            "",
-            str(tmp_path),
-        )
         assert errors == []

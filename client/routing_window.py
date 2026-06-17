@@ -40,8 +40,6 @@ from AppKit import (
     NSAlert,
 )
 
-from geodata_loader import GeodataLoader, load_geodata_tags
-
 
 BEZEL_ROUNDED = 1
 WINDOW_STYLE = (
@@ -82,16 +80,14 @@ _DOMAIN_RE = re.compile(
 )
 
 
-def validate_rules(direct_text, proxy_text, geodata_dir, loader=None,
-                   geosite_tags=None, geoip_codes=None):
+def validate_rules(direct_text, proxy_text, geosite_tags=None, geoip_codes=None):
     """Validate all rules from both tabs.
 
     Checks: format (prefix:code), unknown rule types, empty codes,
     domain validity, and geosite/geoip tag existence.
 
-    For tag existence checks prefer `geosite_tags`/`geoip_codes` sets
-    (from load_geodata_tags). Falls back to a full GeodataLoader parse
-    if they are None and a loader is not provided.
+    For tag existence checks uses `geosite_tags`/`geoip_codes` sets
+    (loaded from pre-generated geodata_tags.json at build time).
 
     Returns a list of human-readable error strings (empty = all good).
     """
@@ -104,22 +100,6 @@ def validate_rules(direct_text, proxy_text, geodata_dir, loader=None,
             if not stripped or stripped.startswith("#"):
                 continue
             all_lines.append((source, line_num, stripped))
-
-    needs_geosite = any("geosite:" in ln.lower() for _, _, ln in all_lines)
-    needs_geoip = any("geoip:" in ln.lower() for _, _, ln in all_lines)
-    need_loader = (needs_geosite and geosite_tags is None) or \
-                  (needs_geoip and geoip_codes is None)
-
-    if loader is None and need_loader:
-        try:
-            loader = GeodataLoader(
-                geodata_dir,
-                load_geosite=needs_geosite and geosite_tags is None,
-                load_geoip=needs_geoip and geoip_codes is None,
-            )
-        except Exception as exc:
-            errors.append(f"无法加载地理数据: {exc}")
-            loader = None
 
     for source, line_num, line in all_lines:
         if ":" not in line:
@@ -167,21 +147,9 @@ def validate_rules(direct_text, proxy_text, geodata_dir, loader=None,
                         f"[{source}] 第 {line_num} 行: "
                         f"geosite 标签 '{actual_code}' 在 geosite.dat 中不存在"
                     )
-            elif loader and loader.geosite_available:
-                if not loader.has_geosite(actual_code):
-                    errors.append(
-                        f"[{source}] 第 {line_num} 行: "
-                        f"geosite 标签 '{actual_code}' 在 geosite.dat 中不存在"
-                    )
         elif prefix == "geoip":
             if geoip_codes is not None:
                 if actual_code not in geoip_codes:
-                    errors.append(
-                        f"[{source}] 第 {line_num} 行: "
-                        f"geoip 代码 '{actual_code}' 在 geoip.dat 中不存在"
-                    )
-            elif loader and loader.geoip_available:
-                if not loader.has_geoip(actual_code):
                     errors.append(
                         f"[{source}] 第 {line_num} 行: "
                         f"geoip 代码 '{actual_code}' 在 geoip.dat 中不存在"
@@ -412,29 +380,22 @@ class RoutingWindowController(NSObject):
         )
         direct_s = self._direct_text.string()
         proxy_s = self._proxy_text.string()
-        tag_cache_path = os.path.join(
-            os.path.dirname(self._config_path), "geodata_tags.json"
-        )
+        tag_cache_path = os.path.join(geodata_dir, "geodata_tags.json")
 
         def _run():
-            # Prefer the tiny tag-list JSON cache — avoids parsing 29 MB of protobuf.
-            geosite_tags, geoip_codes = load_geodata_tags(tag_cache_path)
-            loader = None
-            if geosite_tags is None or geoip_codes is None:
-                # Cache file missing or incomplete — fall back to full parse.
-                loader = getattr(self, "_check_loader", None)
-                if loader is None:
-                    try:
-                        loader = GeodataLoader(
-                            geodata_dir, load_geosite=True, load_geoip=True
-                        )
-                    except Exception:
-                        loader = None
-                    self._check_loader = loader
+            # Load pre-generated tag list from geodata/ directory (generated at build time).
+            geosite_tags, geoip_codes = None, None
+            try:
+                if os.path.exists(tag_cache_path):
+                    with open(tag_cache_path, "r") as f:
+                        data = json.load(f)
+                    geosite_tags = set(data.get("geosite", []))
+                    geoip_codes = set(data.get("geoip", []))
+            except Exception:
+                pass
 
             errors = validate_rules(
-                direct_s, proxy_s, geodata_dir,
-                loader=loader,
+                direct_s, proxy_s,
                 geosite_tags=geosite_tags,
                 geoip_codes=geoip_codes,
             )

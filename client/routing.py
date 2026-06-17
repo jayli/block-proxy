@@ -70,7 +70,7 @@ def parse_rules(rule_strings):
 class RoutingEngine:
     """Routing engine that resolves hosts to 'direct' or 'proxy' actions."""
 
-    def __init__(self, config, geodata_dir, tag_cache_dir=None):
+    def __init__(self, config, geodata_dir):
         self._enabled = config.get("enabled", False)
         self._default_action = config.get("default", "proxy")
         self._direct_rules = parse_rules(config.get("direct_rules", []))
@@ -80,22 +80,13 @@ class RoutingEngine:
         needs_geoip = any(rule_type == "geoip" for rule_type, _, _ in all_rules)
         self._loader = None
         if self._enabled and (needs_geosite or needs_geoip):
-            tag_path = os.path.join(tag_cache_dir, "geodata_tags.json") if tag_cache_dir else None
             self._loader = GeodataLoader(
                 geodata_dir,
                 load_geosite=needs_geosite,
                 load_geoip=False,  # geoip loaded in background to avoid blocking startup
-                tag_cache_path=tag_path if not needs_geoip else None,
-                # Defer tag export when geoip is loaded in background — done in bg thread.
             )
             if needs_geoip:
-
-                def _load_and_export():
-                    self._loader.load_geoip()
-                    if tag_path:
-                        self._loader._export_tags()
-
-                threading.Thread(target=_load_and_export, daemon=True).start()
+                threading.Thread(target=self._loader.load_geoip, daemon=True).start()
 
     def _geosite_available(self):
         return self._loader is not None and self._loader.geosite_available

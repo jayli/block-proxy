@@ -359,8 +359,7 @@ class ProxyCore:
         # Initialize routing engine (geodata loaded selectively in RoutingEngine.__init__)
         from routing import RoutingEngine, _geodata_dir
         routing_config = user_config.get("routing", {})
-        self._routing = RoutingEngine(routing_config, _geodata_dir(),
-                                      tag_cache_dir=config_dir)
+        self._routing = RoutingEngine(routing_config, _geodata_dir())
 
         self._loop = asyncio.new_event_loop()
         started = threading.Event()
