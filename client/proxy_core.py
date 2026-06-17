@@ -344,7 +344,7 @@ class ProxyCore:
             ctx.verify_mode = ssl.CERT_NONE
         self._ssl_ctx = ctx
 
-    def start(self, user_config):
+    def start(self, user_config, config_dir=None):
         if self._running:
             self.stop()
 
@@ -359,7 +359,8 @@ class ProxyCore:
         # Initialize routing engine (geodata loaded selectively in RoutingEngine.__init__)
         from routing import RoutingEngine, _geodata_dir
         routing_config = user_config.get("routing", {})
-        self._routing = RoutingEngine(routing_config, _geodata_dir())
+        self._routing = RoutingEngine(routing_config, _geodata_dir(),
+                                      tag_cache_dir=config_dir)
 
         self._loop = asyncio.new_event_loop()
         started = threading.Event()

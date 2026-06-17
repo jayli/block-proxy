@@ -8,7 +8,9 @@ import json
 import objc
 import os
 import platform
+import re
 import sys
+import threading
 
 from Foundation import NSObject
 from AppKit import (
@@ -35,7 +37,10 @@ from AppKit import (
     NSColor,
     NSMenu,
     NSMenuItem,
+    NSAlert,
 )
+
+from geodata_loader import GeodataLoader, load_geodata_tags
 
 
 BEZEL_ROUNDED = 1
@@ -70,6 +75,119 @@ def _setup_minimal_menu():
     edit_menu.addItemWithTitle_action_keyEquivalent_("Select All", "selectAll:", "a")
 
     NSApp.setMainMenu_(main_menu)
+
+
+_DOMAIN_RE = re.compile(
+    r"^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
+)
+
+
+def validate_rules(direct_text, proxy_text, geodata_dir, loader=None,
+                   geosite_tags=None, geoip_codes=None):
+    """Validate all rules from both tabs.
+
+    Checks: format (prefix:code), unknown rule types, empty codes,
+    domain validity, and geosite/geoip tag existence.
+
+    For tag existence checks prefer `geosite_tags`/`geoip_codes` sets
+    (from load_geodata_tags). Falls back to a full GeodataLoader parse
+    if they are None and a loader is not provided.
+
+    Returns a list of human-readable error strings (empty = all good).
+    """
+    errors = []
+
+    all_lines = []
+    for source, text in [("直连规则", direct_text), ("代理规则", proxy_text)]:
+        for line_num, line_text in enumerate(text.split("\n"), 1):
+            stripped = line_text.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            all_lines.append((source, line_num, stripped))
+
+    needs_geosite = any("geosite:" in ln.lower() for _, _, ln in all_lines)
+    needs_geoip = any("geoip:" in ln.lower() for _, _, ln in all_lines)
+    need_loader = (needs_geosite and geosite_tags is None) or \
+                  (needs_geoip and geoip_codes is None)
+
+    if loader is None and need_loader:
+        try:
+            loader = GeodataLoader(
+                geodata_dir,
+                load_geosite=needs_geosite and geosite_tags is None,
+                load_geoip=needs_geoip and geoip_codes is None,
+            )
+        except Exception as exc:
+            errors.append(f"无法加载地理数据: {exc}")
+            loader = None
+
+    for source, line_num, line in all_lines:
+        if ":" not in line:
+            errors.append(
+                f"[{source}] 第 {line_num} 行: 格式无效，缺少冒号 — {line}"
+            )
+            continue
+
+        prefix, _, code = line.partition(":")
+        prefix = prefix.lower().strip()
+        code = code.strip()
+
+        if prefix not in ("domain", "geosite", "geoip"):
+            errors.append(
+                f"[{source}] 第 {line_num} 行: 未知规则类型 '{prefix}'，"
+                f"仅支持 domain / geosite / geoip"
+            )
+            continue
+
+        if not code:
+            errors.append(
+                f"[{source}] 第 {line_num} 行: {prefix} 规则值为空"
+            )
+            continue
+
+        negated = code.startswith("!")
+        actual_code = code[1:] if negated else code
+
+        if not actual_code:
+            errors.append(
+                f"[{source}] 第 {line_num} 行: {prefix} 规则取反后值为空"
+            )
+            continue
+
+        if prefix == "domain":
+            if not _DOMAIN_RE.match(actual_code):
+                errors.append(
+                    f"[{source}] 第 {line_num} 行: "
+                    f"'{actual_code}' 不是有效的域名格式"
+                )
+        elif prefix == "geosite":
+            if geosite_tags is not None:
+                if actual_code not in geosite_tags:
+                    errors.append(
+                        f"[{source}] 第 {line_num} 行: "
+                        f"geosite 标签 '{actual_code}' 在 geosite.dat 中不存在"
+                    )
+            elif loader and loader.geosite_available:
+                if not loader.has_geosite(actual_code):
+                    errors.append(
+                        f"[{source}] 第 {line_num} 行: "
+                        f"geosite 标签 '{actual_code}' 在 geosite.dat 中不存在"
+                    )
+        elif prefix == "geoip":
+            if geoip_codes is not None:
+                if actual_code not in geoip_codes:
+                    errors.append(
+                        f"[{source}] 第 {line_num} 行: "
+                        f"geoip 代码 '{actual_code}' 在 geoip.dat 中不存在"
+                    )
+            elif loader and loader.geoip_available:
+                if not loader.has_geoip(actual_code):
+                    errors.append(
+                        f"[{source}] 第 {line_num} 行: "
+                        f"geoip 代码 '{actual_code}' 在 geoip.dat 中不存在"
+                    )
+
+    return errors
 
 
 def _center_on_mouse_screen(w, h):
@@ -186,12 +304,19 @@ class RoutingWindowController(NSObject):
         btn.setAction_("saveAndClose:")
         content.addSubview_(btn)
 
+        check_btn = NSButton.alloc().initWithFrame_(((w - 220, 27), (100, 28)))
+        check_btn.setTitle_("检查规则")
+        check_btn.setBezelStyle_(BEZEL_ROUNDED)
+        check_btn.setTarget_(self)
+        check_btn.setAction_("checkRules:")
+        content.addSubview_(check_btn)
+
         hint = NSTextField.labelWithString_(
             "domain:example.com  geosite:cn  geoip:!cn     # 开头为注释"
         )
         hint.setFont_(NSFont.systemFontOfSize_(10))
         hint.setTextColor_(NSColor.disabledControlTextColor())
-        hint.setFrame_(((p, 32), (w - 130, 14)))
+        hint.setFrame_(((p, 12), (w - 230, 14)))
         content.addSubview_(hint)
 
         # ---- tab view: fills space above bottom bar ----
@@ -277,6 +402,68 @@ class RoutingWindowController(NSObject):
 
         self._window.close()
         NSApp.stopModal()
+
+    def checkRules_(self, sender):
+        sender.setEnabled_(False)
+        self._check_btn = sender
+
+        geodata_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "geodata"
+        )
+        direct_s = self._direct_text.string()
+        proxy_s = self._proxy_text.string()
+        tag_cache_path = os.path.join(
+            os.path.dirname(self._config_path), "geodata_tags.json"
+        )
+
+        def _run():
+            # Prefer the tiny tag-list JSON cache — avoids parsing 29 MB of protobuf.
+            geosite_tags, geoip_codes = load_geodata_tags(tag_cache_path)
+            loader = None
+            if geosite_tags is None or geoip_codes is None:
+                # Cache file missing or incomplete — fall back to full parse.
+                loader = getattr(self, "_check_loader", None)
+                if loader is None:
+                    try:
+                        loader = GeodataLoader(
+                            geodata_dir, load_geosite=True, load_geoip=True
+                        )
+                    except Exception:
+                        loader = None
+                    self._check_loader = loader
+
+            errors = validate_rules(
+                direct_s, proxy_s, geodata_dir,
+                loader=loader,
+                geosite_tags=geosite_tags,
+                geoip_codes=geoip_codes,
+            )
+            self._check_errors = errors
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "_showCheckResult:", None, False
+            )
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _showCheckResult_(self, _obj):
+        errors = self._check_errors
+        alert = NSAlert.alloc().init()
+        if errors:
+            alert.setMessageText_("规则检查 — 发现问题")
+            max_show = 15
+            lines = errors[:max_show]
+            if len(errors) > max_show:
+                lines.append(f"... 还有 {len(errors) - max_show} 个问题未显示")
+            alert.setInformativeText_("\n".join(lines))
+            alert.setAlertStyle_(2)  # NSWarningAlertStyle
+        else:
+            alert.setMessageText_("规则检查通过")
+            alert.setInformativeText_("所有分流规则格式正确。")
+            alert.setAlertStyle_(0)  # NSInformationalAlertStyle
+
+        alert.addButtonWithTitle_("确定")
+        alert.runModal()
+        self._check_btn.setEnabled_(True)
 
 
 def show_routing_window(config_path):

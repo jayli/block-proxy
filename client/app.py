@@ -193,7 +193,8 @@ class AppController(NSObject):
 
         def _start():
             try:
-                self.proxy.start(self.config.data)
+                self.proxy.start(self.config.data,
+                                  config_dir=os.path.dirname(self.config.config_path))
             except OSError as e:
                 self._run_on_main(
                     lambda: self._show_notification(
@@ -401,7 +402,8 @@ class AppController(NSObject):
                 time.sleep(RESTART_DELAY)
                 try:
                     self.proxy.stop()
-                    self.proxy.start(self.config.data)
+                    self.proxy.start(self.config.data,
+                                  config_dir=os.path.dirname(self.config.config_path))
                     restart_count = 0
                     crash_logger.warning("Proxy restarted successfully")
                 except Exception as e:
