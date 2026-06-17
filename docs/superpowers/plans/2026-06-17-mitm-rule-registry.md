@@ -411,11 +411,11 @@ function getEnabledMitmRules() {
 }
 
 function isBuiltinYoutubeMitmEnabled() {
-  return ruleRegistry.isBuiltinYoutubeEnabled();
+  return enable_mitm === "1" && ruleRegistry.isBuiltinYoutubeEnabled();
 }
 ```
 
-The registry now compiles regexps.
+The registry now compiles regexps. Keeping the `enable_mitm` guard here prevents UA-filter side effects when global MITM is off, without making the registry aware of proxy-global state.
 
 - [ ] **Step 3: Change CLI and Docker loading to capture paths**
 
@@ -436,6 +436,8 @@ async function getDockerMountedRulePath() {
   return await fileExists(rulePath) ? rulePath : null;
 }
 ```
+
+Remove the old `loadDockerMountedConfigFile()` function after replacing it. Docker rule loading now belongs to `rebuildRuleRegistry()`.
 
 - [ ] **Step 4: Add registry rebuild function**
 
@@ -485,6 +487,15 @@ await rebuildRuleRegistry(config);
 
 Do this in the path used by both initial start and `restart()`. Keep `loadGlobalConfigFile()` only in `init()` so CLI paths remain one-shot.
 
+In `init()`, remove the old calls that are no longer valid:
+
+```js
+await loadDockerMountedConfigFile();
+preCompileRuleRegexp();
+```
+
+`loadDockerMountedConfigFile()` has been replaced by `getDockerMountedRulePath()` inside `rebuildRuleRegistry()`, and regexp compilation now happens in `registry.js`.
+
 - [ ] **Step 7: Update runtime rule consumers**
 
 In `MITMHandler()` replace `Object.keys(Rule)` flattening with:
@@ -523,18 +534,11 @@ Add to `module.exports`:
 
 ```js
 getRuleModules: async function() {
-  const config = await loadConfig();
-  const dockerRulePath = await getDockerMountedRulePath();
-  const previewRegistry = mitmRegistry.createRegistryFromFiles({
-    config,
-    cliRulePath,
-    dockerRulePath
-  });
-  return previewRegistry.getRuleModules();
+  return ruleRegistry.getRuleModules();
 }
 ```
 
-This lets the admin API show current built-in and Docker rule metadata. CLI groups appear only while `cliRulePath` is present in the running process. This must not assign to the live `ruleRegistry`; `/api/rules` is metadata only and must not partially apply config changes before an admin restart regenerates AnyProxy `responseRules`.
+This returns current running-state rule metadata without calling `loadConfig()` and without rebuilding the live registry from a GET request. The UI uses `config.rule_modules` for checkbox state, so metadata does not need to reread config on every request. New Docker rule files and changed enablement take runtime effect after proxy restart, matching the restart-oriented behavior.
 
 - [ ] **Step 10: Add proxy runtime test hooks**
 
@@ -544,6 +548,9 @@ Add a private test export under `module.exports`:
 _test: {
   setRuleRegistryForTest(nextRegistry) {
     ruleRegistry = nextRegistry;
+  },
+  setEnableMitmForTest(nextValue) {
+    enable_mitm = nextValue;
   },
   getResponseRules,
   shouldMitm,
@@ -638,6 +645,7 @@ async function testEnabledRulesRewriteAndPreserveThis() {
 }
 
 function testYoutubeUaFilterRequiresEffectiveBuiltinYoutube() {
+  LocalProxy._test.setEnableMitmForTest("1");
   setRegistry({ rule_modules: { 'builtin:Youtube': false } });
   assert.strictEqual(LocalProxy._test.shouldBypassByUa({ 'User-Agent': 'Mozilla/5.0' }, 'youtube.com'), false);
 
@@ -651,6 +659,10 @@ function testYoutubeUaFilterRequiresEffectiveBuiltinYoutube() {
 
   setRegistry({});
   assert.strictEqual(LocalProxy._test.shouldBypassByUa({ 'User-Agent': 'Mozilla/5.0' }, 'youtube.com'), true);
+
+  LocalProxy._test.setEnableMitmForTest("0");
+  assert.strictEqual(LocalProxy._test.shouldBypassByUa({ 'User-Agent': 'Mozilla/5.0' }, 'youtube.com'), false);
+  LocalProxy._test.setEnableMitmForTest("1");
 }
 
 (async () => {
@@ -999,7 +1011,7 @@ git commit -m "fix: stabilize mitm rule registry integration"
 - Do not make CLI external rule paths persistent; keep the existing one-shot behavior.
 - Preserve legacy shadowing by top-level key: built-in < CLI < Docker.
 - Keep disabled groups out of `MITMHandler()`, `getResponseRules()`, and `shouldMitm()`.
-- Keep YouTube UA filter active only when the effective `Youtube` group is `builtin:Youtube` and enabled.
+- Keep YouTube UA filter active only when global `enable_mitm` is `"1"` and the effective `Youtube` group is `builtin:Youtube` and enabled.
 - Keep user `block_hosts` behavior separate from `rule_modules`.
 - Preserve `rule_modules` in `loadConfig()`; the proxy runtime must see the same enabled state that the UI saves.
-- Do not mutate the live runtime registry from `GET /api/rules`; build preview metadata separately and apply runtime changes only on proxy start/restart.
+- Do not call `loadConfig()` or rebuild the live runtime registry from `GET /api/rules`; return current `ruleRegistry.getRuleModules()` and apply runtime changes only on proxy start/restart.
