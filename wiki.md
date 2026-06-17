@@ -194,6 +194,7 @@ domain:baidu.com
 domain:freedom.gov
 domain:deepseek.com
 domain:ytimg.com
+domain:net.coffee
 ```
 
 ---
