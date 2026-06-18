@@ -1,33 +1,38 @@
 /* ===== 基础变量与全局 ===== */
 :root {
-  --primary: #4f46e5;
-  --primary-hover: #4338ca;
-  --primary-light: #eef2ff;
-  --success: #059669;
-  --success-hover: #047857;
-  --danger: #dc2626;
-  --danger-hover: #b91c1c;
-  --warning: #d97706;
-  --warning-hover: #b45309;
-  --info: #0284c7;
-  --info-hover: #0369a1;
-  --gray-50: #f9fafb;
-  --gray-100: #f3f4f6;
-  --gray-200: #e5e7eb;
-  --gray-300: #d1d5db;
-  --gray-400: #9ca3af;
-  --gray-500: #6b7280;
-  --gray-600: #4b5563;
-  --gray-700: #374151;
-  --gray-800: #1f2937;
-  --gray-900: #111827;
+  --primary: #a78bfa;
+  --primary-hover: #c4b5fd;
+  --primary-light: rgba(167, 139, 250, 0.12);
+  --success: #34d399;
+  --success-hover: #10b981;
+  --danger: #f87171;
+  --danger-hover: #ef4444;
+  --warning: #fbbf24;
+  --warning-hover: #f59e0b;
+  --info: #60a5fa;
+  --info-hover: #3b82f6;
+  --gray-50: #0f1219;
+  --gray-100: #161b26;
+  --gray-200: #1f2633;
+  --gray-300: #2a3243;
+  --gray-400: #525f75;
+  --gray-500: #7a8699;
+  --gray-600: #98a4b8;
+  --gray-700: #b4bfce;
+  --gray-800: #d5dce6;
+  --gray-900: #f0f3f7;
+  --surface: #121620;
+  --surface-hover: #181d2a;
+  --surface-border: rgba(255, 255, 255, 0.06);
+  --input-bg: #0b0e15;
+  --input-border: #2a3243;
   --radius: 8px;
   --radius-sm: 6px;
   --radius-xs: 4px;
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-  --shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
-  --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1);
-  --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
   --transition: 150ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -41,12 +46,14 @@ body {
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  color: var(--gray-700);
+  color-scheme: dark;
 }
 
 /* ===== 布局 ===== */
 .App {
   min-height: 100vh;
-  background: linear-gradient(135deg, #f0f4ff 0%, #f8fafc 30%, #f0fdf4 70%, #fefce8 100%);
+  background: linear-gradient(135deg, #0a0d14 0%, #0f1320 30%, #0d1118 70%, #0a0e16 100%);
   padding: 24px 16px 48px;
 }
 
@@ -63,21 +70,23 @@ body {
   color: var(--gray-800);
   margin: 0 0 28px;
   letter-spacing: -0.02em;
+  text-shadow: 0 0 20px rgba(167, 139, 250, 0.15);
 }
 
 /* ===== Section 卡片 ===== */
 .config-section {
-  background: white;
+  background: var(--surface);
   border-radius: 12px;
   padding: 24px 28px;
   margin-bottom: 20px;
   box-shadow: var(--shadow);
-  border: 1px solid var(--gray-100);
-  transition: box-shadow var(--transition);
+  border: 1px solid var(--surface-border);
+  transition: box-shadow var(--transition), border-color var(--transition);
 }
 
 .config-section:hover {
   box-shadow: var(--shadow-md);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .config-section h2 {
@@ -86,7 +95,7 @@ body {
   font-weight: 600;
   color: var(--gray-800);
   padding-bottom: 12px;
-  border-bottom: 2px solid var(--gray-100);
+  border-bottom: 1px solid var(--gray-200);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -99,6 +108,7 @@ body {
   height: 18px;
   background: var(--primary);
   border-radius: 2px;
+  box-shadow: 0 0 8px rgba(167, 139, 250, 0.3);
 }
 
 .config-section h3 {
@@ -133,10 +143,10 @@ body {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: var(--gray-50);
+  background: var(--gray-100);
   border-radius: var(--radius-sm);
   font-size: 13px;
-  border: 1px solid var(--gray-100);
+  border: 1px solid var(--gray-200);
 }
 
 .interface-name {
@@ -160,7 +170,7 @@ body {
   font-size: 12px;
   font-weight: 500;
   color: var(--info);
-  background: #e0f2fe;
+  background: rgba(96, 165, 250, 0.12);
   padding: 2px 8px;
   border-radius: 10px;
   margin-left: 6px;
@@ -182,12 +192,14 @@ body {
   display: flex;
   gap: 0;
   margin-bottom: 0;
-  border-bottom: 2px solid var(--gray-200);
-  background: white;
+  border-bottom: 1px solid var(--gray-200);
+  background: var(--surface);
   border-radius: 12px 12px 0 0;
   padding: 0;
   box-shadow: var(--shadow-sm);
   overflow: hidden;
+  border: 1px solid var(--surface-border);
+  border-bottom: 1px solid var(--gray-200);
 }
 
 /* Tab 内容区与 Tab 栏无缝衔接，顶部无圆角 */
@@ -208,20 +220,20 @@ body {
   font-size: 14px;
   font-weight: 500;
   transition: all var(--transition);
-  margin-bottom: -2px;
+  margin-bottom: -1px;
   white-space: nowrap;
 }
 
 .tab-btn:hover {
   color: var(--gray-700);
-  background: var(--gray-50);
+  background: var(--surface-hover);
 }
 
 .tab-btn.active {
   color: var(--primary);
   border-bottom-color: var(--primary);
   font-weight: 600;
-  background: white;
+  background: var(--surface-hover);
 }
 
 /* ===== 拦截主机列表 ===== */
@@ -237,17 +249,18 @@ body {
   flex: 1;
   min-width: 180px;
   padding: 10px 14px;
-  border: 1.5px solid var(--gray-300);
+  border: 1.5px solid var(--input-border);
   border-radius: var(--radius-sm);
   font-size: 14px;
   transition: border-color var(--transition), box-shadow var(--transition);
-  background: white;
+  background: var(--input-bg);
+  color: var(--gray-800);
 }
 
 .host-input input[type="text"]:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.15);
 }
 
 .host-input input[type="text"]::placeholder {
@@ -277,18 +290,19 @@ body {
 .time-inputs button {
   padding: 10px 20px;
   background: var(--primary);
-  color: white;
+  color: #0a0d14;
   border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 14px;
-  font-weight: 500;
-  transition: background var(--transition), transform 50ms;
+  font-weight: 600;
+  transition: background var(--transition), transform 50ms, box-shadow var(--transition);
   white-space: nowrap;
 }
 
 .host-input button:hover {
   background: var(--primary-hover);
+  box-shadow: 0 0 12px rgba(167, 139, 250, 0.25);
 }
 
 .host-input button:active {
@@ -320,7 +334,7 @@ hr.simple-line {
 }
 
 .host-item:first-child {
-  background: var(--gray-50);
+  background: var(--gray-100);
   border-radius: var(--radius-sm);
   margin-bottom: 4px;
   padding: 10px 16px;
@@ -332,11 +346,11 @@ hr.simple-line {
 }
 
 .host-item:not(:first-child) {
-  border-bottom: 1px solid var(--gray-100);
+  border-bottom: 1px solid var(--gray-200);
 }
 
 .host-item:not(:first-child):hover {
-  background: var(--gray-50);
+  background: var(--surface-hover);
 }
 
 .host-item:last-child {
@@ -374,10 +388,11 @@ span.host-text strong {
 /* ===== 时间控件 ===== */
 input[type="time"] {
   padding: 6px 8px;
-  border: 1.5px solid var(--gray-300);
+  border: 1.5px solid var(--input-border);
   border-radius: var(--radius-xs);
   font-size: 13px;
-  background: white;
+  background: var(--input-bg);
+  color: var(--gray-800);
   transition: border-color var(--transition), box-shadow var(--transition);
   font-family: inherit;
 }
@@ -385,7 +400,7 @@ input[type="time"] {
 input[type="time"]:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.15);
 }
 
 .time-controls {
@@ -403,9 +418,9 @@ input[type="time"]:focus {
 
 /* ===== 删除按钮 ===== */
 .remove-btn {
-  background: white;
+  background: var(--gray-100);
   color: var(--gray-400);
-  border: 1.5px solid var(--gray-200);
+  border: 1.5px solid var(--gray-300);
   width: 30px;
   height: 30px;
   min-width: 30px;
@@ -424,6 +439,7 @@ input[type="time"]:focus {
   background: var(--danger);
   color: white;
   border-color: var(--danger);
+  box-shadow: 0 0 10px rgba(248, 113, 113, 0.2);
 }
 
 /* ===== 设置行 ===== */
@@ -448,12 +464,13 @@ input[type="time"]:focus {
 .setting-row select {
   flex: 1;
   padding: 10px 14px;
-  border: 1.5px solid var(--gray-300);
+  border: 1.5px solid var(--input-border);
   border-radius: var(--radius-sm);
   font-size: 14px;
   font-family: inherit;
   transition: border-color var(--transition), box-shadow var(--transition);
-  background: white;
+  background: var(--input-bg);
+  color: var(--gray-800);
 }
 
 .setting-row input[type="text"]:focus,
@@ -461,13 +478,13 @@ input[type="time"]:focus {
 .setting-row select:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.15);
 }
 
 .setting-row select {
   cursor: pointer;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237a8699' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 12px center;
   padding-right: 36px;
@@ -501,7 +518,7 @@ input[type="time"]:focus {
   gap: 12px;
   margin-top: 20px;
   padding-top: 20px;
-  border-top: 1px solid var(--gray-100);
+  border-top: 1px solid var(--gray-200);
 }
 
 .save-btn,
@@ -520,22 +537,22 @@ input[type="time"]:focus {
 
 .save-btn {
   background: var(--success);
-  color: white;
+  color: #0a0d14;
 }
 
 .save-btn:hover:not(:disabled) {
   background: var(--success-hover);
-  box-shadow: 0 2px 8px rgba(5, 150, 105, 0.3);
+  box-shadow: 0 2px 12px rgba(52, 211, 153, 0.25);
 }
 
 .restart-btn {
   background: var(--warning);
-  color: white;
+  color: #0a0d14;
 }
 
 .restart-btn:hover:not(:disabled) {
   background: var(--warning-hover);
-  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.3);
+  box-shadow: 0 2px 12px rgba(251, 191, 36, 0.25);
 }
 
 .save-btn:disabled,
@@ -556,12 +573,12 @@ input[type="time"]:focus {
 
 .refresh-btn {
   background: var(--info);
-  color: white;
+  color: #0a0d14;
 }
 
 .refresh-btn:hover:not(:disabled) {
   background: var(--info-hover);
-  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.3);
+  box-shadow: 0 2px 12px rgba(96, 165, 250, 0.25);
 }
 
 .refresh-table-btn {
@@ -570,12 +587,12 @@ input[type="time"]:focus {
 
 .export-btn,
 .import-btn {
-  background: var(--gray-500);
+  background: var(--gray-400);
 }
 
 .export-btn:hover:not(:disabled),
 .import-btn:hover:not(:disabled) {
-  background: var(--gray-600);
+  background: var(--gray-500);
   box-shadow: 0 2px 8px rgba(107, 114, 128, 0.3);
 }
 
@@ -609,7 +626,7 @@ input[type="time"]:focus {
   border-radius: var(--radius-sm);
   border: 1px solid var(--gray-200);
   padding: 8px;
-  background: white;
+  background: var(--input-bg);
 }
 
 /* ===== 通用按钮 ===== */
@@ -619,7 +636,7 @@ button {
 
 .config-section > button {
   padding: 10px 20px;
-  background: white;
+  background: var(--gray-100);
   color: var(--gray-700);
   border: 1.5px solid var(--gray-300);
   border-radius: var(--radius-sm);
@@ -630,7 +647,7 @@ button {
 }
 
 .config-section > button:hover:not(:disabled) {
-  background: var(--gray-50);
+  background: var(--surface-hover);
   border-color: var(--gray-400);
 }
 
@@ -650,7 +667,7 @@ button {
   width: 20px;
   height: 20px;
   padding: 0;
-  background: var(--gray-100);
+  background: var(--gray-200);
   color: var(--gray-500);
   font-size: 11px;
   font-weight: 500;
@@ -664,20 +681,20 @@ button {
 }
 
 .weekday-btn:hover {
-  background: var(--gray-200);
+  background: var(--gray-300);
   color: var(--gray-700);
 }
 
 .weekday-btn.active {
   background: var(--primary);
-  color: white;
+  color: #0a0d14;
   border-color: var(--primary);
-  box-shadow: 0 1px 3px rgba(79, 70, 229, 0.3);
+  box-shadow: 0 0 8px rgba(167, 139, 250, 0.3);
 }
 
 .weekday-btn:focus {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.3);
+  box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.3);
 }
 
 /* ===== MAC 地址输入 ===== */
@@ -690,17 +707,19 @@ button {
 .mac-input input[type="text"] {
   width: 130px;
   padding: 6px 10px;
-  border: 1.5px solid var(--gray-300);
+  border: 1.5px solid var(--input-border);
   border-radius: var(--radius-xs);
   font-size: 12px;
   font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Courier New', monospace;
+  background: var(--input-bg);
+  color: var(--gray-800);
   transition: border-color var(--transition), box-shadow var(--transition);
 }
 
 .mac-input input[type="text"]:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.15);
 }
 
 .mac-input input[type="text"]::placeholder {
@@ -740,14 +759,15 @@ button {
   color: white;
   font-weight: 500;
   font-size: 14px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
   z-index: 1000;
   display: flex;
   align-items: center;
   gap: 12px;
   animation: toastSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
   min-width: 260px;
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 @keyframes toastSlideIn {
@@ -762,18 +782,18 @@ button {
 }
 
 .toast.success {
-  background: var(--success);
-  box-shadow: 0 8px 20px rgba(5, 150, 105, 0.3);
+  background: rgba(52, 211, 153, 0.9);
+  box-shadow: 0 8px 20px rgba(52, 211, 153, 0.2);
 }
 
 .toast.error {
-  background: var(--danger);
-  box-shadow: 0 8px 20px rgba(220, 38, 38, 0.3);
+  background: rgba(248, 113, 113, 0.9);
+  box-shadow: 0 8px 20px rgba(248, 113, 113, 0.2);
 }
 
 .toast.info {
-  background: var(--info);
-  box-shadow: 0 8px 20px rgba(2, 132, 199, 0.3);
+  background: rgba(96, 165, 250, 0.9);
+  box-shadow: 0 8px 20px rgba(96, 165, 250, 0.2);
 }
 
 .toast-close {
@@ -807,7 +827,7 @@ button {
 }
 
 .config-section .ip-item {
-  background: var(--gray-50);
+  background: var(--gray-100);
 }
 
 .empty-hint {
@@ -916,7 +936,7 @@ button {
   padding: 12px;
   border: 1px solid var(--gray-200);
   border-radius: 6px;
-  background: var(--gray-50);
+  background: var(--gray-100);
 }
 
 .rule-module-header {
@@ -950,12 +970,12 @@ button {
   gap: 10px;
   padding: 8px;
   border-radius: 6px;
-  background: #fff;
+  background: var(--surface);
   cursor: pointer;
 }
 
 .rule-module-item:hover {
-  background: var(--gray-100);
+  background: var(--surface-hover);
 }
 
 .rule-module-item input[type="checkbox"] {
@@ -983,7 +1003,7 @@ button {
 .rule-module-source {
   font-size: 11px;
   color: #fff;
-  background: var(--gray-400);
+  background: var(--gray-500);
   padding: 1px 6px;
   border-radius: 3px;
   font-weight: 500;
