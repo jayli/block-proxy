@@ -64,7 +64,7 @@ npm run proxy     # 仅启动代理，不开后台面板
 
 ## 更多文档
 
-详见 [wiki.md](wiki.md)
+详见 [Useage.md](Useage.md) —— 服务端部署、HTTP/SOCKS5 代理配置、MITM 证书安装、拦截规则、macOS 客户端使用等完整用户手册。
 
 ## License
 
