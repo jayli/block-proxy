@@ -24,7 +24,7 @@ function App() {
     auth_username: "",
     auth_password: "",
   });
-  
+
   const [newHost, setNewHost] = useState('');
   const [timezone, setTimeZone] = useState('');
   const [newMatchRule, setNewMatchRule] = useState('');
@@ -38,6 +38,7 @@ function App() {
   const [hostIPs, setHostIPs] = useState([]);
   const [devices, setDevices] = useState([]);
   const [ruleModules, setRuleModules] = useState([]);
+  const [activeTab, setActiveTab] = useState(0);
   const fileInputRef = useRef(null);
 
   // 组件加载时获取当前配置和服务器IP
@@ -46,7 +47,7 @@ function App() {
     fetchServerIPs();
     fetchTimeZone();
     fetchRuleModules();
-    
+
     // 清理定时器
     return () => {
       if (toastTimer) {
@@ -139,16 +140,16 @@ function App() {
     if (toastTimer) {
       clearTimeout(toastTimer);
     }
-    
+
     // 设置新的toast
     setToast({ message, type });
-    
+
     // 设置新的定时器并保存引用
     const newTimer = setTimeout(() => {
       setToast({ message: '', type: '' });
       setToastTimer(null);
     }, 3000);
-    
+
     // 保存定时器引用
     setToastTimer(newTimer);
   };
@@ -223,7 +224,7 @@ function App() {
         },
         body: JSON.stringify(config)
       });
-      
+
       if (response.ok) {
         showToast('配置保存成功!', 'success');
         return true;
@@ -250,7 +251,7 @@ function App() {
       const response = await fetch('/api/restart', {
         method: 'POST'
       });
-      
+
       if (response.ok) {
         showToast('代理服务器重启成功!', 'success');
       } else {
@@ -264,7 +265,7 @@ function App() {
   };
 
 
-  // 在 handleRestartProxy 函数之后添加以下函数：
+  // 在 handleRestartProxy 函数后面添加以下函数：
   const handleUpdateDevices = async () => {
     setLoading(true);
     try {
@@ -363,7 +364,7 @@ function App() {
   // 更新拦截项的时间段
   const updateFilterTime = async (index, startTime, endTime) => {
     const updatedBlockHosts = [...config.block_hosts];
-    
+
     // 兼容旧格式转换为新格式
     if (typeof updatedBlockHosts[index] === 'string') {
       updatedBlockHosts[index] = {
@@ -379,12 +380,12 @@ function App() {
         filter_end_time: endTime
       };
     }
-    
+
     const updatedConfig = {
       ...config,
       block_hosts: updatedBlockHosts
     };
-    
+
     setConfig(updatedConfig);
     await saveConfig(updatedConfig);
   };
@@ -392,7 +393,7 @@ function App() {
   // 更新拦截项的星期几设置
   const updateFilterWeekday = async (index, day) => {
     const updatedBlockHosts = [...config.block_hosts];
-    
+
     // 兼容旧格式转换为新格式
     if (typeof updatedBlockHosts[index] === 'string') {
       updatedBlockHosts[index] = {
@@ -402,16 +403,16 @@ function App() {
         filter_weekday: [1, 2, 3, 4, 5, 6, 7] // 默认每天生效
       };
     }
-    
+
     // 初始化 filter_weekday 如果不存在
     if (!updatedBlockHosts[index].filter_weekday) {
       updatedBlockHosts[index].filter_weekday = [1, 2, 3, 4, 5, 6, 7];
     }
-    
+
     // 切换星期几的选中状态
     const weekdays = [...updatedBlockHosts[index].filter_weekday];
     const dayIndex = weekdays.indexOf(day);
-    
+
     if (dayIndex > -1) {
       // 如果已存在，则移除
       weekdays.splice(dayIndex, 1);
@@ -420,17 +421,17 @@ function App() {
       weekdays.push(day);
       weekdays.sort((a, b) => a - b); // 排序
     }
-    
+
     updatedBlockHosts[index] = {
       ...updatedBlockHosts[index],
       filter_weekday: weekdays
     };
-    
+
     const updatedConfig = {
       ...config,
       block_hosts: updatedBlockHosts
     };
-    
+
     setConfig(updatedConfig);
     await saveConfig(updatedConfig);
   };
@@ -525,14 +526,14 @@ function App() {
     <div className="App">
       <div className="config-container">
         <h1>代理服务器配置</h1>
-        
+
         {/* Toast提示组件 */}
-        <Toast 
-          message={toast.message} 
-          type={toast.type} 
-          onClose={closeToast} 
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={closeToast}
         />
-        
+
         {/* 服务器IP信息 */}
         <div className="config-section">
           <div className="server-info">
@@ -551,7 +552,7 @@ function App() {
                     </li>
                   ))}
                 </ul>
-                
+
                 {/* 显示宿主机IP信息 */}
                 {isDocker && (
                   <div className="host-ip-info">
@@ -564,109 +565,33 @@ function App() {
             )}
           </div>
         </div>
-        
-        <div className="config-section">
-          <h2>拦截主机列表</h2>
-          <div className="host-input">
-            <input
-              type="text"
-              value={newHost}
-              onChange={(e) => setNewHost(e.target.value)}
-              placeholder="域名,例如:example.com"
-            />
-            <input
-              type="text"
-              value={newMatchRule}
-              onChange={(e) => setNewMatchRule(e.target.value)}
-              placeholder="例子：^https?:\/\/.+abc\.com\/api\/\/def, 留空拦截全部"
-            />
-            <div className="time-inputs">
-              <label><span>开始：</span>
-                <input
-                  type="time"
-                  value={newStartTime}
-                  onChange={(e) => setNewStartTime(e.target.value)}
-                />
-              </label>
-              <label><span>结束：</span>
-                <input
-                  type="time"
-                  value={newEndTime}
-                  onChange={(e) => setNewEndTime(e.target.value)}
-                />
-              </label>
-              <button onClick={handleAddHost}>添加</button>
-            </div>
-          </div>
-          <hr className="simple-line" />
-          <ul className="host-list">
-            <li key={1000} className="host-item">
-              <div className="host-info">域名</div>
-              <div className="weekday-controls title-weedkey-controls">星期</div>
-              <div className="title-mac-input">MAC 地址</div>
-              <div className="title-time-controls">时间段</div>
-              <div className="table-right-blank"></div>
-            </li>
-            {config.block_hosts.map((host, index) => (
-              <li key={index} className="host-item">
-                <div className="host-info">
-                  <span className="host-text"><strong>{getFilterHostDisplay(host)}</strong><br />{getFilterMatchRule(host)}</span>
-                  <div className="weekday-controls">
-                    {weekdayNames.map((name, dayIndex) => {
-                      const day = dayIndex + 1;
-                      const weekdays = getFilterWeekdays(host);
-                      const isActive = weekdays.includes(day);
-                      return (
-                        <button
-                          key={day}
-                          className={`weekday-btn ${isActive ? 'active' : ''}`}
-                          onClick={() => updateFilterWeekday(index, day)}
-                          title={`周${name}`}
-                        >
-                        {name}
-                      </button>
-                      );
-                    })}
-                  </div>
-                  <div className="mac-input">
-                    <input
-                      type="text"
-                      value={getFilterMac(host)}
-                      onChange={(e) => updateFilterMac(index, e.target.value)}
-                      placeholder="MAC地址(可选)"
-                    />
-                  </div>
-                  <div className="time-controls">
-                    <label>
-                      <input
-                        type="time"
-                        value={getFilterTimes(host).start}
-                        onChange={(e) => updateFilterTime(index, e.target.value, getFilterTimes(host).end)}
-                      />
-                    </label>
-                    <label>～</label>
-                    <label>
-                      <input
-                        type="time"
-                        value={getFilterTimes(host).end}
-                        onChange={(e) => updateFilterTime(index, getFilterTimes(host).start, e.target.value)}
-                      />
-                    </label>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => handleRemoveHost(host)}
-                  className="remove-btn"
-                >
-                  X
-                </button>
-              </li>
-            ))}
-          </ul>
+
+        {/* Tab 导航栏 */}
+        <div className="tab-bar">
+          <button
+            className={`tab-btn ${activeTab === 0 ? 'active' : ''}`}
+            onClick={() => setActiveTab(0)}
+          >
+            HTTP/Socks5 端口设置
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 1 ? 'active' : ''}`}
+            onClick={() => setActiveTab(1)}
+          >
+            拦截主机列表
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 2 ? 'active' : ''}`}
+            onClick={() => setActiveTab(2)}
+          >
+            路由表
+          </button>
         </div>
-        
-        <div className="config-section">
-          <h2>HTTP/Socks5 端口设置，验证信息，下游 VPN_Proxy 代理</h2>
+
+        {/* Tab 0: HTTP/Socks5 端口设置 */}
+        {activeTab === 0 && (
+        <div className="config-section tab-content">
+          <h2>HTTP/Socks5 端口设置</h2>
           <div className="setting-row">
             <label>Anyproxy HTTP 代理端口:</label>
             <input
@@ -818,9 +743,143 @@ function App() {
             </button>
           </div>
         </div>
-        
+        )}
+
+        {/* Tab 1: 拦截主机列表 */}
+        {activeTab === 1 && (
+        <div className="config-section tab-content">
+          <h2>拦截主机列表</h2>
+          <div className="host-input">
+            <input
+              type="text"
+              value={newHost}
+              onChange={(e) => setNewHost(e.target.value)}
+              placeholder="域名,例如:example.com"
+            />
+            <input
+              type="text"
+              value={newMatchRule}
+              onChange={(e) => setNewMatchRule(e.target.value)}
+              placeholder="例子：^https?:\/\/.+abc\.com\/api\/\/def, 留空拦截全部"
+            />
+            <div className="time-inputs">
+              <label><span>开始：</span>
+                <input
+                  type="time"
+                  value={newStartTime}
+                  onChange={(e) => setNewStartTime(e.target.value)}
+                />
+              </label>
+              <label><span>结束：</span>
+                <input
+                  type="time"
+                  value={newEndTime}
+                  onChange={(e) => setNewEndTime(e.target.value)}
+                />
+              </label>
+              <button onClick={handleAddHost}>添加</button>
+            </div>
+          </div>
+          <hr className="simple-line" />
+          <ul className="host-list">
+            <li key={1000} className="host-item">
+              <div className="host-info">域名</div>
+              <div className="weekday-controls title-weedkey-controls">星期</div>
+              <div className="title-mac-input">MAC 地址</div>
+              <div className="title-time-controls">时间段</div>
+              <div className="table-right-blank"></div>
+            </li>
+            {config.block_hosts.map((host, index) => (
+              <li key={index} className="host-item">
+                <div className="host-info">
+                  <span className="host-text"><strong>{getFilterHostDisplay(host)}</strong><br />{getFilterMatchRule(host)}</span>
+                  <div className="weekday-controls">
+                    {weekdayNames.map((name, dayIndex) => {
+                      const day = dayIndex + 1;
+                      const weekdays = getFilterWeekdays(host);
+                      const isActive = weekdays.includes(day);
+                      return (
+                        <button
+                          key={day}
+                          className={`weekday-btn ${isActive ? 'active' : ''}`}
+                          onClick={() => updateFilterWeekday(index, day)}
+                          title={`周${name}`}
+                        >
+                        {name}
+                      </button>
+                      );
+                    })}
+                  </div>
+                  <div className="mac-input">
+                    <input
+                      type="text"
+                      value={getFilterMac(host)}
+                      onChange={(e) => updateFilterMac(index, e.target.value)}
+                      placeholder="MAC地址(可选)"
+                    />
+                  </div>
+                  <div className="time-controls">
+                    <label>
+                      <input
+                        type="time"
+                        value={getFilterTimes(host).start}
+                        onChange={(e) => updateFilterTime(index, e.target.value, getFilterTimes(host).end)}
+                      />
+                    </label>
+                    <label>～</label>
+                    <label>
+                      <input
+                        type="time"
+                        value={getFilterTimes(host).end}
+                        onChange={(e) => updateFilterTime(index, getFilterTimes(host).start, e.target.value)}
+                      />
+                    </label>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleRemoveHost(host)}
+                  className="remove-btn"
+                >
+                  X
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+        )}
+
+        {/* Tab 2: 路由表 */}
+        {activeTab === 2 && (
+        <div className="config-section tab-content">
+          <h2>路由表</h2>
+          {devices && devices.length > 0 ? (
+            <div>
+              <p>当前共有 {devices.length} 个设备</p>
+              <ul className="ip-list">
+                {devices.map((device, index) => (
+                  <li key={index} className="ip-item">
+                    <span className="interface-name">{device.mac || '未知MAC'} &nbsp;</span>
+                    <span className="ip-address">{device.ip || '未知IP'}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="empty-hint">暂无设备信息</p>
+          )}
+          <button
+            onClick={fetchConfig}
+            disabled={loading}
+            className="refresh-table-btn"
+          >
+            {loading ? '刷新中...' : '更新路由表'}
+          </button>
+        </div>
+        )}
+
+        {/* 客户端代理设置 */}
         <div className="config-section">
-          <h2>代理设置</h2>
+          <h2>客户端代理设置</h2>
           <p>
             <img src="/iphone-proxy-setting.jpg" alt="iPhone Proxy Setting"
                  style={{ float: 'right', marginLeft: '10px', width: '166px' }} />
@@ -894,31 +953,6 @@ function App() {
           </div>
         </div>
 
-        <div className="config-section">
-          <h2>路由表</h2>
-          {devices && devices.length > 0 ? (
-            <div>
-              <p>当前共有 {devices.length} 个设备</p>
-              <ul className="ip-list">
-                {devices.map((device, index) => (
-                  <li key={index} className="ip-item">
-                    <span className="interface-name">{device.mac || '未知MAC'} &nbsp;</span>
-                    <span className="ip-address">{device.ip || '未知IP'}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <p>暂无设备信息</p>
-          )}
-          <button
-            onClick={fetchConfig}
-            disabled={loading}
-            className="refresh-table-btn"
-          >
-            {loading ? '刷新中...' : '更新路由表'}
-          </button>
-        </div>
         <div className="config-section">
           <h3>项目源码</h3>
           <div>

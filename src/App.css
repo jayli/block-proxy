@@ -177,6 +177,53 @@ body {
   color: var(--gray-600);
 }
 
+/* ===== Tab 导航栏 ===== */
+.tab-bar {
+  display: flex;
+  gap: 0;
+  margin-bottom: 0;
+  border-bottom: 2px solid var(--gray-200);
+  background: white;
+  border-radius: 12px 12px 0 0;
+  padding: 0;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+/* Tab 内容区与 Tab 栏无缝衔接，顶部无圆角 */
+.config-section.tab-content {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  margin-top: 0;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 14px 16px;
+  background: transparent;
+  color: var(--gray-500);
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all var(--transition);
+  margin-bottom: -2px;
+  white-space: nowrap;
+}
+
+.tab-btn:hover {
+  color: var(--gray-700);
+  background: var(--gray-50);
+}
+
+.tab-btn.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+  font-weight: 600;
+  background: white;
+}
+
 /* ===== 拦截主机列表 ===== */
 .host-input {
   display: flex;
@@ -755,6 +802,14 @@ button {
   background: var(--gray-50);
 }
 
+.empty-hint {
+  text-align: center;
+  color: var(--gray-400);
+  font-size: 14px;
+  padding: 32px 0;
+  margin: 0;
+}
+
 /* ===== 响应式 ===== */
 @media (max-width: 768px) {
   .App {
@@ -763,6 +818,15 @@ button {
 
   .config-section {
     padding: 18px 16px;
+  }
+
+  .tab-bar {
+    border-radius: 8px 8px 0 0;
+  }
+
+  .tab-btn {
+    padding: 12px 8px;
+    font-size: 13px;
   }
 
   .host-info {
