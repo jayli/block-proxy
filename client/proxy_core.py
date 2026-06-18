@@ -752,6 +752,9 @@ class ProxyCore:
                 if ":" in target:
                     host, port_str = target.rsplit(":", 1)
                     port = int(port_str)
+                    # Strip IPv6 brackets
+                    if host.startswith("[") and host.endswith("]"):
+                        host = host[1:-1]
                 else:
                     host = target
                     port = 443
