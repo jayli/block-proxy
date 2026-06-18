@@ -151,6 +151,36 @@ class GeodataLoader:
         """Return True when the geosite tag exists in loaded data."""
         return tag.lower() in self._geosite_cache
 
+    def find_geosite_matches(self, domain):
+        """Find all geosite tags whose rules match the given domain."""
+        if not self._geosite_loaded:
+            return []
+        host = domain.lower()
+        matches = []
+        for tag in sorted(self._geosite_cache):
+            for rule_type, value in self._geosite_cache[tag]:
+                matched = False
+                if rule_type == "full":
+                    matched = host == value
+                elif rule_type == "domain":
+                    matched = host == value or host.endswith("." + value)
+                elif rule_type == "plain":
+                    matched = value in host
+                elif rule_type == "regex":
+                    import re as _re
+                    try:
+                        matched = bool(_re.search(value, host))
+                    except _re.error:
+                        pass
+                if matched:
+                    matches.append(tag)
+                    break
+        return matches
+
+    def list_geosite(self, tag):
+        """List all domain rules for a geosite tag. Returns [(type, value), ...]."""
+        return self._geosite_cache.get(tag.lower(), [])
+
     def get_geoip(self, code):
         """Get CIDR networks for a geoip country code. Returns list of IPNetwork."""
         return self._geoip_cache.get(code.lower(), [])

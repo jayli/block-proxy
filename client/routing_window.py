@@ -4,6 +4,7 @@ Pure PyObjC implementation (no tkinter dependency).
 Launched as a subprocess from the main status bar app.
 """
 
+import ipaddress
 import json
 import objc
 import os
@@ -38,6 +39,7 @@ from AppKit import (
     NSMenuItem,
     NSAlert,
 )
+from geodata_loader import GeodataLoader
 
 
 BEZEL_ROUNDED = 1
@@ -76,6 +78,25 @@ def _setup_minimal_menu():
 _DOMAIN_RE = re.compile(
     r"^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
 )
+
+
+def _domain_matches(host, pattern):
+    """Check if a domain matches a domain pattern (exact or subdomain)."""
+    h = host.lower()
+    return h == pattern or h.endswith("." + pattern)
+
+
+def _format_domain_rule(rule_type, value):
+    """Format a domain rule for display."""
+    if rule_type == "full":
+        return f"[full] {value}"
+    elif rule_type == "domain":
+        return f"[domain] {value} (及其子域名)"
+    elif rule_type == "plain":
+        return f"[plain] 包含 \"{value}\""
+    elif rule_type == "regex":
+        return f"[regex] {value}"
+    return f"[{rule_type}] {value}"
 
 
 def validate_rules(direct_text, proxy_text, geosite_tags=None, geoip_codes=None):
@@ -310,6 +331,7 @@ class RoutingWindowController(NSObject):
 
         self._direct_text = self._add_tab(tab, "直连规则", routing.get("direct_rules", []))
         self._proxy_text = self._add_tab(tab, "代理规则", routing.get("proxy_rules", []))
+        self._add_query_tab(tab)
 
         self._updateRoutingHint()
 
@@ -358,6 +380,100 @@ class RoutingWindowController(NSObject):
         tab_view.addTabViewItem_(tab_item)
 
         return text_view
+
+    def _add_query_tab(self, tab_view):
+        """Add the query tab for looking up domain/geosite/geoip rules."""
+        cr = tab_view.contentRect()
+        item_view = NSView.alloc().initWithFrame_(cr)
+        item_view.setAutoresizingMask_(18)
+
+        pad = 8
+        iw = cr.size.width - 2 * pad
+        lbl_w = 145
+        btn_w = 68
+        inp_w = iw - lbl_w - 8 - btn_w - 8
+        row_h = 30
+        gap = 8
+
+        # Bottom textarea position: same bottom as other tabs' scroll (y=4)
+        text_bottom = 4
+        rows_h = 2 * row_h + gap
+        text_h = cr.size.height - text_bottom - rows_h - gap
+
+        # --- Result textarea (bottom-aligned with other tabs) ---
+        scroll_frame = ((pad, text_bottom), (iw, text_h))
+        scroll = NSScrollView.alloc().initWithFrame_(scroll_frame)
+        scroll.setHasVerticalScroller_(True)
+        scroll.setHasHorizontalScroller_(False)
+        scroll.setBorderType_(NSBezelBorder)
+        scroll.setAutoresizingMask_(18)
+
+        text_view = NSTextView.alloc().initWithFrame_(
+            ((0, 0), (scroll.contentSize().width, scroll.contentSize().height))
+        )
+        text_view.setMinSize_((0, scroll.contentSize().height))
+        text_view.setMaxSize_((float("inf"), float("inf")))
+        text_view.setVerticallyResizable_(True)
+        text_view.setHorizontallyResizable_(False)
+        text_view.setAutoresizingMask_(2)
+        text_view.setFont_(NSFont.userFixedPitchFontOfSize_(12))
+        text_view.setRichText_(False)
+
+        scroll.setDocumentView_(text_view)
+        item_view.addSubview_(scroll)
+
+        # --- Row 1: 查询域名/IP ---
+        row1_y = text_bottom + text_h + gap
+        lbl1 = NSTextField.labelWithString_("查询域名/IP:")
+        lbl1.setFrame_(((pad, row1_y + 4), (lbl_w, 22)))
+        item_view.addSubview_(lbl1)
+
+        self._q_domain_input = NSTextField.alloc().initWithFrame_(
+            ((pad + lbl_w + 8, row1_y + 2), (inp_w, 24))
+        )
+        self._q_domain_input.setPlaceholderString_("输入域名或 IP 地址")
+        self._q_domain_input.setTarget_(self)
+        self._q_domain_input.setAction_("onQueryDomainIP:")
+        item_view.addSubview_(self._q_domain_input)
+
+        self._q_domain_btn = NSButton.alloc().initWithFrame_(
+            ((pad + lbl_w + 8 + inp_w + 8, row1_y), (btn_w, row_h))
+        )
+        self._q_domain_btn.setTitle_("查询")
+        self._q_domain_btn.setBezelStyle_(BEZEL_ROUNDED)
+        self._q_domain_btn.setTarget_(self)
+        self._q_domain_btn.setAction_("onQueryDomainIP:")
+        item_view.addSubview_(self._q_domain_btn)
+
+        # --- Row 2: 查询 Geosite/Geoip ---
+        row2_y = row1_y + row_h + gap
+        lbl2 = NSTextField.labelWithString_("查询 Geosite/Geoip:")
+        lbl2.setFrame_(((pad, row2_y + 4), (lbl_w, 22)))
+        item_view.addSubview_(lbl2)
+
+        self._q_geosite_input = NSTextField.alloc().initWithFrame_(
+            ((pad + lbl_w + 8, row2_y + 2), (inp_w, 24))
+        )
+        self._q_geosite_input.setPlaceholderString_("例如 geosite:netflix 或 geoip:cn")
+        self._q_geosite_input.setTarget_(self)
+        self._q_geosite_input.setAction_("onQueryGeositeGeoip:")
+        item_view.addSubview_(self._q_geosite_input)
+
+        self._q_geosite_btn = NSButton.alloc().initWithFrame_(
+            ((pad + lbl_w + 8 + inp_w + 8, row2_y), (btn_w, row_h))
+        )
+        self._q_geosite_btn.setTitle_("查询")
+        self._q_geosite_btn.setBezelStyle_(BEZEL_ROUNDED)
+        self._q_geosite_btn.setTarget_(self)
+        self._q_geosite_btn.setAction_("onQueryGeositeGeoip:")
+        item_view.addSubview_(self._q_geosite_btn)
+
+        self._q_result_text = text_view
+
+        tab_item = NSTabViewItem.alloc().initWithIdentifier_("规则查询")
+        tab_item.setLabel_("规则查询")
+        tab_item.setView_(item_view)
+        tab_view.addTabViewItem_(tab_item)
 
     def onRoutingChanged_(self, sender):
         self._updateRoutingHint()
@@ -456,6 +572,138 @@ class RoutingWindowController(NSObject):
         alert.addButtonWithTitle_("确定")
         alert.runModal()
         self._check_btn.setEnabled_(True)
+
+    def onQueryDomainIP_(self, sender):
+        query = self._q_domain_input.stringValue().strip()
+        if not query:
+            return
+        self._q_domain_btn.setEnabled_(False)
+        self._q_geosite_btn.setEnabled_(False)
+        self._q_result_text.setString_("# 正在查询...")
+
+        geodata_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "geodata"
+        )
+
+        def _run():
+            try:
+                loader = GeodataLoader(geodata_dir, load_geosite=True, load_geoip=True)
+                try:
+                    addr = ipaddress.ip_address(query)
+                    is_ip = True
+                except ValueError:
+                    is_ip = False
+
+                results = []
+                if not is_ip:
+                    matches = loader.find_geosite_matches(query)
+                    if matches:
+                        results.append(f"# 域名 {query} 属于以下 geosite 规则：\n")
+                        for tag in matches:
+                            results.append(f"geosite:{tag}")
+                    else:
+                        results.append(f"# 未找到匹配 {query} 的 geosite 规则")
+                else:
+                    found = []
+                    if loader.geoip_available:
+                        for code in sorted(loader._geoip_cache):
+                            for net in loader.get_geoip(code):
+                                if addr in net:
+                                    found.append((code, str(net)))
+                                    break
+                    if found:
+                        results.append(f"# IP {query} 属于以下 geoip 规则：\n")
+                        for code, cidr in found:
+                            results.append(f"geoip:{code}  (包含 {cidr})")
+                    else:
+                        results.append(f"# 未找到匹配 {query} 的 geoip 规则")
+
+                self._query_result = "\n".join(results)
+            except Exception as e:
+                self._query_result = f"# 查询出错: {e}"
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "_showQueryResult:", None, False
+            )
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def onQueryGeositeGeoip_(self, sender):
+        query = self._q_geosite_input.stringValue().strip()
+        if not query:
+            return
+        self._q_domain_btn.setEnabled_(False)
+        self._q_geosite_btn.setEnabled_(False)
+        self._q_result_text.setString_("# 正在查询...")
+
+        geodata_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "geodata"
+        )
+
+        def _run():
+            try:
+                if ":" not in query:
+                    self._query_result = (
+                        "# 请输入完整规则，例如 geosite:netflix 或 geoip:cn"
+                    )
+                else:
+                    prefix, _, code = query.partition(":")
+                    prefix = prefix.lower().strip()
+                    code = code.strip()
+                    if not code:
+                        self._query_result = "# 规则值为空"
+                    else:
+                        loader = GeodataLoader(
+                            geodata_dir,
+                            load_geosite=(prefix == "geosite"),
+                            load_geoip=(prefix == "geoip"),
+                        )
+                        results = []
+                        if prefix == "geosite":
+                            rules = loader.list_geosite(code)
+                            if rules:
+                                results.append(
+                                    f"# geosite:{code} 包含 {len(rules)} 条规则：\n"
+                                )
+                                for rule_type, value in rules:
+                                    results.append(
+                                        _format_domain_rule(rule_type, value)
+                                    )
+                                if len(rules) > 10000:
+                                    results.append(
+                                        f"\n# ... 共 {len(rules)} 条（仅显示前 10000 条）"
+                                    )
+                            else:
+                                results.append(f"# geosite:{code} 不存在或无数据")
+                        elif prefix == "geoip":
+                            nets = loader.get_geoip(code)
+                            if nets:
+                                results.append(
+                                    f"# geoip:{code} 包含 {len(nets)} 条 CIDR 规则：\n"
+                                )
+                                for net in nets:
+                                    results.append(f"  {net}")
+                                if len(nets) > 10000:
+                                    results.append(
+                                        f"\n# ... 共 {len(nets)} 条（仅显示前 10000 条）"
+                                    )
+                            else:
+                                results.append(f"# geoip:{code} 不存在或无数据")
+                        else:
+                            results.append(f"# 未知规则类型 '{prefix}'，仅支持 geosite / geoip")
+                        self._query_result = "\n".join(results)
+            except Exception as e:
+                self._query_result = f"# 查询出错: {e}"
+            self.performSelectorOnMainThread_withObject_waitUntilDone_(
+                "_showQueryResult:", None, False
+            )
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _showQueryResult_(self, _obj):
+        self._q_result_text.setString_(self._query_result)
+        self._q_result_text.scrollRangeToVisible_((0, 0))
+        self._q_domain_btn.setEnabled_(True)
+        self._q_geosite_btn.setEnabled_(True)
 
 
 def show_routing_window(config_path):
