@@ -354,13 +354,21 @@ hr.simple-line {
 span.host-text {
   font-size: 14px;
   flex: 1;
-  min-width: 140px;
+  min-width: 0; /* flex 子项允许收缩，否则内部长正则会撑出容器 */
   line-height: 1.5;
 }
 
 span.host-text strong {
   color: var(--gray-800);
   font-weight: 600;
+}
+
+/* 正则表达式部分：强制在任意字符处折行，避免与星期控件重叠 */
+.host-match-rule {
+  display: block;
+  font-size: 13px;
+  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 
 /* ===== 时间控件 ===== */
@@ -639,12 +647,12 @@ button {
 }
 
 .weekday-btn {
-  width: 30px;
-  height: 30px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   background: var(--gray-100);
   color: var(--gray-500);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
   border-radius: var(--radius-xs);
   cursor: pointer;
@@ -895,9 +903,9 @@ button {
   }
 
   .weekday-btn {
-    width: 26px;
-    height: 26px;
-    font-size: 11px;
+    width: 18px;
+    height: 18px;
+    font-size: 10px;
   }
 }
 

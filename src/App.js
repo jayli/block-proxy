@@ -792,7 +792,12 @@ function App() {
             {config.block_hosts.map((host, index) => (
               <li key={index} className="host-item">
                 <div className="host-info">
-                  <span className="host-text"><strong>{getFilterHostDisplay(host)}</strong><br />{getFilterMatchRule(host)}</span>
+                  <span className="host-text">
+                    <strong>{getFilterHostDisplay(host)}</strong>
+                    {getFilterMatchRule(host) && (
+                      <span className="host-match-rule">{getFilterMatchRule(host)}</span>
+                    )}
+                  </span>
                   <div className="weekday-controls">
                     {weekdayNames.map((name, dayIndex) => {
                       const day = dayIndex + 1;
