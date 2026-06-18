@@ -223,7 +223,7 @@ ip6tables -I forwarding_rule -m mac --mac-source D2:9E:8D:1B:F1:4E -j REJECT
 
 ### YouTube 去广告
 
-在后台配置中添加以下 4 条 reject 规则：
+默认 `config.json` 已内置以下 4 条 reject 规则，无需手动添加：
 
 | 域名 | Match Rule |
 |:-----|:-----------|

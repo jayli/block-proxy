@@ -11,17 +11,34 @@
 
 ## 快速开始
 
+**方式一：npx 直接启动（无需安装）**
+
+```bash
+npx block-proxy
+```
+
+**方式二：全局安装后启动**
+
 ```bash
 npm install -g block-proxy
 block-proxy
 ```
 
-或使用 Docker（推荐）：
+**方式三：带自定义 MITM 规则启动**
+
+编写 `rule.js`（参考 [example/rule.js](example/rule.js)），通过 `-c` 参数加载：
+
+```bash
+npx block-proxy -c rule.js
+```
+
+规则文件导出规则组对象，每个规则组包含一组拦截规则，支持 `beforeSendRequest` 和 `beforeSendResponse` 两种类型。
+
+**方式四：Docker（推荐长期运行）**
 
 ```bash
 docker run --init -d --restart=unless-stopped \
   -e TZ=Asia/Shanghai --network=host \
-  -v "$(pwd)/":/app/config \
   --name block-proxy \
   crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest
 ```
