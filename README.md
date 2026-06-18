@@ -2,12 +2,12 @@
 
 <a href="https://nodei.co/npm/block-proxy/"><img src="https://nodei.co/npm/block-proxy.svg?style=mini"></a>
 
-> Socks5/HTTP 代理工具，支持 MITM 和二次开发。用于家庭网关限制小朋友上网。
+> Socks5/HTTP 代理工具，支持 MITM 和二次开发。用于家庭网关限制小朋友上网，域名/地址/设备拦截。
 
-- HTTP 代理 + Socks5 over TLS 代理
+- HTTP 代理 + Socks5（可开启 TLS）代理
 - 域名拦截、URL 正则匹配、MAC 地址定向拦截
-- 按时间段和星期拦截，内置广告过滤
-- [macOS 客户端](https://github.com/jayli/block-proxy/releases) 一键连接
+- 按时间段和星期拦截
+- [macOS 客户端](https://github.com/jayli/block-proxy/releases)，支持配置分流规则
 
 ## 快速开始
 
@@ -43,7 +43,7 @@ docker run --init -d --restart=unless-stopped \
   crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest
 ```
 
-首次启动后访问 `http://代理IP:8003` 进入后台配置面板。
+首次启动后访问 `http://代理IP:8003` 进入后台配置面板。访问`http://代理IP:8001` 查看机器运行水位。
 
 ## 端口说明
 

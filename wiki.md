@@ -39,18 +39,15 @@ docker run --init -d --restart=unless-stopped \
   --log-opt max-file=3 \
   --cpus="5" \
   --memory 400m \
-  -v "$(pwd)/":/app/config \
   --name block-proxy \
   crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest
 ```
 
-### 挂载配置文件（config.json 和 rule.js）
-
-Docker 启动命令中的 `-v "$(pwd)/":/app/config` 将宿主机当前目录映射到容器内的 `/app/config`。代理启动时会自动从该目录加载配置。
+### 配置文件
 
 #### config.json
 
-容器首次启动时，如果挂载目录下没有 `config.json`，代理会自动生成一份默认配置。你也可以预先创建：
+容器首次启动时会自动生成一份默认配置。你也可以预先创建：
 
 ```json
 {
@@ -68,7 +65,7 @@ Docker 启动命令中的 `-v "$(pwd)/":/app/config` 将宿主机当前目录映
 
 #### rule.js（自定义 MITM 规则）
 
-在挂载目录下创建 `rule.js`，代理启动时会自动加载并与内置规则合并。参照 [`example/rule.js`](https://github.com/jayli/block-proxy/blob/main/example/rule.js) 格式：
+在配置目录下创建 `rule.js`，代理启动时会自动加载并与内置规则合并。参照 [`example/rule.js`](https://github.com/jayli/block-proxy/blob/main/example/rule.js) 格式：
 
 ```js
 module.exports = {
@@ -102,7 +99,6 @@ module.exports = {
 
 ```bash
 docker run --init -d --restart=unless-stopped --user=root \
-  -v "$(pwd)/":/app/config \
   -e TZ=Asia/Shanghai -p 8001:8001 -p 8002:8002 \
   --name block-proxy \
   crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest
