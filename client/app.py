@@ -14,6 +14,7 @@ from Foundation import (
     NSObject,
     NSUserNotification,
     NSUserNotificationCenter,
+    NSURL,
 )
 from AppKit import (
     NSApplication,
@@ -27,6 +28,7 @@ from AppKit import (
     NSApp,
     NSAlert,
     NSCommandKeyMask,
+    NSWorkspace,
 )
 
 from config import Config
@@ -151,6 +153,7 @@ class AppController(NSObject):
         if log_image:
             log_item.setImage_(log_image)
         self._add_menu_item(menu, "关于", "showAbout:")
+        self._add_menu_item(menu, "帮助", "showHelp:")
         menu.addItem_(NSMenuItem.separatorItem())
 
         quit_item = self._add_menu_item(menu, "退出", "quitApp:")
@@ -358,6 +361,10 @@ class AppController(NSObject):
         )
         alert.addButtonWithTitle_("好")
         alert.runModal()
+
+    def showHelp_(self, sender):
+        url = NSURL.URLWithString_("https://github.com/jayli/block-proxy/blob/main/Useage.md")
+        NSWorkspace.sharedWorkspace().openURL_(url)
 
     # ------------------------------------------------------------------
     # Quit
