@@ -414,6 +414,18 @@ geosite:openai       # OpenAI/ChatGPT 走代理
 
 默认策略（不匹配任何规则时）可在窗口底部切换：`proxy`（走代理）或 `direct`（直连）。
 
+### 使用 Claude Code
+
+Claude 对分流规则很挑剔，本机用 claude code 的时候需要挂代理，在 ~/.zshrc 里重写 claude code 启动命令：
+
+```
+claude() {
+	ALL_PROXY='http://127.0.0.1:1087' claude "$@"
+}
+```
+
+在 SocksClient 的分流规则里，代理中要包含"geosite:claude"。
+
 ### 日志查看
 
 菜单栏图标 → **Logs** 打开日志窗口，可查看连接记录和错误信息。日志文件存储在 `~/Library/Application Support/SocksClient/logs/`。
