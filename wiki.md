@@ -191,6 +191,8 @@ domain:freedom.gov
 domain:deepseek.com
 domain:ytimg.com
 domain:net.coffee
+domain:bgp.he.net
+domain:ip.me
 ```
 
 ---
