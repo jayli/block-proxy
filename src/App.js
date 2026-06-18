@@ -1,5 +1,5 @@
 // src/App.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import QRCode from 'qrcode';
 
@@ -36,12 +36,15 @@ function App() {
   const [isDocker, setIsDocker] = useState(false);
   const [hostIPs, setHostIPs] = useState([]);
   const [devices, setDevices] = useState([]);
+  const [ruleModules, setRuleModules] = useState([]);
+  const fileInputRef = useRef(null);
 
   // 组件加载时获取当前配置和服务器IP
   useEffect(() => {
     fetchConfig();
     fetchServerIPs();
     fetchTimeZone();
+    fetchRuleModules();
     
     // 清理定时器
     return () => {
@@ -103,6 +106,31 @@ function App() {
     } catch (error) {
       showToast('网络错误: ' + error.message, 'error');
     }
+  };
+
+  const fetchRuleModules = async () => {
+    try {
+      const response = await fetch('/api/rules');
+      if (response.ok) {
+        const data = await response.json();
+        setRuleModules(data);
+      }
+    } catch (error) {
+      showToast('获取 Rule 逻辑失败: ' + error.message, 'error');
+    }
+  };
+
+  const updateRuleModuleEnabled = (id, enabled) => {
+    setRuleModules(ruleModules.map((rule) => (
+      rule.id === id ? { ...rule, enabled } : rule
+    )));
+    setConfig({
+      ...config,
+      rule_modules: {
+        ...(config.rule_modules || {}),
+        [id]: enabled
+      }
+    });
   };
 
   const showToast = (message, type) => {
@@ -249,6 +277,81 @@ function App() {
       } else {
         const errorData = await response.json();
         showToast('刷新失败: ' + errorData.error, 'error');
+      }
+    } catch (error) {
+      showToast('网络错误: ' + error.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  // 导出配置
+  const handleExportConfig = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch('/api/config/export');
+      if (!response.ok) {
+        showToast('导出失败', 'error');
+        setLoading(false);
+        return;
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'config.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast('配置导出成功', 'success');
+    } catch (error) {
+      showToast('网络错误: ' + error.message, 'error');
+    }
+    setLoading(false);
+  };
+
+  // 导入配置
+  const handleImportClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // 重置 file input，允许重复选择同一文件
+    e.target.value = '';
+
+    setLoading(true);
+    try {
+      const text = await file.text();
+      // 客户端预检 JSON 格式
+      try {
+        JSON.parse(text);
+      } catch {
+        showToast('文件格式错误：不是有效的 JSON', 'error');
+        setLoading(false);
+        return;
+      }
+
+      const response = await fetch('/api/config/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: text
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        showToast('配置导入成功', 'success');
+        await fetchConfig();
+        await fetchRuleModules();
+      } else {
+        // 拼接校验错误详情
+        const detailMsg = data.details ? data.details.join('；') : data.error;
+        showToast(`导入失败：${detailMsg}`, 'error');
       }
     } catch (error) {
       showToast('网络错误: ' + error.message, 'error');
@@ -626,15 +729,67 @@ function App() {
               <option value="0">关闭（纯隧道转发，不拦截，零证书错误）</option>
             </select>
           </div>
+          <div className="rule-module-block">
+            <div className="rule-module-header">
+              <h3>Rule 逻辑区块</h3>
+              {(config.enable_mitm || "1") !== "1" && (
+                <span className="rule-module-disabled-note">MITM 关闭时规则不会生效</span>
+              )}
+            </div>
+            <div className="rule-module-list">
+              {ruleModules.length === 0 ? (
+                <div className="help-text">暂无已加载 Rule 逻辑</div>
+              ) : ruleModules.map((rule) => (
+                <label className="rule-module-item" key={rule.id}>
+                  <input
+                    type="checkbox"
+                    checked={config.rule_modules?.[rule.id] !== false}
+                    disabled={(config.enable_mitm || "1") !== "1"}
+                    onChange={(e) => updateRuleModuleEnabled(rule.id, e.target.checked)}
+                  />
+                  <span className="rule-module-main">
+                    <span className="rule-module-title">
+                      {rule.name}
+                      <span className="rule-module-source">{rule.source}</span>
+                      <span className="rule-module-count">{rule.ruleCount} 条</span>
+                    </span>
+                    <span className="rule-module-description">{rule.description}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
           <div className="setting-row actions">
-            <button 
-              onClick={handleSaveConfig} 
+            <button
+              onClick={handleExportConfig}
+              disabled={loading}
+              className="refresh-btn export-btn"
+            >
+              {loading ? '导出中...' : '导出配置'}
+            </button>
+            <button
+              onClick={handleImportClick}
+              disabled={loading}
+              className="refresh-btn import-btn"
+            >
+              {loading ? '导入中...' : '导入配置'}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json"
+              style={{ display: 'none' }}
+              onChange={handleImportFile}
+            />
+
+            <button
+              onClick={handleSaveConfig}
               disabled={loading}
               className="save-btn"
             >
               {loading ? '保存中...' : '保存配置'}
             </button>
-            
+
             <button
               onClick={handleUpdateDevices}
               disabled={loading}
@@ -642,9 +797,9 @@ function App() {
             >
               {loading ? '刷新中...' : '刷新路由表'}
             </button>
-            
-            <button 
-              onClick={handleRestartProxy} 
+
+            <button
+              onClick={handleRestartProxy}
               disabled={loading}
               className="restart-btn"
             >

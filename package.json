@@ -42,6 +42,8 @@
     "gen-icons": "node client/watch-icons.js",
     "watch:icons": "node client/watch-icons.js --watch",
     "test:proxy": "node test/run.js",
+    "test:registry": "node test/mitm-registry-tests.js",
+    "test:mitm-runtime": "node test/mitm-runtime-tests.js",
     "eject": "react-scripts eject"
   },
   "devDependencies": {

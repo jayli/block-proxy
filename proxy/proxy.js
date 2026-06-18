@@ -24,7 +24,9 @@ const attacker = require('./attacker.js');
 const domain = require('./domain.js');
 const wanip = require('./wanip.js');
 const operator = require("./operator.js");
-var   Rule = require("./mitm/rule.js");
+const mitmRegistry = require("./mitm/registry.js");
+let ruleRegistry = mitmRegistry.createRegistry({ config: {} });
+let cliRulePath = null;
 
 // 启用全局 keep-alive，使 AnyProxy 内部转发也复用连接
 http.globalAgent.keepAlive = true;
@@ -64,23 +66,14 @@ var filtered_mitm_domains = [
   ...uaFilter.filtered_mitm_domains
 ];
 
-// 对 Rule 里的正则表达式进行预编译
-function preCompileRuleRegexp() {
-  Object.keys(Rule).forEach(key => {
-    if (Array.isArray(Rule[key])) {
-      Rule[key] = Rule[key].map(item => {
-        if (typeof item.regexp === 'string' && item.regexp.trim() !== '') {
-          try {
-              item.compiledRegexp = new RegExp(item.regexp);
-          } catch (e) {
-              console.error(`Invalid regex in MITM rule: "${item.regexp}", skipping compilation. Error:`, e.message);
-              item.compiledRegexp = /^$/; // 或其他处理方式
-          }
-        }
-        return item;
-      });
-    }
-  });
+// 从 registry 获取已启用的规则列表
+function getEnabledMitmRules() {
+  return ruleRegistry.getEnabledRules();
+}
+
+// 判断内置 YouTube MITM 是否启用（UA filter 依赖此判断）
+function isBuiltinYoutubeMitmEnabled() {
+  return enable_mitm === "1" && ruleRegistry.isBuiltinYoutubeEnabled();
 }
 
 // 对于一些流媒体的链接不支持 407 的情况要排除验证
@@ -174,34 +167,26 @@ async function fileExists(filePath) {
   }
 }
 
-// 引入从命令行传进来的 rule.js，并加载
+// 捕获命令行传入的 rule.js 路径（一次性消费，保持现有行为）
 async function loadGlobalConfigFile() {
-  var configFile = await _fs.getGlobalConfigFile();
+  cliRulePath = await _fs.getGlobalConfigFile();
   await _fs.clearGlobalConfigFile();
-  if (configFile == null) {
-    return;
-  } else {
-    var extraRule = require(configFile);
-    Rule = {
-      ...Rule,
-      ...extraRule
-    }
-  }
 }
 
-// 引入 Docker 挂载目录下的 rule.js，并加载
-async function loadDockerMountedConfigFile() {
-  var rulePath = path.join(__dirname, '../config/rule.js');
-  var fileOK = await fileExists(rulePath);
-  if (fileOK) {
-    var extraRule = require(rulePath);
-    Rule = {
-      ...Rule,
-      ...extraRule
-    }
-  } else {
-    return;
-  }
+// 获取 Docker 挂载目录下的 rule.js 路径
+async function getDockerMountedRulePath() {
+  const rulePath = path.join(__dirname, '../config/rule.js');
+  return await fileExists(rulePath) ? rulePath : null;
+}
+
+// 重建规则注册表（每次启动/重启代理服务前调用）
+async function rebuildRuleRegistry(config) {
+  const dockerRulePath = await getDockerMountedRulePath();
+  ruleRegistry = mitmRegistry.createRegistryFromFiles({
+    config,
+    cliRulePath,
+    dockerRulePath
+  });
 }
 
 function isEmpty(obj) {
@@ -225,6 +210,7 @@ async function loadConfig() {
     enable_express: enable_express,
     enable_socks5: enable_socks5,
     socks5_port: socks5Port,
+    rule_modules: {},
     devices: []
   };
 
@@ -278,6 +264,8 @@ async function loadConfig() {
       enable_mitm = loadedConfig.enable_mitm || "1"; // 默认开启，兼容旧配置文件缺少此字段
       config.enable_mitm = enable_mitm;
 
+      config.rule_modules = loadedConfig.rule_modules || {};
+
       socks5Port = loadedConfig.socks5_port;
       config.socks5_port = socks5Port;
 
@@ -308,6 +296,7 @@ async function loadConfig() {
         socks5_port: socks5Port,
         enable_socks5: enable_socks5,
         enable_mitm: enable_mitm,
+        rule_modules: {},
         vpn_proxy: ""
       });
       // fs.writeFileSync(configPath, JSON.stringify({
@@ -719,11 +708,7 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
 // 常规的 reject - 200 直接在后台界面里配就可以，复杂逻辑用 Rule
 async function MITMHandler(type, url, request, response) {
   var responseResult = null;
-  var Ms = [];
-
-  Object.keys(Rule).forEach(key => {
-    Ms = Ms.concat(Rule[key]);
-  });
+  var Ms = getEnabledMitmRules();
 
   for (const item of Ms) {
     // type 匹配
@@ -732,7 +717,6 @@ async function MITMHandler(type, url, request, response) {
     if (item['type'].toLowerCase() == type.toLowerCase() &&
             new URL(url).hostname.toLowerCase().endsWith(item['host'].toLowerCase()) &&
             item.compiledRegexp.test(url)) {
-            // new RegExp(item['regexp']).test(url)) {
       // 只对需要 MITM 的 beforeSendResponse 启用解压缩，确保 MITM 处理的逻辑是解压后的明文
       if (type == "beforeSendResponse" && !isEmpty(response)) {
         try {
@@ -741,7 +725,7 @@ async function MITMHandler(type, url, request, response) {
           console.log(e);
         }
       }
-      responseResult = await item.callback(url, request, response);
+      responseResult = await item.callback.call(item, url, request, response);
       break;
     } else {
       continue;
@@ -756,11 +740,7 @@ async function MITMHandler(type, url, request, response) {
 // 获得需要重写响应的规则列表，符合规则的则提高chunkSizeThreshold阈值到 20M（默认）以上，来强制整包返回
 // 否则就把chunkSizeThreshold阈值调整为 1M，超过阈值就流式返回，提高响应速度
 function getResponseRules() {
-  var Ms = [];
-
-  Object.keys(Rule).forEach(key => {
-    Ms = Ms.concat(Rule[key]);
-  });
+  var Ms = getEnabledMitmRules();
   var res = [];
   for (const item of Ms) {
     if (item['type'] == "beforeSendResponse") {
@@ -869,19 +849,15 @@ function trimHost(host) {
   return host;
 }
 
-// 需要强制拆包的域名从 Rule 里获得
+// 需要强制拆包的域名从已启用的规则中获得
 // host: a.com
 //       a.com:443
 function shouldMitm(host) {
   host = trimHost(host);
   var should = false;
-  var mitm_list = [];
-  Object.keys(Rule).forEach(key => {
-    if (Rule.hasOwnProperty(key)) {
-      Rule[key].forEach(function(item) {
-        mitm_list.push(item.host);
-      });
-    }
+  var Ms = getEnabledMitmRules();
+  var mitm_list = Ms.map(function(item) {
+    return item.host;
   });
 
   var MITM_LIST = [...new Set(mitm_list)];
@@ -1157,7 +1133,7 @@ function getAnyProxyOptions() {
         }
 
         // Hack, 根据 UA 判断是否符合放行条件，比如 Youtube 的 MITM 只对 App 生效，则浏览器的 UA 就需要放行
-        if (uaFilter.match(requestOptions.headers, host)) {
+        if (isBuiltinYoutubeMitmEnabled() && uaFilter.match(requestOptions.headers, host)) {
           return passRequestWithHttpAgent(requestDetail, isHttps);
         }
 
@@ -1421,10 +1397,11 @@ var LocalProxy = {
     devices = mergedRouterMap;
     console.log('Devices updated!');
   },
-  start: async function(callback) { 
-    // 每次启动时都重新加载配置
+  start: async function(callback) {
+    // 每次启动时都重新加载配置并重建规则注册表
     const config = await loadConfig();
-    
+    await rebuildRuleRegistry(config);
+
     // 如果代理服务器已在运行，先停止它
     if (proxyServerInstance && proxyServerInstance.httpProxyServer && proxyServerInstance.httpProxyServer.listening) {
       proxyServerInstance.close();
@@ -1464,12 +1441,8 @@ var LocalProxy = {
       return;
     }
 
-    // 加载命令行里携带的配置文件
+    // 加载命令行里携带的配置文件（一次性捕获 CLI rule 路径）
     await loadGlobalConfigFile();
-    // 加载 Docker 挂载目录中的配置文件
-    await loadDockerMountedConfigFile();
-    // 预编译 MITM Rule 的正则
-    preCompileRuleRegexp();
 
     // 启动时重置 Scan 本地扫描
     setScanStatus("0");
@@ -1506,13 +1479,28 @@ var LocalProxy = {
     }, 2 * 60 * 1000);
 
     anyproxy_started = true;
+  },
+  getRuleModules: async function() {
+    return ruleRegistry.getRuleModules();
   }
 };
 
-// 预编译 MITM Rule 的正则
-(async function() {
-  // await loadGlobalConfigFile();
-  // preCompileRuleRegexp();
-})();
-
 module.exports = LocalProxy;
+
+// 测试钩子（仅在测试环境中使用）
+module.exports._test = {
+  setRuleRegistryForTest(nextRegistry) {
+    ruleRegistry = nextRegistry;
+  },
+  setEnableMitmForTest(nextValue) {
+    enable_mitm = nextValue;
+  },
+  getResponseRules,
+  shouldMitm,
+  shouldBypassByUa(headers, host) {
+    return isBuiltinYoutubeMitmEnabled() && uaFilter.match(headers, host);
+  },
+  async runMITMHandler(type, url, request, response) {
+    return MITMHandler(type, url, request, response);
+  }
+};

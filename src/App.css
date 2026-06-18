@@ -513,6 +513,17 @@ input[type="time"]:focus {
   margin-top: 12px;
 }
 
+.export-btn,
+.import-btn {
+  background: var(--gray-500);
+}
+
+.export-btn:hover:not(:disabled),
+.import-btn:hover:not(:disabled) {
+  background: var(--gray-600);
+  box-shadow: 0 2px 8px rgba(107, 114, 128, 0.3);
+}
+
 /* ===== 代理设置信息区 ===== */
 .config-section p {
   margin: 6px 0;
@@ -824,4 +835,100 @@ button {
     height: 26px;
     font-size: 11px;
   }
+}
+
+/* ===== Rule 逻辑区块 ===== */
+.rule-module-block {
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--gray-200);
+  border-radius: 6px;
+  background: var(--gray-50);
+}
+
+.rule-module-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.rule-module-header h3 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--gray-700);
+}
+
+.rule-module-disabled-note {
+  color: var(--warning);
+  font-size: 13px;
+}
+
+.rule-module-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rule-module-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.rule-module-item:hover {
+  background: var(--gray-100);
+}
+
+.rule-module-item input[type="checkbox"] {
+  margin-top: 3px;
+  accent-color: var(--primary);
+}
+
+.rule-module-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.rule-module-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--gray-800);
+}
+
+.rule-module-source {
+  font-size: 11px;
+  color: #fff;
+  background: var(--gray-400);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+.rule-module-source:has(+ .rule-module-count) {
+  /* builtin source uses primary color */
+}
+
+.rule-module-count {
+  font-size: 12px;
+  color: var(--gray-500);
+  font-weight: 400;
+}
+
+.rule-module-description {
+  color: var(--gray-500);
+  font-size: 13px;
+  line-height: 1.4;
 }

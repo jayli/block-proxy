@@ -83,6 +83,16 @@ app.get('/api/config', async (req, res) => {
   }
 });
 
+// 获取规则模块列表
+app.get('/api/rules', async (req, res) => {
+  try {
+    const rules = await LocalProxy.getRuleModules();
+    res.status(200).json(rules);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to read rule modules: ' + error.message });
+  }
+});
+
 // 更新配置接口
 app.post('/api/config', async (req, res) => {
   try {
@@ -104,6 +114,109 @@ app.post('/api/config', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to update config' });
+  }
+});
+
+// 导出配置接口
+app.get('/api/config/export', (req, res) => {
+  try {
+    const configPath = path.join(__dirname, '../config.json');
+    if (fs.existsSync(configPath)) {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', 'attachment; filename="config.json"');
+      res.sendFile(configPath);
+    } else {
+      res.status(404).json({ error: 'Config file not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to export config: ' + error.message });
+  }
+});
+
+// 导入配置接口（带格式校验）
+const REQUIRED_FIELDS = [
+  { key: 'proxy_port',     type: 'number',  label: '代理端口' },
+  { key: 'socks5_port',    type: 'number',  label: 'SOCKS5端口' },
+  { key: 'block_hosts',    type: 'array',   label: '拦截主机列表' },
+  { key: 'auth_username',  type: 'string',  label: '认证用户名' },
+  { key: 'auth_password',  type: 'string',  label: '认证密码' },
+  { key: 'enable_mitm',    type: 'string',  label: 'MITM开关' },
+  { key: 'enable_socks5',  type: 'string',  label: 'SOCKS5开关' },
+  { key: 'enable_express', type: 'string',  label: '管理面板开关' },
+  { key: 'devices',        type: 'array',   label: '设备列表' },
+  { key: 'rule_modules',   type: 'object',  label: '规则模块' },
+];
+
+app.post('/api/config/import', async (req, res) => {
+  try {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+    req.on('end', () => {
+      try {
+        const newConfig = JSON.parse(body);
+
+        // 必须是有效对象（非 null/数组）
+        if (!newConfig || typeof newConfig !== 'object' || Array.isArray(newConfig)) {
+          return res.status(400).json({
+            error: '配置格式不完整',
+            details: ['配置文件必须是 JSON 对象']
+          });
+        }
+
+        const details = [];
+
+        // 校验每个必需字段
+        for (const field of REQUIRED_FIELDS) {
+          if (!(field.key in newConfig)) {
+            details.push(`缺少字段: ${field.label} (${field.key})`);
+            continue;
+          }
+
+          const value = newConfig[field.key];
+          let actualType;
+          if (Array.isArray(value)) {
+            actualType = 'array';
+          } else if (value === null) {
+            actualType = 'null';
+          } else {
+            actualType = typeof value;
+          }
+
+          if (actualType !== field.type) {
+            details.push(`字段 ${field.label} (${field.key}) 类型错误: 期望 ${field.type}, 实际 ${actualType}`);
+            continue;
+          }
+
+          // 特殊值校验
+          if (['enable_mitm', 'enable_socks5', 'enable_express'].includes(field.key)) {
+            if (value !== '0' && value !== '1') {
+              details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是 "0" 或 "1"`);
+            }
+          }
+
+          if (['proxy_port', 'socks5_port'].includes(field.key)) {
+            if (!Number.isInteger(value) || value <= 0 || value > 65535) {
+              details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是 1-65535 的整数`);
+            }
+          }
+        }
+
+        if (details.length > 0) {
+          return res.status(400).json({ error: '配置格式不完整', details });
+        }
+
+        // 校验通过，写入配置
+        _fs.writeConfig(newConfig);
+        _fs.backupConfig(newConfig);
+        res.status(200).json({ message: '配置导入成功' });
+      } catch (err) {
+        res.status(400).json({ error: '配置格式不完整', details: ['文件格式错误：不是有效的 JSON'] });
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to import config' });
   }
 });
 

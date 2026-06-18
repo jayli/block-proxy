@@ -1,9 +1,13 @@
 {
+  "network_scanning_status": "0",
   "block_hosts": [],
   "proxy_port": 8001,
-  "socks5_port": 8002,
   "auth_username": "admin",
   "auth_password": "admin",
   "enable_express": "1",
-  "enable_socks5": "1"
+  "enable_socks5": "1",
+  "socks5_port": 8002,
+  "rule_modules": {},
+  "devices": [],
+  "enable_mitm": "1"
 }
