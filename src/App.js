@@ -20,6 +20,7 @@ function App() {
     block_hosts: [],
     proxy_port: 8001,
     socks5_port:8002,
+    socks5_tls: "1",
     auth_username: "",
     auth_password: "",
   });
@@ -682,6 +683,16 @@ function App() {
               onChange={(e) => setConfig({...config, socks5_port: parseInt(e.target.value) || 8002})}
             />
           </div>
+          <div className="setting-row">
+            <label>Socks5 启用 TLS:</label>
+            <select
+              value={config.socks5_tls || "1"}
+              onChange={(e) => setConfig({...config, socks5_tls: e.target.value})}
+            >
+              <option value="1">开启（加密传输）</option>
+              <option value="0">关闭（纯 TCP）</option>
+            </select>
+          </div>
 
           <div className="setting-row">
             <label>代理用户名:</label>
@@ -829,7 +840,9 @@ function App() {
             <b>HTTP 代理端口：</b><span>{config.proxy_port}</span> &nbsp;<span>开启</span>
           </p>
           <p>
-            <b>Socks5（Over TLS）代理端口：</b><span>{config.socks5_port}</span> &nbsp;
+            <b>Socks5{
+              (config.socks5_tls || "1") === "1" ? "（Over TLS）" : "（纯 TCP）"
+            }代理端口：</b><span>{config.socks5_port}</span> &nbsp;
             <span>{
               config.enable_socks5 === "1" ? "开启" : "关闭"
             }</span>

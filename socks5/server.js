@@ -27,26 +27,28 @@ function getTicketKeys() {
 }
 
 async function init() {
-  initTicketKeyFile();
-  const ticketKeys = getTicketKeys();
-
   try {
     const loadedConfig = await _fs.readConfig();
 
     const DOWNSTREAM_HTTP_PROXY_PORT = loadedConfig.proxy_port;
     const LISTEN_PORT = loadedConfig.socks5_port;
+    const enableTls = (loadedConfig.socks5_tls || "1") === "1";
 
-    // 从配置加载 TLS 证书和密钥路径
-    const certPath = crtFile;
-    const keyPath = keyFile;
+    let TLS_CERT, TLS_KEY, ticketKeys;
+    if (enableTls) {
+      ticketKeys = getTicketKeys();
 
-    if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-      console.error(`❌ TLS 证书或私钥文件不存在: cert=${certPath}, key=${keyPath}`);
-      process.exit(1);
+      const certPath = crtFile;
+      const keyPath = keyFile;
+
+      if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+        console.error(`❌ TLS 证书或私钥文件不存在: cert=${certPath}, key=${keyPath}`);
+        process.exit(1);
+      }
+
+      TLS_CERT = fs.readFileSync(certPath);
+      TLS_KEY = fs.readFileSync(keyPath);
     }
-
-    const TLS_CERT = fs.readFileSync(certPath);
-    const TLS_KEY = fs.readFileSync(keyPath);
 
     const AUTH_CREDENTIALS = {
       username: loadedConfig.auth_username,
@@ -279,18 +281,8 @@ async function init() {
       clientSocket.on('error', cleanup);
     }
 
-    // TLS 服务器选项
-    const tlsOptions = {
-      key: TLS_KEY,
-      cert: TLS_CERT,
-      minVersion: 'TLSv1.2',
-      // 👇 启用会话缓存（Session ID + Session Tickets）
-      sessionTimeout: 300, // 会话有效期（秒），默认 300
-      ticketKeys: ticketKeys
-    };
-
-    // 创建 TLS 封装的 SOCKS5 服务器
-    const server = tls.createServer(tlsOptions, async (socket) => {
+    // SOCKS5 连接处理函数（TLS 和纯 TCP 共用）
+    const connectionHandler = async (socket) => {
       // 👇 关键：捕获 socket 级别的错误（包括 ECONNRESET）
       socket.on('error', (err) => {
         console.warn('Client socket error (ignored):', err.message);
@@ -391,36 +383,53 @@ async function init() {
           socket.destroy();
         }
       } catch (err) {
-        console.error('SOCKS5 over TLS session error:', err);
+        console.error('SOCKS5 session error:', err);
         socket.destroy();
       }
-    });
+    };
 
-    server.on('clientError', (err, socket) => {
-      console.warn('TLS client error during handshake:', err);
-      socket?.end(); // 安全关闭
-    });
+    // 根据配置创建 TLS 或纯 TCP 服务器
+    let server;
+    if (enableTls) {
+      const tlsOptions = {
+        key: TLS_KEY,
+        cert: TLS_CERT,
+        minVersion: 'TLSv1.2',
+        sessionTimeout: 300,
+        ticketKeys: ticketKeys
+      };
+      server = tls.createServer(tlsOptions, connectionHandler);
 
-    // 错误处理
-    server.on('tlsClientError', (err, tlsSocket) => {
-      console.warn('TLS handshake failed:', err.message);
-      tlsSocket?.destroy();
-    });
+      server.on('clientError', (err, socket) => {
+        console.warn('TLS client error during handshake:', err);
+        socket?.end();
+      });
+
+      server.on('tlsClientError', (err, tlsSocket) => {
+        console.warn('TLS handshake failed:', err.message);
+        tlsSocket?.destroy();
+      });
+    } else {
+      server = net.createServer(connectionHandler);
+    }
 
     server.on('error', (err) => {
-      console.error('SOCKS5 TLS server error:', err);
+      console.error('SOCKS5 server error:', err);
     });
 
     // 启动监听
+    const tlsLabel = enableTls ? ' (over TLS)' : ' (纯 TCP)';
     server.listen(LISTEN_PORT, () => {
       var localIp = domain.getLocalIp();
-      console.log(`✅ \x1b[32mSOCKS5 (over TLS) 服务启动，IP ${localIp}, 端口 ${LISTEN_PORT}\x1b[0m`);
-      console.log(`🔒 传输加密和认证基于 TLS`);
+      console.log(`✅ \x1b[32mSOCKS5${tlsLabel} 服务启动，IP ${localIp}, 端口 ${LISTEN_PORT}\x1b[0m`);
+      if (enableTls) {
+        console.log(`🔒 传输加密和认证基于 TLS`);
+      }
       console.log(`➡️  TCP → 流量转发至 HTTP 代理 → ${DOWNSTREAM_HTTP_PROXY_HOST}:${DOWNSTREAM_HTTP_PROXY_PORT}`);
       console.log(`➡️  UDP → 直接发起请求`);
     });
   } catch (err) {
-    console.error('Failed to initialize SOCKS5-TLS proxy:', err);
+    console.error('Failed to initialize SOCKS5 proxy:', err);
     process.exit(1);
   }
 }

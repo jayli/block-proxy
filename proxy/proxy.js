@@ -59,6 +59,7 @@ var is_running_in_docker = false;
 var docker_host_IP = '';
 var enable_express = "1"; // "0", "1"
 var enable_socks5 = "1";
+var socks5_tls = "1";
 
 var enable_mitm = "1"; // "0", "1"，是否对 HTTPS 启用 MITM 解密（关闭后纯隧道转发，不拦截）
 // 域名判断，区分浏览器和 App
@@ -209,6 +210,7 @@ async function loadConfig() {
     auth_password:"",
     enable_express: enable_express,
     enable_socks5: enable_socks5,
+    socks5_tls: socks5_tls,
     socks5_port: socks5Port,
     rule_modules: {},
     devices: []
@@ -261,6 +263,9 @@ async function loadConfig() {
       enable_socks5 = loadedConfig.enable_socks5;
       config.enable_socks5 = enable_socks5;
 
+      socks5_tls = loadedConfig.socks5_tls || "1";
+      config.socks5_tls = socks5_tls;
+
       enable_mitm = loadedConfig.enable_mitm || "1"; // 默认开启，兼容旧配置文件缺少此字段
       config.enable_mitm = enable_mitm;
 
@@ -295,6 +300,7 @@ async function loadConfig() {
         your_domain: your_domain,
         socks5_port: socks5Port,
         enable_socks5: enable_socks5,
+        socks5_tls: socks5_tls,
         enable_mitm: enable_mitm,
         rule_modules: {},
         vpn_proxy: ""

@@ -190,7 +190,7 @@ app.post('/api/config/import', async (req, res) => {
           }
 
           // 特殊值校验
-          if (['enable_mitm', 'enable_socks5', 'enable_express'].includes(field.key)) {
+          if (['enable_mitm', 'enable_socks5', 'enable_express', 'socks5_tls'].includes(field.key)) {
             if (value !== '0' && value !== '1') {
               details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是 "0" 或 "1"`);
             }
@@ -205,6 +205,11 @@ app.post('/api/config/import', async (req, res) => {
 
         if (details.length > 0) {
           return res.status(400).json({ error: '配置格式不完整', details });
+        }
+
+        // 兼容老旧配置：补全新增字段的默认值
+        if (!('socks5_tls' in newConfig)) {
+          newConfig.socks5_tls = "1";
         }
 
         // 校验通过，写入配置

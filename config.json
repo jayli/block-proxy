@@ -75,6 +75,7 @@
   "auth_password": "admin",
   "enable_express": "1",
   "enable_socks5": "1",
+  "socks5_tls": "1",
   "socks5_port": 8002,
   "rule_modules": {},
   "devices": [],
