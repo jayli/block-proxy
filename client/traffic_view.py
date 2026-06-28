@@ -36,6 +36,7 @@ ANIM_INTV = 1.0 / 25.0
 
 PXY = (0.5, 1.0, 0.0, 1.0)
 DIR = (0.1, 0.4, 1.0, 1.0)
+FLOW_ACCENT = (0.76, 0.28, 1.0, 1.0)
 PXY_TXT = (0.0, 0.75, 0.3, 1.0)  # 更深绿，用于文字和chart曲线
 DIR_TXT = (0.3, 0.6, 1.0, 1.0)   # 稍浅蓝，用于文字和chart曲线
 PXY_RATIO = (0.0, 0.82, 0.55, 1.0)  # 翠绿色，用于代理/直连百分比条
@@ -135,6 +136,21 @@ def _flow_wave_offset(x, scroll, phase, freq, amp, weight):
     return (primary * 0.72 + drift * 0.20 + swell * 0.16) * amp * weight
 
 
+def _flow_strands(proxy_fraction):
+    pf = _clamp(proxy_fraction, 0.0, 1.0)
+    df = 1.0 - pf
+    accent = 0.42 + min(pf, df) * 0.42
+    return [
+        (PXY, 0.0, 1.0, pf),
+        (DIR, 35.0, 0.9, df),
+        (FLOW_ACCENT, 72.0, 1.28, accent),
+    ]
+
+
+def _flow_line_width(load):
+    return _lerp(1.2, 3.5 * 2.0 / 3.0, _clamp(load, 0.0, 1.0))
+
+
 def _spark_count(intensity):
     return random.randint(3, 7)
 
@@ -182,6 +198,7 @@ class TrafficView(NSView):
         self._t_stats = None
         self._scroll = 0.0
         self._amp = 0.0
+        self._flow_load = 0.0
         self._frame_n = 0
         self._draw_ok = True  # set False if drawing ever fails
 
@@ -204,6 +221,7 @@ class TrafficView(NSView):
         self._hits[:] = []
         self._scroll = 0.0
         self._amp = 0.0
+        self._flow_load = 0.0
         self._frame_n = 0
         self._draw_ok = True
 
@@ -293,6 +311,8 @@ class TrafficView(NSView):
             self._scroll += 1.5
             tgt = 4.0 if t < 1024 else _clamp(4.0 + t / (120*1024) * 26.0, 4.0, 30.0)
             self._amp = _lerp(self._amp, tgt, 0.06)
+            flow_tgt = _clamp(t / (400*1024), 0.0, 1.0)
+            self._flow_load = _lerp(self._flow_load, flow_tgt, 0.10)
 
             self._spawn_out(to)
             self._spawn_in(ti)
@@ -580,19 +600,12 @@ class TrafficView(NSView):
         clip = NSBezierPath.bezierPathWithRect_(((pl, y0), (pw, sh)))
         clip.addClip()
 
-        idle = t < 1024
-        base_a = 0.18 if idle else _lerp(0.22, 0.45, _clamp(t / (400*1024), 0.0, 1.0))
-        lw = 1.2 if idle else _lerp(1.5, 3.5, _clamp(t / (400*1024), 0.0, 1.0))
+        load = getattr(self, "_flow_load", _clamp(t / (400*1024), 0.0, 1.0))
+        base_a = _lerp(0.18, 0.45, load)
+        lw = _flow_line_width(load)
 
         pf = (self._pso + self._psi) / t if t > 0 else 0.5
-        df = 1.0 - pf
-
-        strands = [
-            (PXY, 0.0, 1.0, pf),
-            (PXY, 50.0, 1.4, pf * 0.7),
-            (DIR, 25.0, 0.85, df),
-            (DIR, 75.0, 1.15, df * 0.7),
-        ]
+        strands = _flow_strands(pf)
 
         for col, phase, freq, wt in strands:
             if wt < 0.05:

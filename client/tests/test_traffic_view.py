@@ -4,6 +4,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+import traffic_view
 from traffic_view import (
     DIR_IN,
     DIR_RATIO,
@@ -70,6 +71,25 @@ def test_ratio_bar_uses_separate_emerald_and_sky_blue_colors():
     assert DIR_RATIO == (0.0, 0.62, 1.0, 1.0)
     assert PXY_RATIO != PXY_TXT
     assert DIR_RATIO != DIR_TXT
+
+
+def test_flow_band_uses_three_distinct_colored_strands():
+    strands = traffic_view._flow_strands(proxy_fraction=0.62)
+    colors = [strand[0] for strand in strands]
+
+    assert len(strands) == 3
+    assert len(set(colors)) == 3
+    assert traffic_view.FLOW_ACCENT in colors
+
+
+def test_flow_line_width_transitions_smoothly_and_caps_peak_thickness():
+    idle = traffic_view._flow_line_width(0.0)
+    mid = traffic_view._flow_line_width(0.5)
+    peak = traffic_view._flow_line_width(1.0)
+
+    assert idle == 1.2
+    assert idle < mid < peak
+    assert peak <= 3.5 * 2.0 / 3.0
 
 
 def test_inbound_burst_particles_have_slightly_smaller_max_radius(monkeypatch):
