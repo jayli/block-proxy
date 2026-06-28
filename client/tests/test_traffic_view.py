@@ -3,7 +3,13 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from traffic_view import _impact_wave, _particles_can_collide, _visible_curve_points
+from traffic_view import (
+    _impact_wave,
+    _particles_can_collide,
+    _spark_count,
+    _spark_line,
+    _visible_curve_points,
+)
 
 
 def test_visible_curve_points_do_not_extend_to_left_edge_before_data_arrives():
@@ -34,3 +40,25 @@ def test_impact_wave_expands_and_fades():
 
     assert late_r > early_r
     assert late_a < early_a
+
+
+def test_spark_line_intensity_makes_line_longer_and_farther():
+    low = _spark_line(100.0, 50.0, 40.0, 0.0, t=0.5, intensity=0.8)
+    high = _spark_line(100.0, 50.0, 40.0, 0.0, t=0.5, intensity=1.4)
+
+    assert high[0][0] > low[0][0]
+    assert (high[0][0] - high[1][0]) > (low[0][0] - low[1][0])
+
+
+def test_spark_line_length_scale_stays_within_current_maximum():
+    full = _spark_line(100.0, 50.0, 40.0, 0.0, t=0.0, intensity=1.6, length_scale=1.0)
+    short = _spark_line(100.0, 50.0, 40.0, 0.0, t=0.0, intensity=1.6, length_scale=0.5)
+
+    assert (short[0][0] - short[1][0]) < (full[0][0] - full[1][0])
+    assert (full[0][0] - full[1][0]) <= 8.5
+
+
+def test_spark_count_is_bounded():
+    for intensity in (0.6, 1.0, 1.6):
+        count = _spark_count(intensity)
+        assert 3 <= count <= 7

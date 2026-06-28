@@ -125,6 +125,23 @@ def _impact_wave(base, t):
     return base * _lerp(2.8, 10.5, t), 0.26 * ((1.0 - t) ** 1.7)
 
 
+def _spark_count(intensity):
+    return random.randint(3, 7)
+
+
+def _spark_line(x, y, vx, vy, t, intensity=1.0, length_scale=1.0):
+    t = _clamp(t, 0.0, 1.0)
+    intensity = _clamp(intensity, 0.6, 1.6)
+    length_scale = _clamp(length_scale, 0.35, 1.0)
+    travel = t * ANIM_INTV * 13.0 * intensity
+    head = (x + vx * travel, y + vy * travel)
+    mag = math.hypot(vx, vy) or 1.0
+    length_t = _clamp((intensity - 0.6) / 1.0, 0.0, 1.0)
+    line_len = _lerp(3.5, 8.5, length_t) * length_scale * (1.0 - t * 0.35)
+    tail = (head[0] - vx / mag * line_len, head[1] - vy / mag * line_len)
+    return head, tail
+
+
 # ────────────────────────────────────────────────────────────────
 
 class TrafficView(NSView):
@@ -368,14 +385,20 @@ class TrafficView(NSView):
                         min(1.0, (c1[2] + c2[2]) * 0.55),
                         1.0,
                     )
+                    intensity = random.uniform(0.82, 1.38)
                     sparks = []
-                    for i in range(5):
-                        a = (math.pi * 2.0 / 5.0) * i + random.uniform(-0.25, 0.25)
-                        sp = random.uniform(32.0, 58.0)
-                        sparks.append((math.cos(a) * sp, math.sin(a) * sp))
+                    count = _spark_count(intensity)
+                    for i in range(count):
+                        a = (math.pi * 2.0 / count) * i + random.uniform(-0.35, 0.35)
+                        sp = random.uniform(58.0, 96.0) * intensity
+                        sparks.append((
+                            math.cos(a) * sp,
+                            math.sin(a) * sp,
+                            random.uniform(0.45, 1.0),
+                        ))
                     self._hits.append({
                         "x": x, "y": y, "r": r, "age": 0, "life": 11,
-                        "c": color, "sparks": sparks,
+                        "c": color, "sparks": sparks, "intensity": intensity,
                     })
                     out["hit_cd"] = 18
                     inc["hit_cd"] = 18
@@ -527,6 +550,7 @@ class TrafficView(NSView):
             r, g, b, _ = h["c"]
             x, y = h["x"], h["y"]
             base = h["r"]
+            intensity = h.get("intensity", 1.0)
 
             _c(1.0, 1.0, 1.0, 0.55 * fade).set()
             _fill_oval(x, y, base * _lerp(1.3, 0.45, t), base * _lerp(1.3, 0.45, t))
@@ -543,11 +567,29 @@ class TrafficView(NSView):
             _c(0.03, 0.03, 0.05, 0.22 * fade).set()
             _fill_oval(x, y, ring * 0.72, ring * 0.72)
 
-            for vx, vy in h.get("sparks", []):
-                sx = x + vx * t * ANIM_INTV * 8.0
-                sy = y + vy * t * ANIM_INTV * 8.0
-                _c(r, g, b, 0.70 * fade).set()
-                _fill_oval(sx, sy, base * 0.52, base * 0.52)
+            for spark_data in h.get("sparks", []):
+                if len(spark_data) == 3:
+                    vx, vy, length_scale = spark_data
+                else:
+                    vx, vy = spark_data
+                    length_scale = 1.0
+                head, tail = _spark_line(
+                    x, y, vx, vy, t, intensity=intensity, length_scale=length_scale)
+                _c(1.0, 0.88, 0.46, 0.70 * fade).set()
+                spark = NSBezierPath.bezierPath()
+                spark.moveToPoint_(tail)
+                spark.lineToPoint_(head)
+                spark.setLineWidth_(max(0.8, base * 0.42))
+                spark.setLineCapStyle_(1)
+                spark.stroke()
+
+                _c(r, g, b, 0.35 * fade).set()
+                core = NSBezierPath.bezierPath()
+                core.moveToPoint_(tail)
+                core.lineToPoint_(head)
+                core.setLineWidth_(max(0.45, base * 0.22))
+                core.setLineCapStyle_(1)
+                core.stroke()
 
     # ── Info ───────────────────────────────────────────────
 
