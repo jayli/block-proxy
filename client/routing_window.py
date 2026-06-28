@@ -18,6 +18,7 @@ from AppKit import (
     NSApplication,
     NSApplicationActivationPolicyAccessory,
     NSWindow,
+    NSFloatingWindowLevel,
     NSWindowStyleMaskTitled,
     NSWindowStyleMaskClosable,
     NSWindowStyleMaskMiniaturizable,
@@ -255,6 +256,7 @@ class RoutingWindowController(NSObject):
             origin, WINDOW_STYLE, NSBackingStoreBuffered, False
         )
         win.setTitle_("分流规则")
+        win.setLevel_(NSFloatingWindowLevel)
         win.setDelegate_(self._delegate())
 
         content = win.contentView()

@@ -15,6 +15,7 @@ from AppKit import (
     NSApplication,
     NSApplicationActivationPolicyAccessory,
     NSWindow,
+    NSFloatingWindowLevel,
     NSWindowStyleMaskTitled,
     NSWindowStyleMaskClosable,
     NSWindowStyleMaskMiniaturizable,
@@ -143,6 +144,7 @@ class LogWindowController(NSObject):
             ((x, y), (w, h)), WINDOW_STYLE, NSBackingStoreBuffered, False
         )
         win.setTitle_("SocksClient 日志")
+        win.setLevel_(NSFloatingWindowLevel)
         win.setDelegate_(self)
 
         content = win.contentView()

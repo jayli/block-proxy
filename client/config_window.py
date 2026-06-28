@@ -15,6 +15,7 @@ from AppKit import (
     NSApplication,
     NSApplicationActivationPolicyAccessory,
     NSWindow,
+    NSFloatingWindowLevel,
     NSWindowStyleMaskTitled,
     NSWindowStyleMaskClosable,
     NSWindowStyleMaskMiniaturizable,
@@ -98,6 +99,7 @@ class ConfigWindowController(NSObject):
             origin, WINDOW_STYLE, NSBackingStoreBuffered, False
         )
         win.setTitle_("节点配置")
+        win.setLevel_(NSFloatingWindowLevel)
         win.setDelegate_(self._delegate())
 
         content = win.contentView()
