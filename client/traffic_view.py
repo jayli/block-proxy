@@ -359,7 +359,7 @@ class TrafficView(NSView):
 
         for _ in range(n):
             c = _inbound_color(pr)
-            r = random.uniform(3.0, 3.7) if burst else random.uniform(2.2, 4.0)
+            r = random.uniform(2.25, 2.8) if burst else random.uniform(1.65, 3.0)
             op = random.uniform(0.8, 1.0) if burst else random.uniform(0.65, 0.95)
             s = random.uniform(65, 130) if burst else random.uniform(40, 80)
             self._in_.append({

@@ -86,8 +86,27 @@ def test_inbound_burst_particles_have_slightly_smaller_max_radius(monkeypatch):
     view = _FakeTrafficView()
     TrafficView._spawn_in(view, total=60 * 1024)
 
-    assert (3.0, 3.7) in ranges
+    assert (2.25, 2.8) in ranges
     assert (3.0, 6.5) not in ranges
+
+
+def test_inbound_regular_particles_are_quarter_smaller(monkeypatch):
+    ranges = []
+
+    def record_uniform(lo, hi):
+        ranges.append((lo, hi))
+        return lo
+
+    monkeypatch.setattr("traffic_view.random.uniform", record_uniform)
+    monkeypatch.setattr("traffic_view.random.random", lambda: 0.0)
+    monkeypatch.setattr("traffic_view.random.choice", lambda values: values[0])
+
+    view = _FakeTrafficView()
+    view._psi = 2 * 1024
+    TrafficView._spawn_in(view, total=2 * 1024)
+
+    assert (1.65, 3.0) in ranges
+    assert (2.2, 4.0) not in ranges
 
 
 def test_particles_can_collide_when_position_and_size_are_close():
