@@ -5,7 +5,7 @@ Animation:
   - Flow lines: always visible, idle=gentle pulse, active=intense wave
   - Outbound (request):  left→right small dots
   - Inbound (response):  right→left larger dots (LLM streaming = bigger + faster)
-  - Proxy=green, Direct=blue
+  - Proxy=green, Direct=red-violet
 """
 
 import math
@@ -43,8 +43,8 @@ PXY_IN = (
     (0.6, 1.0, 0.2, 1.0),
 )
 DIR_IN = (
-    (1.0, 0.75, 0.0, 1.0),
-    (1.0, 0.50, 0.1, 1.0),
+    (0.86, 0.24, 1.0, 1.0),
+    (0.98, 0.18, 0.42, 1.0),
 )
 
 
@@ -357,7 +357,7 @@ class TrafficView(NSView):
 
         for _ in range(n):
             c = _inbound_color(pr)
-            r = random.uniform(3.0, 6.5) if burst else random.uniform(2.2, 4.0)
+            r = random.uniform(3.0, 5.6) if burst else random.uniform(2.2, 4.0)
             op = random.uniform(0.8, 1.0) if burst else random.uniform(0.65, 0.95)
             s = random.uniform(65, 130) if burst else random.uniform(40, 80)
             self._in_.append({

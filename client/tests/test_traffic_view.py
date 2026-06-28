@@ -5,7 +5,9 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from traffic_view import (
+    DIR_IN,
     PXY_IN,
+    TrafficView,
     _flow_wave_offset,
     _impact_wave,
     _particles_can_collide,
@@ -14,6 +16,27 @@ from traffic_view import (
     _spark_speed,
     _visible_curve_points,
 )
+
+
+class _FakeSize:
+    width = 320
+    height = 220
+
+
+class _FakeFrame:
+    size = _FakeSize()
+
+
+class _FakeTrafficView:
+    def __init__(self):
+        self._in_ = []
+        self._frame_n = 0
+        self._psi = 60 * 1024
+        self._pso = 0
+        self._dso = 0
+
+    def frame(self):
+        return _FakeFrame()
 
 
 def test_visible_curve_points_do_not_extend_to_left_edge_before_data_arrives():
@@ -29,6 +52,31 @@ def test_proxy_inbound_palette_uses_electric_violet_tones():
         (0.4, 1.0, 0.0, 1.0),
         (0.6, 1.0, 0.2, 1.0),
     )
+
+
+def test_direct_inbound_palette_uses_premium_red_violet_tones():
+    assert DIR_IN == (
+        (0.86, 0.24, 1.0, 1.0),
+        (0.98, 0.18, 0.42, 1.0),
+    )
+
+
+def test_inbound_burst_particles_have_slightly_smaller_max_radius(monkeypatch):
+    ranges = []
+
+    def record_uniform(lo, hi):
+        ranges.append((lo, hi))
+        return lo
+
+    monkeypatch.setattr("traffic_view.random.uniform", record_uniform)
+    monkeypatch.setattr("traffic_view.random.random", lambda: 0.0)
+    monkeypatch.setattr("traffic_view.random.choice", lambda values: values[0])
+
+    view = _FakeTrafficView()
+    TrafficView._spawn_in(view, total=60 * 1024)
+
+    assert (3.0, 5.6) in ranges
+    assert (3.0, 6.5) not in ranges
 
 
 def test_particles_can_collide_when_position_and_size_are_close():
