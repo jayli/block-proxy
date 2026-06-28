@@ -65,6 +65,8 @@ $PYTHON -m nuitka \
     --include-data-files=routing_window.py=routing_window.py \
     --include-data-files=geodata_loader.py=geodata_loader.py \
     --include-data-files=proto_parser.py=proto_parser.py \
+    --include-data-files=traffic_stats.py=traffic_stats.py \
+    --include-data-files=traffic_view.py=traffic_view.py \
     --include-data-dir=geodata=geodata \
     --enable-plugin=no-qt \
     --output-dir="$DIST_DIR" \

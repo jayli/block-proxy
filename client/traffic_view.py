@@ -17,7 +17,7 @@ import time
 from Foundation import NSTimer, NSRunLoop, NSString
 from AppKit import (
     NSView, NSColor, NSBezierPath, NSFont,
-    NSFontAttributeName, NSForegroundColorAttributeName,
+    NSFontAttributeName, NSForegroundColorAttributeName, NSGraphicsContext,
 )
 
 
@@ -35,6 +35,14 @@ ANIM_INTV = 1.0 / 25.0
 
 PXY = (0.10, 0.88, 0.40, 1.0)
 DIR = (0.25, 0.60, 1.0, 1.0)
+PXY_IN = (
+    (0.74, 0.45, 1.0, 1.0),
+    (0.90, 0.50, 0.82, 1.0),
+)
+DIR_IN = (
+    (1.0, 0.84, 0.34, 1.0),
+    (0.92, 0.66, 0.28, 1.0),
+)
 
 
 def _c(r, g, b, a=1.0):
@@ -92,6 +100,15 @@ def _make_attrs(size, color, bold=False):
         NSFontAttributeName: font,
         NSForegroundColorAttributeName: _c(*color[:4]),
     }
+
+
+def _inbound_color(proxy_weight):
+    palette = PXY_IN if random.random() < proxy_weight else DIR_IN
+    return random.choice(palette)
+
+
+def _visible_curve_points(pts, left_x, right_x):
+    return [(x, y) for (x, y) in pts if left_x <= x <= right_x]
 
 
 # ────────────────────────────────────────────────────────────────
@@ -286,7 +303,7 @@ class TrafficView(NSView):
         burst = (total > 3*1024) and (ot < total * 0.2)
 
         for _ in range(n):
-            c = PXY if random.random() < pr else DIR
+            c = _inbound_color(pr)
             r = random.uniform(3.0, 6.5) if burst else random.uniform(2.2, 4.0)
             op = random.uniform(0.6, 1.0) if burst else random.uniform(0.45, 0.85)
             s = random.uniform(65, 130) if burst else random.uniform(40, 80)
@@ -410,7 +427,8 @@ class TrafficView(NSView):
             _c(rc[0], rc[1], rc[2], go*0.18).set()
             _fill_oval(9, mid, 13, 13)
         if gi > 0.02:
-            rc = PXY if (self._psi / max(self._psi + self._dsi, 1)) > 0.5 else DIR
+            pr_in = self._psi / max(self._psi + self._dsi, 1)
+            rc = PXY_IN[0] if pr_in > 0.5 else DIR_IN[0]
             _c(rc[0], rc[1], rc[2], gi*0.6).set()
             _fill_oval(w-11, mid, 7, 7)
             _c(rc[0], rc[1], rc[2], gi*0.18).set()
@@ -486,27 +504,13 @@ class TrafficView(NSView):
     @staticmethod
     def _curve_path(pts, left_x, right_x, baseline):
         """Build a closed path: smooth curve → down to baseline → back to start.
-        Points outside [left_x, right_x] are clipped. A boundary point is inserted
-        at the left edge for proper fill closure."""
+        Points outside [left_x, right_x] are clipped. The fill starts at the
+        first real data point so startup gaps remain empty."""
         if len(pts) < 2:
             return None
-        # Prune points outside visible range, keeping one boundary point on each side
-        visible = []
-        for i, (x, y) in enumerate(pts):
-            if x < left_x:
-                continue
-            if x > right_x:
-                continue
-            visible.append((x, y))
+        visible = _visible_curve_points(pts, left_x, right_x)
         if len(visible) < 2:
             return None
-
-        # Insert a left-edge boundary point via linear extrapolation from first 2 visible
-        v0, v1 = visible[0], visible[1]
-        if v0[0] > left_x + 1 and v1[0] != v0[0]:
-            t = (left_x - v0[0]) / (v1[0] - v0[0])
-            by = v0[1] + (v1[1] - v0[1]) * t
-            visible.insert(0, (left_x, by))
 
         path = NSBezierPath.bezierPath()
         path.moveToPoint_(visible[0])
@@ -540,8 +544,7 @@ class TrafficView(NSView):
     def _stroke_curve(cls, pts, left_x, right_x, color, width):
         if len(pts) < 2:
             return
-        # Filter to visible + one edge point
-        visible = [(x, y) for (x, y) in pts if left_x <= x <= right_x]
+        visible = _visible_curve_points(pts, left_x, right_x)
         if len(visible) < 2:
             return
         _c(color[0], color[1], color[2], 0.85).set()
@@ -561,13 +564,26 @@ class TrafficView(NSView):
     def _draw_chart(self, w, y0, y1):
         cw = w - PAD * 2
         ch = y1 - y0
+        if cw <= 0 or ch <= 0:
+            return
         _c(0, 0, 0, 0.06).set()
         _fill_rect(PAD, y0, cw, ch)
 
+        NSGraphicsContext.saveGraphicsState()
+        clip = NSBezierPath.bezierPathWithRect_(((PAD, y0), (cw, ch)))
+        clip.addClip()
+        try:
+            self._draw_chart_contents(w, y0, y1, cw, ch)
+        finally:
+            NSGraphicsContext.restoreGraphicsState()
+
+    def _draw_chart_contents(self, w, y0, y1, cw, ch):
         gx = PAD + 4
         gw = cw - 8
         gy = y0 + 4
         gh = ch - 22
+        if gw <= 0 or gh <= 0:
+            return
 
         la = _make_attrs(F_SM, (0.5, 0.5, 0.5, 1.0))
         _draw_text("速度历史 (最近60秒)", gx + gw - 126, y1 - 14, la)
