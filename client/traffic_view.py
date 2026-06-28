@@ -322,11 +322,12 @@ class TrafficView(NSView):
         w = self.frame().size.width
         h = self.frame().size.height
         my = h - PAD - STREAM_H + STREAM_H / 2.0
+        pl = PAD
 
         for _ in range(n):
             c = PXY if random.random() < pr else DIR
             self._out.append({
-                "x": random.uniform(-20, 5),
+                "x": pl + random.uniform(-15, 3),
                 "y": my + random.uniform(-20, 20),
                 "s": random.uniform(50, 100),
                 "r": random.uniform(1.4, 2.8),
@@ -349,6 +350,7 @@ class TrafficView(NSView):
         w = self.frame().size.width
         h = self.frame().size.height
         my = h - PAD - STREAM_H + STREAM_H / 2.0
+        pr_edge = w - PAD
 
         ot = self._pso + self._dso
         burst = (total > 3*1024) and (ot < total * 0.2)
@@ -359,20 +361,22 @@ class TrafficView(NSView):
             op = random.uniform(0.6, 1.0) if burst else random.uniform(0.45, 0.85)
             s = random.uniform(65, 130) if burst else random.uniform(40, 80)
             self._in_.append({
-                "x": w + random.uniform(0, 25),
+                "x": pr_edge + random.uniform(-3, 20),
                 "y": my + random.uniform(-25, 25),
                 "s": s, "r": r, "c": c, "op": op,
             })
 
     def _move_parts(self, parts, d):
         w = self.frame().size.width
+        pl = PAD
+        pr = w - PAD
         dt = ANIM_INTV
         keep = []
         for p in parts:
             if p.get("hit_cd", 0) > 0:
                 p["hit_cd"] -= 1
             p["x"] += p["s"] * dt * d
-            ok = (d == 1 and p["x"] < w + 30) or (d == -1 and p["x"] > -30)
+            ok = (d == 1 and p["x"] < pr + 30) or (d == -1 and p["x"] > pl - 30)
             if ok:
                 keep.append(p)
         if d == 1:
@@ -401,20 +405,104 @@ class TrafficView(NSView):
                         1.0,
                     )
                     intensity = random.uniform(0.82, 1.38)
+
+                    # Random collision style for visual variety
+                    style = random.choice(["spark", "shock", "lightning", "nova"])
+
+                    # Base sparks — all styles get some
                     sparks = []
-                    count = _spark_count(intensity)
-                    for i in range(count):
-                        a = (math.pi * 2.0 / count) * i + random.uniform(-0.35, 0.35)
+                    sc = _spark_count(intensity)
+                    for i in range(sc):
+                        a = (math.pi * 2.0 / sc) * i + random.uniform(-0.4, 0.4)
                         sp = _spark_speed(intensity)
                         sparks.append((
                             math.cos(a) * sp,
                             math.sin(a) * sp,
-                            random.uniform(0.45, 1.0),
+                            random.uniform(0.4, 1.0),
                         ))
+
+                    # Expanding shockwave rings — style-biased count
+                    rings = []
+                    ring_n = random.choices([1, 2, 3], weights=[3, 5, 2])[0]
+                    if style == "shock":
+                        ring_n = max(ring_n, 2)
+                    for i in range(ring_n):
+                        rings.append({
+                            "r0": random.uniform(1.5, 4.0),
+                            "r_max": random.uniform(18, 35) * intensity,
+                            "speed": random.uniform(0.7, 1.4),
+                            "alpha": random.uniform(0.25, 0.50),
+                            "delay": i * random.uniform(1.0, 2.5),
+                        })
+
+                    # Lightning arcs — guaranteed for lightning style
+                    arcs = []
+                    if style == "lightning" or random.random() < 0.06:
+                        arc_n = random.randint(2, 5) if style == "lightning" else random.randint(1, 3)
+                        for _ in range(arc_n):
+                            angle = random.uniform(0, math.pi * 2)
+                            segs = []
+                            cx, cy = 0.0, 0.0
+                            da = random.uniform(-0.6, 0.6)
+                            seg_n = random.randint(4, 8)
+                            for si in range(seg_n):
+                                da += random.uniform(-0.9, 0.9)
+                                sl = random.uniform(3, 10) * intensity
+                                cx += math.cos(angle + da) * sl
+                                cy += math.sin(angle + da) * sl
+                                segs.append((cx, cy))
+                            branches = []
+                            if style == "lightning" and len(segs) >= 2 and random.random() < 0.55:
+                                bi = random.randint(1, min(3, len(segs) - 1))
+                                bx, by = segs[bi]
+                                bda = da + random.uniform(-1.2, 1.2)
+                                for _ in range(random.randint(2, 4)):
+                                    bda += random.uniform(-0.7, 0.7)
+                                    bl = random.uniform(2, 6) * intensity
+                                    bx += math.cos(angle + bda) * bl
+                                    by += math.sin(angle + bda) * bl
+                                    branches.append((bx, by))
+                            arcs.append({
+                                "angle": angle, "segs": segs,
+                                "branches": branches,
+                                "branch_at": segs[bi] if branches else None,
+                            })
+
+                    # Debris particles with gravity
+                    debris = []
+                    d_n = 0 if style == "shock" else random.randint(0, int(4 * intensity))
+                    if style == "nova":
+                        d_n = random.randint(4, 8)
+                    for _ in range(d_n):
+                        a = random.uniform(0, math.pi * 2)
+                        sp = random.uniform(15, 55) * intensity
+                        debris.append({
+                            "vx": math.cos(a) * sp,
+                            "vy": math.sin(a) * sp,
+                            "r": random.uniform(0.8, 2.2),
+                            "gravity": random.uniform(35, 90),
+                            "op": random.uniform(0.5, 1.0),
+                        })
+
+                    # Color shockwave wash
+                    shock = None
+                    if style in ("nova", "shock") or random.random() < 0.25:
+                        shock = {
+                            "r_max": random.uniform(25, 50) * intensity,
+                            "alpha": random.uniform(0.12, 0.25),
+                        }
+
+                    life = random.randint(12, 18)
+
                     self._hits.append({
-                        "x": x, "y": y, "r": r, "age": 0, "life": 11,
-                        "c": color, "sparks": sparks, "intensity": intensity,
+                        "x": x, "y": y, "r": r,
+                        "age": 0, "life": life,
+                        "c": color, "sparks": sparks,
+                        "intensity": intensity, "style": style,
+                        "rings": rings, "arcs": arcs,
+                        "debris": debris, "shock": shock,
                     })
+
                     out["hit_cd"] = 18
                     inc["hit_cd"] = 18
                     made += 1
@@ -475,9 +563,18 @@ class TrafficView(NSView):
         ti = self._psi + self._dsi
         t = to + ti
 
+        pl = PAD          # pipe left edge
+        pr = w - PAD      # pipe right edge
+        pw = pr - pl      # pipe inner width
+
         # Background
         _set_color((0.03, 0.03, 0.05, 1.0))
-        _fill_rect(0, y0, w, sh)
+        _fill_rect(pl, y0, pw, sh)
+
+        # Clip all pipe contents to the band rectangle
+        NSGraphicsContext.saveGraphicsState()
+        clip = NSBezierPath.bezierPathWithRect_(((pl, y0), (pw, sh)))
+        clip.addClip()
 
         idle = t < 1024
         base_a = 0.18 if idle else _lerp(0.22, 0.45, _clamp(t / (400*1024), 0.0, 1.0))
@@ -498,9 +595,9 @@ class TrafficView(NSView):
                 continue
             a = base_a * wt
             path = NSBezierPath.bezierPath()
-            x = 0.0
+            x = float(pl)
             path.moveToPoint_((x, mid + _flow_wave_offset(x, scroll, phase, freq, amp, wt)))
-            while x < w:
+            while x < pr:
                 path.lineToPoint_(
                     (x, mid + _flow_wave_offset(x, scroll, phase, freq, amp, wt)))
                 x += 4.0
@@ -518,11 +615,11 @@ class TrafficView(NSView):
         # Edge highlights
         _c(0.6, 0.6, 0.6, 0.08).set()
         p = NSBezierPath.bezierPath()
-        p.moveToPoint_((0, y0)); p.lineToPoint_((w, y0))
+        p.moveToPoint_((pl, y0)); p.lineToPoint_((pr, y0))
         p.setLineWidth_(1.0); p.stroke()
         _c(0.6, 0.6, 0.6, 0.05).set()
         p = NSBezierPath.bezierPath()
-        p.moveToPoint_((0, y1)); p.lineToPoint_((w, y1))
+        p.moveToPoint_((pl, y1)); p.lineToPoint_((pr, y1))
         p.setLineWidth_(1.0); p.stroke()
 
         # End glows
@@ -531,26 +628,28 @@ class TrafficView(NSView):
         if go > 0.02:
             rc = PXY if pf > 0.5 else DIR
             _c(rc[0], rc[1], rc[2], go*0.6).set()
-            _fill_oval(11, mid, 7, 7)
+            _fill_oval(pl + 11, mid, 7, 7)
             _c(rc[0], rc[1], rc[2], go*0.18).set()
-            _fill_oval(9, mid, 13, 13)
+            _fill_oval(pl + 9, mid, 13, 13)
         if gi > 0.02:
             pr_in = self._psi / max(self._psi + self._dsi, 1)
             rc = PXY_IN[0] if pr_in > 0.5 else DIR_IN[0]
             _c(rc[0], rc[1], rc[2], gi*0.6).set()
-            _fill_oval(w-11, mid, 7, 7)
+            _fill_oval(pr - 11, mid, 7, 7)
             _c(rc[0], rc[1], rc[2], gi*0.18).set()
-            _fill_oval(w-9, mid, 13, 13)
+            _fill_oval(pr - 9, mid, 13, 13)
 
         # Particles
         self._draw_parts(self._out)
         self._draw_parts(self._in_)
         self._draw_hits()
 
-        # Labels
+        NSGraphicsContext.restoreGraphicsState()
+
+        # Labels (outside clip, just inside band edges)
         sm = _make_attrs(F_SM, (0.5, 0.5, 0.5, 1.0))
-        _draw_text("本机", 6, y1 - 18, sm)
-        _draw_text("互联网", w - 42, y1 - 18, sm)
+        _draw_text("本机", pl + 6, y1 - 18, sm)
+        _draw_text("互联网", pr - 42, y1 - 18, sm)
 
     def _draw_parts(self, parts):
         for p in parts:
@@ -573,22 +672,108 @@ class TrafficView(NSView):
             x, y = h["x"], h["y"]
             base = h["r"]
             intensity = h.get("intensity", 1.0)
+            style = h.get("style", "spark")
 
-            _c(1.0, 1.0, 1.0, 0.55 * fade).set()
-            _fill_oval(x, y, base * _lerp(1.3, 0.45, t), base * _lerp(1.3, 0.45, t))
+            # ── Layer 1: Color shockwave wash (early, fast fade) ──
+            shock = h.get("shock")
+            if shock is not None:
+                st = _clamp(t * 2.5, 0.0, 1.0)
+                sr = shock["r_max"] * (1.0 - ((1.0 - st) ** 2))
+                sa = shock["alpha"] * ((1.0 - st) ** 1.5)
+                if sa > 0.01:
+                    _c(r, g, b, sa).set()
+                    _fill_oval(x, y, sr, sr)
 
-            wave_r, wave_a = _impact_wave(base, t)
-            _c(1.0, 1.0, 1.0, wave_a).set()
-            _fill_oval(x, y, wave_r, wave_r)
-            _c(0.03, 0.03, 0.05, wave_a * 0.55).set()
-            _fill_oval(x, y, wave_r * 0.78, wave_r * 0.78)
+            # ── Layer 2: Expanding shockwave rings ──
+            for ring in h.get("rings", []):
+                rt = _clamp((t * h["life"] - ring["delay"]) / max(1, h["life"] - ring["delay"]), 0.0, 1.0)
+                if rt <= 0.0 or rt >= 1.0:
+                    continue
+                ease = 1.0 - ((1.0 - rt) ** 2.5)
+                rr = _lerp(ring["r0"], ring["r_max"], ease)
+                ra = ring["alpha"] * ((1.0 - rt) ** 1.8)
+                if ra < 0.01:
+                    continue
+                # Outer glow ring
+                _c(r, g, b, ra * 0.3).set()
+                ring_path = NSBezierPath.bezierPath()
+                ring_path.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_(
+                    (x, y), rr * 1.15, 0, 360)
+                ring_path.setLineWidth_(max(1.5, base * 0.6))
+                ring_path.stroke()
+                # Sharp inner ring
+                _c(1.0, 1.0, 1.0, ra * 0.8).set()
+                ring_path2 = NSBezierPath.bezierPath()
+                ring_path2.appendBezierPathWithArcWithCenter_radius_startAngle_endAngle_(
+                    (x, y), rr, 0, 360)
+                ring_path2.setLineWidth_(max(0.6, base * 0.25))
+                ring_path2.stroke()
 
-            ring = base * _lerp(2.2, 7.0, t)
-            _c(r, g, b, 0.20 * fade).set()
-            _fill_oval(x, y, ring, ring)
-            _c(0.03, 0.03, 0.05, 0.22 * fade).set()
-            _fill_oval(x, y, ring * 0.72, ring * 0.72)
+            # ── Layer 3: Lightning arcs with branches ──
+            for arc in h.get("arcs", []):
+                arc_fade = _clamp(fade * 1.5, 0.0, 1.0)
+                if arc_fade < 0.01 or not arc["segs"]:
+                    continue
+                # Main bolt
+                _c(1.0, 0.92, 0.65, 0.75 * arc_fade).set()
+                bp = NSBezierPath.bezierPath()
+                bp.moveToPoint_((x, y))
+                for sx, sy in arc["segs"]:
+                    bp.lineToPoint_((x + sx, y + sy))
+                bp.setLineWidth_(max(1.0, base * 0.5))
+                bp.setLineCapStyle_(1)
+                bp.setLineJoinStyle_(0)
+                bp.stroke()
+                # Bolt core (brighter, thinner)
+                _c(1.0, 1.0, 0.95, 0.60 * arc_fade).set()
+                cp = NSBezierPath.bezierPath()
+                cp.moveToPoint_((x, y))
+                for sx, sy in arc["segs"]:
+                    cp.lineToPoint_((x + sx, y + sy))
+                cp.setLineWidth_(max(0.5, base * 0.2))
+                cp.setLineCapStyle_(1)
+                cp.setLineJoinStyle_(0)
+                cp.stroke()
+                # Branches
+                if arc.get("branches") and arc.get("branch_at"):
+                    bx0, by0 = arc["branch_at"]
+                    _c(r, g, b, 0.45 * arc_fade).set()
+                    brp = NSBezierPath.bezierPath()
+                    brp.moveToPoint_((x + bx0, y + by0))
+                    for bx, by in arc["branches"]:
+                        brp.lineToPoint_((x + bx, y + by))
+                    brp.setLineWidth_(max(0.5, base * 0.3))
+                    brp.setLineCapStyle_(1)
+                    brp.stroke()
 
+            # ── Layer 4: Debris with gravity ──
+            for d in h.get("debris", []):
+                dt_ = t * h["life"] * ANIM_INTV
+                dx = x + d["vx"] * dt_
+                dy = y + d["vy"] * dt_ - 0.5 * d["gravity"] * dt_ * dt_
+                dop = d["op"] * fade
+                if dop < 0.02:
+                    continue
+                # Glow
+                _c(r, g, b, dop * 0.15).set()
+                _fill_oval(dx, dy, d["r"] * 3, d["r"] * 3)
+                # Core
+                _c(1.0, 0.9, 0.6, dop).set()
+                _fill_oval(dx, dy, d["r"], d["r"])
+
+            # ── Layer 5: Central flash ──
+            flash_t = _clamp(t * 3.0, 0.0, 1.0)
+            flash_r = base * _lerp(3.5, 1.0, flash_t)
+            flash_a = 0.7 * ((1.0 - flash_t) ** 2)
+            if flash_a > 0.01:
+                # White hot center
+                _c(1.0, 1.0, 1.0, flash_a).set()
+                _fill_oval(x, y, flash_r, flash_r)
+                # Colored glow
+                _c(r, g, b, flash_a * 0.35).set()
+                _fill_oval(x, y, flash_r * 2.5, flash_r * 2.5)
+
+            # ── Layer 6: Sparks (glowing line trails) ──
             for spark_data in h.get("sparks", []):
                 if len(spark_data) == 3:
                     vx, vy, length_scale = spark_data
@@ -597,21 +782,37 @@ class TrafficView(NSView):
                     length_scale = 1.0
                 head, tail = _spark_line(
                     x, y, vx, vy, t, intensity=intensity, length_scale=length_scale)
-                _c(1.0, 0.88, 0.46, 0.70 * fade).set()
-                spark = NSBezierPath.bezierPath()
-                spark.moveToPoint_(tail)
-                spark.lineToPoint_(head)
-                spark.setLineWidth_(max(0.8, base * 0.42))
-                spark.setLineCapStyle_(1)
-                spark.stroke()
 
-                _c(r, g, b, 0.35 * fade).set()
+                # Outer glow
+                _c(r, g, b, 0.25 * fade).set()
+                glow_path = NSBezierPath.bezierPath()
+                glow_path.moveToPoint_(tail)
+                glow_path.lineToPoint_(head)
+                glow_path.setLineWidth_(max(2.0, base * 0.8))
+                glow_path.setLineCapStyle_(1)
+                glow_path.stroke()
+
+                # Bright trail
+                _c(1.0, 0.88, 0.46, 0.65 * fade).set()
+                trail = NSBezierPath.bezierPath()
+                trail.moveToPoint_(tail)
+                trail.lineToPoint_(head)
+                trail.setLineWidth_(max(0.8, base * 0.42))
+                trail.setLineCapStyle_(1)
+                trail.stroke()
+
+                # Core line
+                _c(1.0, 1.0, 0.9, 0.80 * fade).set()
                 core = NSBezierPath.bezierPath()
                 core.moveToPoint_(tail)
                 core.lineToPoint_(head)
-                core.setLineWidth_(max(0.45, base * 0.22))
+                core.setLineWidth_(max(0.4, base * 0.2))
                 core.setLineCapStyle_(1)
                 core.stroke()
+
+                # Spark tip dot
+                _c(1.0, 1.0, 0.85, 0.9 * fade).set()
+                _fill_oval(head[0], head[1], max(0.6, base * 0.3), max(0.6, base * 0.3))
 
     # ── Info ───────────────────────────────────────────────
 
