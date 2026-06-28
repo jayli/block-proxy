@@ -174,7 +174,11 @@ def _reflection_alpha(py, surface_y, bottom_y, op):
     mirrored_y = surface_y + (surface_y - py) * 0.62
     depth_t = _clamp((mirrored_y - surface_y) / max(1.0, bottom_y - surface_y), 0.0, 1.0)
     air_t = _clamp((surface_y - py) / 42.0, 0.0, 1.0)
-    return op * 0.34 * air_t * ((1.0 - depth_t) ** 0.9)
+    return op * 0.42 * air_t * ((1.0 - depth_t) ** 0.82)
+
+
+def _reflection_glint_alpha(base_alpha, shimmer):
+    return min(0.42, base_alpha * _lerp(1.15, 1.72, _clamp(shimmer, 0.0, 1.0)))
 
 
 def _reflection_ellipse(rad):
@@ -709,17 +713,17 @@ class TrafficView(NSView):
         try:
             from AppKit import NSGradient
             grad = NSGradient.alloc().initWithStartingColor_endingColor_(
-                _c(0.06, 0.18, 0.24, 0.20), _c(0.01, 0.04, 0.07, 0.42))
+                _c(0.08, 0.24, 0.31, 0.28), _c(0.01, 0.05, 0.08, 0.46))
             grad.drawInRect_angle_(((pl, surface_y), (pr - pl, water_h)), 90.0)
         except Exception:
-            _c(0.03, 0.11, 0.16, 0.24).set()
+            _c(0.04, 0.14, 0.20, 0.30).set()
             _fill_rect(pl, surface_y, pr - pl, water_h)
 
         scroll = self._scroll
         for i, (alpha, offset, amp, step) in enumerate((
-                (0.18, 0.0, 1.10, 5.0),
-                (0.12, 17.0, 0.75, 6.0),
-                (0.08, 43.0, 1.55, 7.0))):
+                (0.28, 0.0, 1.10, 5.0),
+                (0.18, 17.0, 0.75, 6.0),
+                (0.12, 43.0, 1.55, 7.0))):
             path = NSBezierPath.bezierPath()
             x = float(pl)
             y = surface_y + 4.0 + i * max(4.0, water_h * 0.18)
@@ -736,6 +740,13 @@ class TrafficView(NSView):
             path.setLineCapStyle_(1)
             path.stroke()
 
+        highlight = NSBezierPath.bezierPath()
+        highlight.moveToPoint_((pl, surface_y + 1.0))
+        highlight.lineToPoint_((pr, surface_y + 1.0))
+        _c(0.80, 0.98, 1.0, 0.18).set()
+        highlight.setLineWidth_(1.0)
+        highlight.stroke()
+
         self._draw_reflection_parts(self._out, surface_y, y1, scroll, 0.0)
         self._draw_reflection_parts(self._in_, surface_y, y1, scroll, 23.0)
 
@@ -750,16 +761,19 @@ class TrafficView(NSView):
                 continue
             rx, ry = _reflection_ellipse(p["r"])
             shimmer = 0.78 + math.sin((p["x"] + scroll * 2.1 + phase) / 13.0) * 0.16
+            glint = _reflection_glint_alpha(op, shimmer)
 
-            _c(r, g, b, op * 0.34).set()
-            _fill_oval(px, py, rx * 2.4, ry * 2.2)
+            _c(r, g, b, op * 0.46).set()
+            _fill_oval(px, py, rx * 2.7, ry * 2.4)
             _c(r, g, b, op * shimmer).set()
             _fill_oval(px, py, rx, ry)
+            _c(0.88, 0.98, 1.0, glint * 0.70).set()
+            _fill_oval(px - rx * 0.10, py - ry * 0.18, rx * 0.72, max(0.32, ry * 0.38))
 
             path = NSBezierPath.bezierPath()
             path.moveToPoint_((px - rx * 1.6, py))
             path.lineToPoint_((px + rx * 1.6, py + math.sin((px + scroll) / 11.0) * 0.9))
-            _c(r, g, b, op * 0.55).set()
+            _c(0.78, 0.96, 1.0, glint).set()
             path.setLineWidth_(max(0.4, ry * 0.7))
             path.setLineCapStyle_(1)
             path.stroke()

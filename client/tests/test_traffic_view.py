@@ -18,6 +18,7 @@ from traffic_view import (
     _particles_can_collide,
     _reflection_alpha,
     _reflection_ellipse,
+    _reflection_glint_alpha,
     _reflection_point,
     _water_surface_y,
     _spark_count,
@@ -125,6 +126,14 @@ def test_reflection_ellipse_is_wider_and_flatter_than_particle():
 
     assert rx > 3.0
     assert ry < 3.0
+
+
+def test_reflection_glint_is_brighter_than_base_reflection():
+    base = _reflection_alpha(py=140.0, surface_y=168.0, bottom_y=200.0, op=0.9)
+    glint = _reflection_glint_alpha(base, shimmer=0.94)
+
+    assert glint > base
+    assert glint <= 0.42
 
 
 def test_inbound_burst_particles_have_slightly_smaller_max_radius(monkeypatch):
