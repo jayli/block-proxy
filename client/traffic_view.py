@@ -36,6 +36,8 @@ ANIM_INTV = 1.0 / 25.0
 
 PXY = (0.5, 1.0, 0.0, 1.0)
 DIR = (0.1, 0.4, 1.0, 1.0)
+PXY_TXT = (0.0, 0.75, 0.3, 1.0)  # 更深绿，用于文字和chart曲线
+DIR_TXT = (0.3, 0.6, 1.0, 1.0)   # 稍浅蓝，用于文字和chart曲线
 PXY_IN = (
     (0.4, 1.0, 0.0, 1.0),
     (0.6, 1.0, 0.2, 1.0),
@@ -819,13 +821,13 @@ class TrafficView(NSView):
     def _draw_info(self, w, y0, y1):
         la = _make_attrs(F_SM, (0.4, 0.4, 0.4, 1.0))
         ta = _make_attrs(F_SM, (0.5, 0.5, 0.5, 1.0))
-        pa = _make_attrs(F_LG, PXY)
-        da = _make_attrs(F_LG, DIR)
+        pa = _make_attrs(F_LG, PXY_TXT)
+        da = _make_attrs(F_LG, DIR_TXT)
 
-        _draw_text("当前速度 (↓上传 / ↑下载)", PAD, y1 - 14, la)
-        _draw_text(f"代理  {_fmts(self._pso)} ↓  {_fmts(self._psi)} ↑", PAD, y1 - 36, pa)
+        _draw_text("当前速度 (↑上传 / ↓下载)", PAD, y1 - 14, la)
+        _draw_text(f"代理  {_fmts(self._pso)} ↑  {_fmts(self._psi)} ↓", PAD, y1 - 36, pa)
         direct_x = PAD + 210
-        _draw_text(f"直连  {_fmts(self._dso)} ↓  {_fmts(self._dsi)} ↑", direct_x, y1 - 36, da)
+        _draw_text(f"直连  {_fmts(self._dso)} ↑  {_fmts(self._dsi)} ↓", direct_x, y1 - 36, da)
 
         _draw_text(f"代理累计: {_fmt(self._tpo + self._tpi)}", PAD, y1 - 56, ta)
         _draw_text(f"直连累计: {_fmt(self._tdo + self._tdi)}", direct_x, y1 - 56, ta)
@@ -841,10 +843,10 @@ class TrafficView(NSView):
         _c(0, 0, 0, 0.06).set()
         _fill_rect(bx, by, bw, bh)
         if pr > 0.003:
-            _set_color(PXY)
+            _set_color(PXY_TXT)
             _fill_rect(bx, by, max(3, bw*pr), bh)
         if dr > 0.003:
-            _set_color(DIR)
+            _set_color(DIR_TXT)
             _fill_rect(bx + bw*pr, by, max(3, bw*dr), bh)
 
         ra = _make_attrs(F_SM, (0.4, 0.4, 0.4, 1.0))
@@ -975,10 +977,10 @@ class TrafficView(NSView):
             proxy_pts.append((x, baseline - pv))
             direct_pts.append((x, baseline - dv))
 
-        self._fill_curve_gradient(direct_pts, left_x, right_x, baseline, DIR)
-        self._fill_curve_gradient(proxy_pts, left_x, right_x, baseline, PXY)
-        self._stroke_curve(proxy_pts, left_x, right_x, PXY, 2.0)
-        self._stroke_curve(direct_pts, left_x, right_x, DIR, 2.0)
+        self._fill_curve_gradient(direct_pts, left_x, right_x, baseline, DIR_TXT)
+        self._fill_curve_gradient(proxy_pts, left_x, right_x, baseline, PXY_TXT)
+        self._stroke_curve(proxy_pts, left_x, right_x, PXY_TXT, 2.0)
+        self._stroke_curve(direct_pts, left_x, right_x, DIR_TXT, 2.0)
 
         # Bottom axis
         _c(0, 0, 0, 0.1).set()
