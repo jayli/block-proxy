@@ -34,15 +34,15 @@ HIST = 30
 STATS_INTV = 2.0
 ANIM_INTV = 1.0 / 25.0
 
-PXY = (0.10, 0.88, 0.40, 1.0)
-DIR = (0.25, 0.60, 1.0, 1.0)
+PXY = (0.0, 1.0, 0.6, 1.0)
+DIR = (0.0, 0.8, 1.0, 1.0)
 PXY_IN = (
-    (0.58, 0.36, 1.0, 1.0),
-    (1.0, 0.38, 0.92, 1.0),
+    (0.60, 0.0, 1.0, 1.0),
+    (1.0, 0.20, 0.80, 1.0),
 )
 DIR_IN = (
-    (1.0, 0.84, 0.34, 1.0),
-    (0.92, 0.66, 0.28, 1.0),
+    (1.0, 0.60, 0.0, 1.0),
+    (1.0, 0.30, 0.40, 1.0),
 )
 
 
@@ -113,8 +113,6 @@ def _visible_curve_points(pts, left_x, right_x):
 
 
 def _particles_can_collide(out, inc, x_tol=8.0, y_tol=10.0, r_tol=0.8):
-    if out.get("hit_cd", 0) > 0 or inc.get("hit_cd", 0) > 0:
-        return False
     if abs(out["r"] - inc["r"]) > r_tol:
         return False
     return abs(out["x"] - inc["x"]) <= x_tol and abs(out["y"] - inc["y"]) <= y_tol
@@ -332,7 +330,7 @@ class TrafficView(NSView):
                 "s": random.uniform(50, 100),
                 "r": random.uniform(1.4, 2.8),
                 "c": c,
-                "op": random.uniform(0.5, 0.9),
+                "op": random.uniform(0.7, 1.0),
             })
 
     def _spawn_in(self, total):
@@ -358,7 +356,7 @@ class TrafficView(NSView):
         for _ in range(n):
             c = _inbound_color(pr)
             r = random.uniform(3.0, 6.5) if burst else random.uniform(2.2, 4.0)
-            op = random.uniform(0.6, 1.0) if burst else random.uniform(0.45, 0.85)
+            op = random.uniform(0.8, 1.0) if burst else random.uniform(0.65, 0.95)
             s = random.uniform(65, 130) if burst else random.uniform(40, 80)
             self._in_.append({
                 "x": pr_edge + random.uniform(-3, 20),
@@ -373,8 +371,6 @@ class TrafficView(NSView):
         dt = ANIM_INTV
         keep = []
         for p in parts:
-            if p.get("hit_cd", 0) > 0:
-                p["hit_cd"] -= 1
             p["x"] += p["s"] * dt * d
             ok = (d == 1 and p["x"] < pr + 30) or (d == -1 and p["x"] > pl - 30)
             if ok:
@@ -503,10 +499,14 @@ class TrafficView(NSView):
                         "debris": debris, "shock": shock,
                     })
 
-                    out["hit_cd"] = 18
-                    inc["hit_cd"] = 18
+                    out["dead"] = True
+                    inc["dead"] = True
                     made += 1
                     break
+
+        # Remove collided particles from both lists
+        self._out = [p for p in self._out if not p.get("dead")]
+        self._in_ = [p for p in self._in_ if not p.get("dead")]
 
     def _move_hits(self):
         keep = []
@@ -657,10 +657,10 @@ class TrafficView(NSView):
             px, py = p["x"], p["y"]
             rad = p["r"]
             op = p["op"]
-            _c(r, g, b, op*0.06).set()
+            _c(r, g, b, op*0.07).set()
             _fill_oval(px, py, rad*5, rad*5)
-            _c(r, g, b, op*0.2).set()
-            _fill_oval(px, py, rad*2, rad*2)
+            _c(r, g, b, op*0.22).set()
+            _fill_oval(px, py, rad*2.2, rad*2.2)
             _c(r, g, b, op).set()
             _fill_oval(px, py, rad, rad)
 

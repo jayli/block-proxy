@@ -26,8 +26,8 @@ def test_visible_curve_points_do_not_extend_to_left_edge_before_data_arrives():
 
 def test_proxy_inbound_palette_uses_electric_violet_tones():
     assert PXY_IN == (
-        (0.58, 0.36, 1.0, 1.0),
-        (1.0, 0.38, 0.92, 1.0),
+        (0.60, 0.0, 1.0, 1.0),
+        (1.0, 0.20, 0.80, 1.0),
     )
 
 
