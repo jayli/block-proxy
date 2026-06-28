@@ -40,6 +40,8 @@ from AppKit import (
     NSViewHeightSizable,
 )
 
+from traffic_view import TrafficView
+
 
 LOG_DIR = os.path.expanduser("~/Library/Application Support/SocksClient/logs")
 MAX_LINES = 5000
@@ -123,6 +125,7 @@ class LogWindowController(NSObject):
         self._scroll_guard = False
 
         self._build_window()
+        self._traffic_view.start()  # start stats collection immediately
         self._initial_load()
         self._start_tail()
         return self
@@ -152,11 +155,12 @@ class LogWindowController(NSObject):
 
         # -- toolbar: segmented toggle + buttons --
         toggle = NSSegmentedControl.alloc().initWithFrame_(
-            ((p, h - 42), (160, 26))
+            ((p, h - 42), (220, 26))
         )
-        toggle.setSegmentCount_(2)
+        toggle.setSegmentCount_(3)
         toggle.setLabel_forSegment_("Access", 0)
         toggle.setLabel_forSegment_("Crash", 1)
+        toggle.setLabel_forSegment_("流量统计", 2)
         toggle.setSelectedSegment_(0)
         toggle.setSegmentStyle_(NSSegmentStyleTexturedRounded)
         toggle.setTarget_(self)
@@ -219,6 +223,13 @@ class LogWindowController(NSObject):
         sv.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
         content.addSubview_(sv)
         self._sv = sv
+
+        # -- traffic stats view (third tab) --
+        tv_frame = ((p, 10), (w - 2 * p, h - 64))
+        self._traffic_view = TrafficView.alloc().initWithFrame_(tv_frame)
+        self._traffic_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable)
+        self._traffic_view.setHidden_(True)
+        content.addSubview_(self._traffic_view)
 
         from Foundation import NSNotificationCenter
         NSNotificationCenter.defaultCenter().addObserver_selector_name_object_(
@@ -369,6 +380,7 @@ class LogWindowController(NSObject):
 
     def windowWillClose_(self, notification):
         self._stop_tail()
+        self._traffic_view.stop()
         NSApp.terminate_(None)
 
     # ------------------------------------------------------------------
@@ -376,10 +388,22 @@ class LogWindowController(NSObject):
     # ------------------------------------------------------------------
 
     def onTabSwitch_(self, sender):
+        seg = sender.selectedSegment()
+        if seg == 2:
+            # Traffic stats tab
+            self._stop_tail()
+            self._sv.setHidden_(True)
+            self._traffic_view.setHidden_(False)
+            self._traffic_view.resume_anim()
+            return
+        # Access or Crash tab
+        self._sv.setHidden_(False)
+        self._traffic_view.setHidden_(True)
+        self._traffic_view.pause_anim()
         self._stop_tail()
         self._file_inode = None
         self._file_offset = 0
-        self._current_tab = "access" if sender.selectedSegment() == 0 else "crash"
+        self._current_tab = "access" if seg == 0 else "crash"
         self._file_path = os.path.join(
             LOG_DIR, "access.log" if self._current_tab == "access" else "crash.log"
         )

@@ -9,6 +9,7 @@ import threading
 logger = logging.getLogger("proxy_core")
 
 from logger import access_logger, crash_logger
+from traffic_stats import add_bytes, flush as flush_stats, init_writer
 
 
 def _log_access(dest_addr, dest_port, method, direct, error=None):
@@ -57,13 +58,15 @@ async def read_udp_frame(reader):
     return await reader.readexactly(length)
 
 
-async def relay(reader, writer):
+async def relay(reader, writer, route=None, direction=None):
     try:
         while True:
             data = await asyncio.wait_for(reader.read(65536), timeout=RELAY_IDLE_TIMEOUT)
             if not data:
                 break
             writer.write(data)
+            if route and direction:
+                add_bytes(len(data), route, direction)
             if writer.transport.get_write_buffer_size() > 65536:
                 await writer.drain()
     except asyncio.TimeoutError:
@@ -315,6 +318,7 @@ class _UdpRelayProtocol(asyncio.DatagramProtocol):
             return
         frame = struct.pack("!H", len(data)) + data
         self._tcp_writer.write(frame)
+        add_bytes(len(data), "proxy", "outbound")
 
 
 class ProxyCore:
@@ -474,6 +478,8 @@ class ProxyCore:
 
     async def _start_servers(self):
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+        init_writer()
+        asyncio.ensure_future(self._flush_stats_loop())
         max_attempts = 100
         for attempt in range(max_attempts):
             try:
@@ -502,6 +508,11 @@ class ProxyCore:
         if self._http_server:
             self._http_server.close()
             await self._http_server.wait_closed()
+
+    async def _flush_stats_loop(self):
+        while True:
+            await asyncio.sleep(2)
+            flush_stats()
 
     def _should_direct(self, host):
         if self._proxy_private:
@@ -628,8 +639,8 @@ class ProxyCore:
             await client_writer.drain()
 
             await asyncio.gather(
-                relay(client_reader, remote_writer),
-                relay(remote_reader, client_writer),
+                relay(client_reader, remote_writer, route, "outbound"),
+                relay(remote_reader, client_writer, route, "inbound"),
             )
         except Exception as e:
             if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
@@ -696,6 +707,7 @@ class ProxyCore:
                     frame_data = await asyncio.wait_for(
                         read_udp_frame(remote_reader), timeout=UDP_IDLE_TIMEOUT
                     )
+                    add_bytes(len(frame_data), "proxy", "inbound")
                     if udp_relay.client_addr:
                         transport.sendto(frame_data, udp_relay.client_addr)
             except (asyncio.TimeoutError, asyncio.IncompleteReadError,
@@ -790,8 +802,8 @@ class ProxyCore:
                 await client_writer.drain()
 
                 await asyncio.gather(
-                    relay(client_reader, remote_writer),
-                    relay(remote_reader, client_writer),
+                    relay(client_reader, remote_writer, route, "outbound"),
+                    relay(remote_reader, client_writer, route, "inbound"),
                 )
             else:
                 url = parts[1]
@@ -847,8 +859,8 @@ class ProxyCore:
                     await remote_writer.drain()
 
                     await asyncio.gather(
-                        relay(remote_reader, client_writer),
-                        relay(client_reader, remote_writer),
+                        relay(remote_reader, client_writer, route, "inbound"),
+                        relay(client_reader, remote_writer, route, "outbound"),
                     )
                 else:
                     client_writer.close()
