@@ -29,6 +29,7 @@ F_MD = 11
 F_LG = 13
 MAX_OUT = 100
 MAX_IN = 100
+MAX_HITS = 12
 HIST = 30
 STATS_INTV = 2.0
 ANIM_INTV = 1.0 / 25.0
@@ -111,6 +112,19 @@ def _visible_curve_points(pts, left_x, right_x):
     return [(x, y) for (x, y) in pts if left_x <= x <= right_x]
 
 
+def _particles_can_collide(out, inc, x_tol=8.0, y_tol=10.0, r_tol=0.8):
+    if out.get("hit_cd", 0) > 0 or inc.get("hit_cd", 0) > 0:
+        return False
+    if abs(out["r"] - inc["r"]) > r_tol:
+        return False
+    return abs(out["x"] - inc["x"]) <= x_tol and abs(out["y"] - inc["y"]) <= y_tol
+
+
+def _impact_wave(base, t):
+    t = _clamp(t, 0.0, 1.0)
+    return base * _lerp(2.8, 10.5, t), 0.26 * ((1.0 - t) ** 1.7)
+
+
 # ────────────────────────────────────────────────────────────────
 
 class TrafficView(NSView):
@@ -122,6 +136,7 @@ class TrafficView(NSView):
 
         self._out = []
         self._in_ = []
+        self._hits = []
         self._hist = []
 
         self._pso = self._psi = self._dso = self._dsi = 0.0
@@ -152,6 +167,7 @@ class TrafficView(NSView):
         self._hist[:] = []
         self._out[:] = []
         self._in_[:] = []
+        self._hits[:] = []
         self._scroll = 0.0
         self._amp = 0.0
         self._frame_n = 0
@@ -184,6 +200,7 @@ class TrafficView(NSView):
             self._t_anim = None
         self._out[:] = []
         self._in_[:] = []
+        self._hits[:] = []
 
     def stop(self):
         """Stop everything — stats and animation (called when window closes)."""
@@ -247,6 +264,8 @@ class TrafficView(NSView):
             self._spawn_in(ti)
             self._move_parts(self._out, 1)
             self._move_parts(self._in_, -1)
+            self._detect_hits()
+            self._move_hits()
             self.setNeedsDisplay_(True)
         except Exception:
             print("[traffic_view] _onAnim_ error:", file=sys.stderr)
@@ -318,6 +337,8 @@ class TrafficView(NSView):
         dt = ANIM_INTV
         keep = []
         for p in parts:
+            if p.get("hit_cd", 0) > 0:
+                p["hit_cd"] -= 1
             p["x"] += p["s"] * dt * d
             ok = (d == 1 and p["x"] < w + 30) or (d == -1 and p["x"] > -30)
             if ok:
@@ -326,6 +347,48 @@ class TrafficView(NSView):
             self._out = keep
         else:
             self._in_ = keep
+
+    def _detect_hits(self):
+        if len(self._hits) >= MAX_HITS:
+            return
+        made = 0
+        for out in self._out:
+            if made >= 2 or len(self._hits) >= MAX_HITS:
+                break
+            for inc in self._in_:
+                if _particles_can_collide(out, inc):
+                    x = (out["x"] + inc["x"]) / 2.0
+                    y = (out["y"] + inc["y"]) / 2.0
+                    r = (out["r"] + inc["r"]) / 2.0
+                    c1 = out["c"]
+                    c2 = inc["c"]
+                    color = (
+                        min(1.0, (c1[0] + c2[0]) * 0.55),
+                        min(1.0, (c1[1] + c2[1]) * 0.55),
+                        min(1.0, (c1[2] + c2[2]) * 0.55),
+                        1.0,
+                    )
+                    sparks = []
+                    for i in range(5):
+                        a = (math.pi * 2.0 / 5.0) * i + random.uniform(-0.25, 0.25)
+                        sp = random.uniform(32.0, 58.0)
+                        sparks.append((math.cos(a) * sp, math.sin(a) * sp))
+                    self._hits.append({
+                        "x": x, "y": y, "r": r, "age": 0, "life": 11,
+                        "c": color, "sparks": sparks,
+                    })
+                    out["hit_cd"] = 18
+                    inc["hit_cd"] = 18
+                    made += 1
+                    break
+
+    def _move_hits(self):
+        keep = []
+        for h in self._hits:
+            h["age"] += 1
+            if h["age"] < h["life"]:
+                keep.append(h)
+        self._hits = keep
 
     # ── Drawing ────────────────────────────────────────────
 
@@ -437,6 +500,7 @@ class TrafficView(NSView):
         # Particles
         self._draw_parts(self._out)
         self._draw_parts(self._in_)
+        self._draw_hits()
 
         # Labels
         sm = _make_attrs(F_SM, (0.5, 0.5, 0.5, 1.0))
@@ -455,6 +519,35 @@ class TrafficView(NSView):
             _fill_oval(px, py, rad*2, rad*2)
             _c(r, g, b, op).set()
             _fill_oval(px, py, rad, rad)
+
+    def _draw_hits(self):
+        for h in self._hits:
+            t = h["age"] / float(max(1, h["life"]))
+            fade = 1.0 - t
+            r, g, b, _ = h["c"]
+            x, y = h["x"], h["y"]
+            base = h["r"]
+
+            _c(1.0, 1.0, 1.0, 0.55 * fade).set()
+            _fill_oval(x, y, base * _lerp(1.3, 0.45, t), base * _lerp(1.3, 0.45, t))
+
+            wave_r, wave_a = _impact_wave(base, t)
+            _c(1.0, 1.0, 1.0, wave_a).set()
+            _fill_oval(x, y, wave_r, wave_r)
+            _c(0.03, 0.03, 0.05, wave_a * 0.55).set()
+            _fill_oval(x, y, wave_r * 0.78, wave_r * 0.78)
+
+            ring = base * _lerp(2.2, 7.0, t)
+            _c(r, g, b, 0.20 * fade).set()
+            _fill_oval(x, y, ring, ring)
+            _c(0.03, 0.03, 0.05, 0.22 * fade).set()
+            _fill_oval(x, y, ring * 0.72, ring * 0.72)
+
+            for vx, vy in h.get("sparks", []):
+                sx = x + vx * t * ANIM_INTV * 8.0
+                sy = y + vy * t * ANIM_INTV * 8.0
+                _c(r, g, b, 0.70 * fade).set()
+                _fill_oval(sx, sy, base * 0.52, base * 0.52)
 
     # ── Info ───────────────────────────────────────────────
 
