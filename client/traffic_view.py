@@ -743,7 +743,7 @@ class TrafficView(NSView):
         highlight = NSBezierPath.bezierPath()
         highlight.moveToPoint_((pl, surface_y + 1.0))
         highlight.lineToPoint_((pr, surface_y + 1.0))
-        _c(0.80, 0.98, 1.0, 0.18).set()
+        _c(0.80, 0.98, 1.0, 0.10).set()
         highlight.setLineWidth_(1.0)
         highlight.stroke()
 
