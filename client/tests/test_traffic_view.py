@@ -75,7 +75,7 @@ def test_inbound_burst_particles_have_slightly_smaller_max_radius(monkeypatch):
     view = _FakeTrafficView()
     TrafficView._spawn_in(view, total=60 * 1024)
 
-    assert (3.0, 5.6) in ranges
+    assert (3.0, 3.7) in ranges
     assert (3.0, 6.5) not in ranges
 
 
