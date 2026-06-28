@@ -38,6 +38,8 @@ PXY = (0.5, 1.0, 0.0, 1.0)
 DIR = (0.1, 0.4, 1.0, 1.0)
 PXY_TXT = (0.0, 0.75, 0.3, 1.0)  # 更深绿，用于文字和chart曲线
 DIR_TXT = (0.3, 0.6, 1.0, 1.0)   # 稍浅蓝，用于文字和chart曲线
+PXY_RATIO = (0.0, 0.82, 0.55, 1.0)  # 翠绿色，用于代理/直连百分比条
+DIR_RATIO = (0.0, 0.62, 1.0, 1.0)   # 天蓝色，用于代理/直连百分比条
 PXY_IN = (
     (0.4, 1.0, 0.0, 1.0),
     (0.6, 1.0, 0.2, 1.0),
@@ -843,10 +845,10 @@ class TrafficView(NSView):
         _c(0, 0, 0, 0.06).set()
         _fill_rect(bx, by, bw, bh)
         if pr > 0.003:
-            _set_color(PXY_TXT)
+            _set_color(PXY_RATIO)
             _fill_rect(bx, by, max(3, bw*pr), bh)
         if dr > 0.003:
-            _set_color(DIR_TXT)
+            _set_color(DIR_RATIO)
             _fill_rect(bx + bw*pr, by, max(3, bw*dr), bh)
 
         ra = _make_attrs(F_SM, (0.4, 0.4, 0.4, 1.0))

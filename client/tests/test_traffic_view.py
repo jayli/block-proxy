@@ -6,7 +6,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from traffic_view import (
     DIR_IN,
+    DIR_RATIO,
+    DIR_TXT,
     PXY_IN,
+    PXY_RATIO,
+    PXY_TXT,
     TrafficView,
     _flow_wave_offset,
     _impact_wave,
@@ -59,6 +63,13 @@ def test_direct_inbound_palette_uses_premium_red_violet_tones():
         (0.86, 0.24, 1.0, 1.0),
         (0.98, 0.18, 0.42, 1.0),
     )
+
+
+def test_ratio_bar_uses_separate_emerald_and_sky_blue_colors():
+    assert PXY_RATIO == (0.0, 0.82, 0.55, 1.0)
+    assert DIR_RATIO == (0.0, 0.62, 1.0, 1.0)
+    assert PXY_RATIO != PXY_TXT
+    assert DIR_RATIO != DIR_TXT
 
 
 def test_inbound_burst_particles_have_slightly_smaller_max_radius(monkeypatch):
