@@ -237,6 +237,9 @@ class ConfigWindowController(NSObject):
         config["local"]["proxy_private"] = bool(self._proxy_private_cb.state())
         config["autostart"] = bool(self._autostart_cb.state())
 
+        from autostart import sync
+        sync(getattr(self, "_app_path", None), config["autostart"])
+
         with open(self._config_path, "w") as f:
             json.dump(config, f, indent=2)
 
@@ -244,21 +247,24 @@ class ConfigWindowController(NSObject):
         NSApp.stopModal()
 
 
-def show_config_window(config_path):
+def show_config_window(config_path, app_path=None):
     ctrl = ConfigWindowController.alloc().initWithConfigPath_(config_path)
     if ctrl is None:
         return
+    ctrl._app_path = app_path
     ctrl.show()
     NSApp.runModalForWindow_(ctrl._window)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python config_window.py <config_path>")
-        sys.exit(1)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("config_path")
+    parser.add_argument("--app-path", default=None)
+    args = parser.parse_args()
 
     from AppKit import NSScreen
 
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-    show_config_window(sys.argv[1])
+    show_config_window(args.config_path, args.app_path)

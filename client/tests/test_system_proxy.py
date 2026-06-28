@@ -26,6 +26,7 @@ class TestSystemProxy:
             call(["networksetup", "-setwebproxystate", "Wi-Fi", "on"], capture_output=True, text=True),
             call(["networksetup", "-setsecurewebproxy", "Wi-Fi", "127.0.0.1", "1087"], capture_output=True, text=True),
             call(["networksetup", "-setsecurewebproxystate", "Wi-Fi", "on"], capture_output=True, text=True),
+            call(["networksetup", "-setproxybypassdomains", "Wi-Fi", "*.local", "169.254.0.0/16", "127.0.0.1", "localhost", "0.0.0.0", "::1", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"], capture_output=True, text=True),
         ]
         mock_run.assert_has_calls(expected_calls, any_order=True)
 
@@ -41,6 +42,7 @@ class TestSystemProxy:
             call(["networksetup", "-setsocksfirewallproxystate", "Wi-Fi", "off"], capture_output=True, text=True),
             call(["networksetup", "-setwebproxystate", "Wi-Fi", "off"], capture_output=True, text=True),
             call(["networksetup", "-setsecurewebproxystate", "Wi-Fi", "off"], capture_output=True, text=True),
+            call(["networksetup", "-setproxybypassdomains", "Wi-Fi", "Empty"], capture_output=True, text=True),
         ]
         mock_run.assert_has_calls(expected_calls, any_order=True)
 
@@ -52,8 +54,8 @@ class TestSystemProxy:
 
         self.proxy.enable(socks_port=1080, http_port=1087)
 
-        # 6 set calls per interface x 2 + 3 verify calls per interface x 2 = 18
-        assert mock_run.call_count == 18
+        # 7 set calls per interface x 2 + 3 verify calls per interface x 2 = 20
+        assert mock_run.call_count == 20
 
     @patch("system_proxy.subprocess.run")
     def test_get_active_interfaces(self, mock_run):

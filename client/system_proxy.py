@@ -6,6 +6,18 @@ from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("system_proxy")
 
+BYPASS_DOMAINS = [
+    "*.local",
+    "169.254.0.0/16",
+    "127.0.0.1",
+    "localhost",
+    "0.0.0.0",
+    "::1",
+    "192.168.0.0/16",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+]
+
 
 def _run_networksetup(args):
     result = subprocess.run(args, capture_output=True, text=True)
@@ -58,6 +70,9 @@ class SystemProxy:
                 ["networksetup", "-setsecurewebproxy", iface, "127.0.0.1", str(http_port)],
                 ["networksetup", "-setsecurewebproxystate", iface, "on"],
             ])
+            tasks.append(
+                ["networksetup", "-setproxybypassdomains", iface] + BYPASS_DOMAINS
+            )
         with ThreadPoolExecutor(max_workers=8) as pool:
             list(pool.map(_run_networksetup, tasks))
         self._enabled = True
@@ -88,6 +103,9 @@ class SystemProxy:
                 ["networksetup", "-setwebproxystate", iface, "off"],
                 ["networksetup", "-setsecurewebproxystate", iface, "off"],
             ])
+            tasks.append(
+                ["networksetup", "-setproxybypassdomains", iface, "Empty"]
+            )
         with ThreadPoolExecutor(max_workers=8) as pool:
             list(pool.map(_run_networksetup, tasks))
         self._enabled = False

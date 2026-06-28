@@ -54,6 +54,14 @@ def _bundle_resource_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _bundle_path():
+    """Return the .app bundle path in compiled mode, None in dev mode."""
+    if _is_compiled():
+        # sys.executable = .../SocksClient.app/Contents/MacOS/SocksClient
+        return os.path.dirname(os.path.dirname(os.path.dirname(sys.executable)))
+    return None
+
+
 def _icon_dir():
     return os.path.join(_bundle_resource_dir(), "icons")
 
@@ -308,9 +316,11 @@ class AppController(NSObject):
         self.config.save()
         script_path = os.path.join(_bundle_resource_dir(), "config_window.py")
         python_path = self._find_python() if _is_compiled() else sys.executable
-        self._config_proc = subprocess.Popen(
-            [python_path, script_path, self.config.config_path]
-        )
+        args = [python_path, script_path, self.config.config_path]
+        bundle_path = _bundle_path()
+        if bundle_path:
+            args.extend(["--app-path", bundle_path])
+        self._config_proc = subprocess.Popen(args)
 
         def _reload_after():
             self._config_proc.wait()
@@ -383,6 +393,9 @@ class AppController(NSObject):
         if self.connected:
             self.sys_proxy.disable()
             self.proxy.stop()
+        if not self.config.data.get("autostart", False):
+            from autostart import disable
+            disable()
 
     # ------------------------------------------------------------------
     # Health check
