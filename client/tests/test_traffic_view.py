@@ -1,13 +1,17 @@
+import math
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from traffic_view import (
+    PXY_IN,
+    _flow_wave_offset,
     _impact_wave,
     _particles_can_collide,
     _spark_count,
     _spark_line,
+    _spark_speed,
     _visible_curve_points,
 )
 
@@ -18,6 +22,13 @@ def test_visible_curve_points_do_not_extend_to_left_edge_before_data_arrives():
     visible = _visible_curve_points(pts, left_x=10.0, right_x=120.0)
 
     assert visible[0] == (90.0, 20.0)
+
+
+def test_proxy_inbound_palette_uses_electric_violet_tones():
+    assert PXY_IN == (
+        (0.58, 0.36, 1.0, 1.0),
+        (1.0, 0.38, 0.92, 1.0),
+    )
 
 
 def test_particles_can_collide_when_position_and_size_are_close():
@@ -42,6 +53,23 @@ def test_impact_wave_expands_and_fades():
     assert late_a < early_a
 
 
+def test_flow_wave_offset_is_not_a_plain_sine():
+    x, scroll, phase, freq, amp, weight = 120.0, 18.0, 25.0, 1.15, 12.0, 0.8
+    plain = math.sin((x + scroll + phase) / (38.0 * freq)) * amp * weight
+
+    assert _flow_wave_offset(x, scroll, phase, freq, amp, weight) != plain
+
+
+def test_flow_wave_offset_stays_continuous():
+    pts = [
+        _flow_wave_offset(float(x), 22.0, 50.0, 1.2, 18.0, 0.75)
+        for x in range(0, 96, 4)
+    ]
+    jumps = [abs(pts[i] - pts[i - 1]) for i in range(1, len(pts))]
+
+    assert max(jumps) < 6.0
+
+
 def test_spark_line_intensity_makes_line_longer_and_farther():
     low = _spark_line(100.0, 50.0, 40.0, 0.0, t=0.5, intensity=0.8)
     high = _spark_line(100.0, 50.0, 40.0, 0.0, t=0.5, intensity=1.4)
@@ -58,7 +86,24 @@ def test_spark_line_length_scale_stays_within_current_maximum():
     assert (full[0][0] - full[1][0]) <= 8.5
 
 
+def test_spark_line_travel_eases_out():
+    start = _spark_line(100.0, 50.0, 40.0, 0.0, t=0.0, intensity=1.0)
+    early = _spark_line(100.0, 50.0, 40.0, 0.0, t=0.2, intensity=1.0)
+    late = _spark_line(100.0, 50.0, 40.0, 0.0, t=0.8, intensity=1.0)
+    end = _spark_line(100.0, 50.0, 40.0, 0.0, t=1.0, intensity=1.0)
+
+    early_step = early[0][0] - start[0][0]
+    late_step = end[0][0] - late[0][0]
+
+    assert early_step > late_step * 1.5
+
+
 def test_spark_count_is_bounded():
     for intensity in (0.6, 1.0, 1.6):
         count = _spark_count(intensity)
         assert 3 <= count <= 7
+
+
+def test_spark_speed_radius_is_slightly_smaller():
+    assert _spark_speed(1.0, unit=0.0) == 50.0
+    assert _spark_speed(1.0, unit=1.0) == 82.0

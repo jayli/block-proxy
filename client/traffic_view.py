@@ -37,8 +37,8 @@ ANIM_INTV = 1.0 / 25.0
 PXY = (0.10, 0.88, 0.40, 1.0)
 DIR = (0.25, 0.60, 1.0, 1.0)
 PXY_IN = (
-    (0.74, 0.45, 1.0, 1.0),
-    (0.90, 0.50, 0.82, 1.0),
+    (0.58, 0.36, 1.0, 1.0),
+    (1.0, 0.38, 0.92, 1.0),
 )
 DIR_IN = (
     (1.0, 0.84, 0.34, 1.0),
@@ -125,15 +125,30 @@ def _impact_wave(base, t):
     return base * _lerp(2.8, 10.5, t), 0.26 * ((1.0 - t) ** 1.7)
 
 
+def _flow_wave_offset(x, scroll, phase, freq, amp, weight):
+    freq = max(0.2, freq)
+    primary = math.sin((x + scroll + phase) / (38.0 * freq))
+    drift = math.sin((x + scroll * 0.72 + phase * 1.7) / (17.0 * freq) + 1.2)
+    swell = math.sin((x - scroll * 0.38 + phase * 0.55) / (82.0 * freq) - 0.7)
+    return (primary * 0.72 + drift * 0.20 + swell * 0.16) * amp * weight
+
+
 def _spark_count(intensity):
     return random.randint(3, 7)
+
+
+def _spark_speed(intensity, unit=None):
+    if unit is None:
+        unit = random.random()
+    return _lerp(50.0, 82.0, _clamp(unit, 0.0, 1.0)) * intensity
 
 
 def _spark_line(x, y, vx, vy, t, intensity=1.0, length_scale=1.0):
     t = _clamp(t, 0.0, 1.0)
     intensity = _clamp(intensity, 0.6, 1.6)
     length_scale = _clamp(length_scale, 0.35, 1.0)
-    travel = t * ANIM_INTV * 13.0 * intensity
+    travel_t = 1.0 - ((1.0 - t) ** 2.2)
+    travel = travel_t * ANIM_INTV * 13.0 * intensity
     head = (x + vx * travel, y + vy * travel)
     mag = math.hypot(vx, vy) or 1.0
     length_t = _clamp((intensity - 0.6) / 1.0, 0.0, 1.0)
@@ -390,7 +405,7 @@ class TrafficView(NSView):
                     count = _spark_count(intensity)
                     for i in range(count):
                         a = (math.pi * 2.0 / count) * i + random.uniform(-0.35, 0.35)
-                        sp = random.uniform(58.0, 96.0) * intensity
+                        sp = _spark_speed(intensity)
                         sparks.append((
                             math.cos(a) * sp,
                             math.sin(a) * sp,
@@ -482,15 +497,22 @@ class TrafficView(NSView):
             if wt < 0.05:
                 continue
             a = base_a * wt
-            _c(col[0], col[1], col[2], a).set()
             path = NSBezierPath.bezierPath()
             x = 0.0
-            path.moveToPoint_((x, mid))
+            path.moveToPoint_((x, mid + _flow_wave_offset(x, scroll, phase, freq, amp, wt)))
             while x < w:
-                v = math.sin((x + scroll + phase) / (38.0 * freq)) * amp * wt
-                path.lineToPoint_((x, mid + v))
+                path.lineToPoint_(
+                    (x, mid + _flow_wave_offset(x, scroll, phase, freq, amp, wt)))
                 x += 4.0
-            path.setLineWidth_(lw * _lerp(0.6, 1.0, wt))
+
+            _c(col[0], col[1], col[2], a * 0.24).set()
+            path.setLineWidth_(lw * _lerp(2.4, 3.4, wt))
+            path.setLineCapStyle_(1)
+            path.stroke()
+
+            _c(col[0], col[1], col[2], a * 1.05).set()
+            path.setLineWidth_(lw * _lerp(0.55, 0.9, wt))
+            path.setLineCapStyle_(1)
             path.stroke()
 
         # Edge highlights
