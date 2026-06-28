@@ -153,7 +153,9 @@ class RoutingEngine:
 
         Returns None if routing is disabled (caller should use default proxy behavior).
 
-        Priority: direct rules > proxy rules > default action.
+        Priority: rules matching the default action take priority.
+          default=direct → direct_rules → proxy_rules → default
+          default=proxy  → proxy_rules  → direct_rules → default
         Domain targets only match geosite rules; IP targets only match geoip rules.
 
         Safety: when geodata is unavailable, negated rules do NOT match
@@ -195,8 +197,14 @@ class RoutingEngine:
                     return True
             return False
 
-        if _match_rules(self._direct_rules):
-            return "direct"
-        if _match_rules(self._proxy_rules):
-            return "proxy"
+        if self._default_action == "direct":
+            if _match_rules(self._direct_rules):
+                return "direct"
+            if _match_rules(self._proxy_rules):
+                return "proxy"
+        else:
+            if _match_rules(self._proxy_rules):
+                return "proxy"
+            if _match_rules(self._direct_rules):
+                return "direct"
         return self._default_action

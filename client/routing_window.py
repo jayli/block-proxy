@@ -483,9 +483,9 @@ class RoutingWindowController(NSObject):
         default = self._default_popup.titleOfSelectedItem()
         if enabled:
             if default == "proxy":
-                hint = "（根据当前规则分流，默认走代理）"
+                hint = "（代理规则→直连规则→默认代理）"
             else:
-                hint = "（根据当前规则分流，默认走直连）"
+                hint = "（直连规则→代理规则→默认直连）"
         else:
             if default == "proxy":
                 hint = "（未启用分流，流量全部走代理）"

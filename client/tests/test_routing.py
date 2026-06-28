@@ -165,10 +165,20 @@ class TestResolve:
         engine._loader = mock_loader
         return engine
 
-    def test_direct_geosite_takes_priority(self):
+    def test_default_proxy_makes_proxy_rules_priority(self):
         engine = self._make_engine(
             direct_rules=[("geosite", "cn", False)],
             proxy_rules=[("geosite", "cn", False)],
+            default="proxy",
+            geosite_data={"cn": [("domain", "baidu.com")]},
+        )
+        assert engine.resolve("baidu.com", is_domain=True) == "proxy"
+
+    def test_default_direct_makes_direct_rules_priority(self):
+        engine = self._make_engine(
+            direct_rules=[("geosite", "cn", False)],
+            proxy_rules=[("geosite", "cn", False)],
+            default="direct",
             geosite_data={"cn": [("domain", "baidu.com")]},
         )
         assert engine.resolve("baidu.com", is_domain=True) == "direct"
