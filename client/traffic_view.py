@@ -151,6 +151,36 @@ def _flow_line_width(load):
     return _lerp(1.2, 3.5 * 2.0 / 3.0, _clamp(load, 0.0, 1.0))
 
 
+def _water_surface_y(y0, y1):
+    return y0 + (y1 - y0) * 0.68
+
+
+def _reflection_point(px, py, surface_y, scroll, phase=0.0):
+    dist = max(0.0, surface_y - py)
+    wave = (
+        math.sin((px + scroll * 1.35 + phase) / 18.0) * 1.45 +
+        math.sin((px - scroll * 0.62 + phase * 1.7) / 8.5) * 0.52
+    )
+    drift = (
+        math.sin((py + scroll * 0.85 + phase) / 24.0) * 1.65 +
+        math.sin((px + phase) / 43.0) * 0.70
+    )
+    return px + drift, surface_y + dist * 0.62 + wave
+
+
+def _reflection_alpha(py, surface_y, bottom_y, op):
+    if py >= surface_y:
+        return 0.0
+    mirrored_y = surface_y + (surface_y - py) * 0.62
+    depth_t = _clamp((mirrored_y - surface_y) / max(1.0, bottom_y - surface_y), 0.0, 1.0)
+    air_t = _clamp((surface_y - py) / 42.0, 0.0, 1.0)
+    return op * 0.34 * air_t * ((1.0 - depth_t) ** 0.9)
+
+
+def _reflection_ellipse(rad):
+    return rad * 2.65, max(0.45, rad * 0.32)
+
+
 def _spark_count(intensity):
     return random.randint(3, 7)
 
@@ -656,6 +686,8 @@ class TrafficView(NSView):
             _c(rc[0], rc[1], rc[2], gi*0.18).set()
             _fill_oval(pr - 9, mid, 13, 13)
 
+        self._draw_water_reflections(pl, pr, y0, y1)
+
         # Particles
         self._draw_parts(self._out)
         self._draw_parts(self._in_)
@@ -667,6 +699,70 @@ class TrafficView(NSView):
         sm = _make_attrs(F_SM, (0.5, 0.5, 0.5, 1.0))
         _draw_text("本机", pl + 6, y1 - 18, sm)
         _draw_text("互联网", pr - 42, y1 - 18, sm)
+
+    def _draw_water_reflections(self, pl, pr, y0, y1):
+        surface_y = _water_surface_y(y0, y1)
+        water_h = y1 - surface_y
+        if water_h <= 2.0:
+            return
+
+        try:
+            from AppKit import NSGradient
+            grad = NSGradient.alloc().initWithStartingColor_endingColor_(
+                _c(0.06, 0.18, 0.24, 0.20), _c(0.01, 0.04, 0.07, 0.42))
+            grad.drawInRect_angle_(((pl, surface_y), (pr - pl, water_h)), 90.0)
+        except Exception:
+            _c(0.03, 0.11, 0.16, 0.24).set()
+            _fill_rect(pl, surface_y, pr - pl, water_h)
+
+        scroll = self._scroll
+        for i, (alpha, offset, amp, step) in enumerate((
+                (0.18, 0.0, 1.10, 5.0),
+                (0.12, 17.0, 0.75, 6.0),
+                (0.08, 43.0, 1.55, 7.0))):
+            path = NSBezierPath.bezierPath()
+            x = float(pl)
+            y = surface_y + 4.0 + i * max(4.0, water_h * 0.18)
+            path.moveToPoint_((x, y))
+            while x <= pr:
+                ripple = (
+                    math.sin((x + scroll * 1.6 + offset) / 22.0) * amp +
+                    math.sin((x - scroll * 0.9 + offset) / 9.0) * amp * 0.28
+                )
+                path.lineToPoint_((x, y + ripple))
+                x += step
+            _c(0.42, 0.84, 0.95, alpha).set()
+            path.setLineWidth_(_lerp(0.45, 0.9, i / 2.0))
+            path.setLineCapStyle_(1)
+            path.stroke()
+
+        self._draw_reflection_parts(self._out, surface_y, y1, scroll, 0.0)
+        self._draw_reflection_parts(self._in_, surface_y, y1, scroll, 23.0)
+
+    def _draw_reflection_parts(self, parts, surface_y, bottom_y, scroll, phase):
+        for p in parts:
+            op = _reflection_alpha(p["y"], surface_y, bottom_y, p["op"])
+            if op < 0.01:
+                continue
+            r, g, b, _ = p["c"]
+            px, py = _reflection_point(p["x"], p["y"], surface_y, scroll, phase)
+            if py > bottom_y + 4.0:
+                continue
+            rx, ry = _reflection_ellipse(p["r"])
+            shimmer = 0.78 + math.sin((p["x"] + scroll * 2.1 + phase) / 13.0) * 0.16
+
+            _c(r, g, b, op * 0.34).set()
+            _fill_oval(px, py, rx * 2.4, ry * 2.2)
+            _c(r, g, b, op * shimmer).set()
+            _fill_oval(px, py, rx, ry)
+
+            path = NSBezierPath.bezierPath()
+            path.moveToPoint_((px - rx * 1.6, py))
+            path.lineToPoint_((px + rx * 1.6, py + math.sin((px + scroll) / 11.0) * 0.9))
+            _c(r, g, b, op * 0.55).set()
+            path.setLineWidth_(max(0.4, ry * 0.7))
+            path.setLineCapStyle_(1)
+            path.stroke()
 
     def _draw_parts(self, parts):
         for p in parts:

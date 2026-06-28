@@ -16,6 +16,10 @@ from traffic_view import (
     _flow_wave_offset,
     _impact_wave,
     _particles_can_collide,
+    _reflection_alpha,
+    _reflection_ellipse,
+    _reflection_point,
+    _water_surface_y,
     _spark_count,
     _spark_line,
     _spark_speed,
@@ -90,6 +94,37 @@ def test_flow_line_width_transitions_smoothly_and_caps_peak_thickness():
     assert idle == 1.2
     assert idle < mid < peak
     assert peak <= 3.5 * 2.0 / 3.0
+
+
+def test_water_surface_sits_in_lower_pipe_band():
+    assert _water_surface_y(100.0, 200.0) == 168.0
+
+
+def test_reflection_point_mirrors_particle_into_water_with_wave_distortion():
+    still_x, still_y = _reflection_point(
+        px=120.0, py=140.0, surface_y=168.0, scroll=0.0, phase=0.0)
+    wave_x, wave_y = _reflection_point(
+        px=120.0, py=140.0, surface_y=168.0, scroll=24.0, phase=9.0)
+
+    assert 184.0 < still_y < 188.0
+    assert abs(still_x - 120.0) < 3.0
+    assert (wave_x, wave_y) != (still_x, still_y)
+
+
+def test_reflection_fades_as_particles_touch_or_sink_below_surface():
+    above = _reflection_alpha(py=140.0, surface_y=168.0, bottom_y=200.0, op=0.9)
+    near_surface = _reflection_alpha(py=166.0, surface_y=168.0, bottom_y=200.0, op=0.9)
+    below = _reflection_alpha(py=174.0, surface_y=168.0, bottom_y=200.0, op=0.9)
+
+    assert above > near_surface > below
+    assert below == 0.0
+
+
+def test_reflection_ellipse_is_wider_and_flatter_than_particle():
+    rx, ry = _reflection_ellipse(3.0)
+
+    assert rx > 3.0
+    assert ry < 3.0
 
 
 def test_inbound_burst_particles_have_slightly_smaller_max_radius(monkeypatch):
