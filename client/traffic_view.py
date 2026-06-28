@@ -601,13 +601,14 @@ class TrafficView(NSView):
 
         _draw_text("当前速度 (↓上传 / ↑下载)", PAD, y1 - 14, la)
         _draw_text(f"代理  {_fmts(self._pso)} ↓  {_fmts(self._psi)} ↑", PAD, y1 - 36, pa)
-        _draw_text(f"直连  {_fmts(self._dso)} ↓  {_fmts(self._dsi)} ↑", PAD + 210, y1 - 36, da)
+        direct_x = PAD + 210
+        _draw_text(f"直连  {_fmts(self._dso)} ↓  {_fmts(self._dsi)} ↑", direct_x, y1 - 36, da)
 
         _draw_text(f"代理累计: {_fmt(self._tpo + self._tpi)}", PAD, y1 - 56, ta)
-        _draw_text(f"直连累计: {_fmt(self._tdo + self._tdi)}", PAD + 170, y1 - 56, ta)
+        _draw_text(f"直连累计: {_fmt(self._tdo + self._tdi)}", direct_x, y1 - 56, ta)
 
         # Ratio bar
-        bx, bw, bh, by = w - 240, 220, 18, y1 - 28
+        bx, bw, bh, by = w - 240, 220, 6, y1 - 22
         pt = self._tpo + self._tpi
         dt = self._tdo + self._tdi
         tot = pt + dt
