@@ -136,6 +136,17 @@ def test_reflection_glint_is_brighter_than_base_reflection():
     assert glint <= 0.42
 
 
+def test_water_glint_segments_break_ripples_into_shimmering_strokes():
+    segments = traffic_view._water_glint_segments(
+        left_x=20.0, right_x=180.0, base_y=140.0, scroll=12.0,
+        offset=17.0, amp=0.75, step=6.0, alpha=0.18)
+
+    assert len(segments) >= 4
+    assert all(start_x < end_x for start_x, _, end_x, _, _ in segments)
+    assert all(end_x - start_x < 52.0 for start_x, _, end_x, _, _ in segments)
+    assert len({round(alpha, 3) for *_, alpha in segments}) > 1
+
+
 def test_inbound_burst_particles_have_slightly_smaller_max_radius(monkeypatch):
     ranges = []
 

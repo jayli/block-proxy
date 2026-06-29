@@ -155,6 +155,34 @@ def _water_surface_y(y0, y1):
     return y0 + (y1 - y0) * 0.68
 
 
+def _water_ripple_y(x, base_y, scroll, offset, amp):
+    return base_y + (
+        math.sin((x + scroll * 1.6 + offset) / 22.0) * amp +
+        math.sin((x - scroll * 0.9 + offset) / 9.0) * amp * 0.28
+    )
+
+
+def _water_glint_segments(left_x, right_x, base_y, scroll, offset, amp, step, alpha):
+    segments = []
+    x = float(left_x)
+    index = 0
+    while x <= right_x:
+        shimmer = 0.5 + 0.5 * math.sin((x + scroll * 1.25 + offset * 1.7) / 19.0)
+        gap = _lerp(step * 1.65, step * 3.4, shimmer)
+        length = _lerp(step * 2.2, step * 6.2, 1.0 - shimmer)
+        start_x = x + math.sin((x + offset) / 13.0) * step * 0.25
+        end_x = min(right_x, start_x + length)
+        if end_x > left_x and end_x - start_x > step * 1.2:
+            start_x = max(left_x, start_x)
+            start_y = _water_ripple_y(start_x, base_y, scroll, offset, amp)
+            end_y = _water_ripple_y(end_x, base_y, scroll, offset, amp)
+            pulse = 0.72 + 0.28 * math.sin((index * 1.9) + scroll / 15.0 + offset)
+            segments.append((start_x, start_y, end_x, end_y, alpha * pulse))
+        x += gap + length * 0.38
+        index += 1
+    return segments
+
+
 def _reflection_point(px, py, surface_y, scroll, phase=0.0):
     dist = max(0.0, surface_y - py)
     wave = (
@@ -724,21 +752,25 @@ class TrafficView(NSView):
                 (0.28, 0.0, 1.10, 5.0),
                 (0.18, 17.0, 0.75, 6.0),
                 (0.12, 43.0, 1.55, 7.0))):
-            path = NSBezierPath.bezierPath()
-            x = float(pl)
             y = surface_y + 4.0 + i * max(4.0, water_h * 0.18)
-            path.moveToPoint_((x, y))
-            while x <= pr:
-                ripple = (
-                    math.sin((x + scroll * 1.6 + offset) / 22.0) * amp +
-                    math.sin((x - scroll * 0.9 + offset) / 9.0) * amp * 0.28
-                )
-                path.lineToPoint_((x, y + ripple))
-                x += step
-            _c(0.42, 0.84, 0.95, alpha).set()
-            path.setLineWidth_(_lerp(0.45, 0.9, i / 2.0))
-            path.setLineCapStyle_(1)
-            path.stroke()
+            for x0, y0s, x1, y1s, seg_alpha in _water_glint_segments(
+                    pl, pr, y, scroll, offset, amp, step, alpha):
+                path = NSBezierPath.bezierPath()
+                path.moveToPoint_((x0, y0s))
+                path.lineToPoint_((x1, y1s))
+                _c(0.34, 0.78, 0.90, seg_alpha * 0.78).set()
+                path.setLineWidth_(_lerp(0.85, 1.55, i / 2.0))
+                path.setLineCapStyle_(1)
+                path.stroke()
+
+                core = NSBezierPath.bezierPath()
+                inset = min((x1 - x0) * 0.22, step * 1.4)
+                core.moveToPoint_((x0 + inset, (y0s + y1s) * 0.5 - 0.15))
+                core.lineToPoint_((x1 - inset, y1s - 0.15))
+                _c(0.78, 0.98, 1.0, min(0.30, seg_alpha * 1.35)).set()
+                core.setLineWidth_(_lerp(0.35, 0.65, i / 2.0))
+                core.setLineCapStyle_(1)
+                core.stroke()
 
         highlight = NSBezierPath.bezierPath()
         highlight.moveToPoint_((pl, surface_y + 1.0))
