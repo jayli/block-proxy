@@ -520,7 +520,7 @@ class TrafficView(NSView):
                     # Lightning arcs — guaranteed for lightning style
                     arcs = []
                     if style == "lightning" or random.random() < 0.06:
-                        arc_n = random.randint(2, 5) if style == "lightning" else random.randint(1, 3)
+                        arc_n = random.randint(1, 3) if style == "lightning" else random.randint(1, 2)
                         for _ in range(arc_n):
                             angle = random.uniform(0, math.pi * 2)
                             segs = []
@@ -534,13 +534,13 @@ class TrafficView(NSView):
                                 cy += math.sin(angle + da) * sl
                                 segs.append((cx, cy))
                             branches = []
-                            if style == "lightning" and len(segs) >= 2 and random.random() < 0.55:
+                            if style == "lightning" and len(segs) >= 3 and random.random() < 0.35:
                                 bi = random.randint(1, min(3, len(segs) - 1))
                                 bx, by = segs[bi]
                                 bda = da + random.uniform(-1.2, 1.2)
-                                for _ in range(random.randint(2, 4)):
+                                for _ in range(random.randint(1, 3)):
                                     bda += random.uniform(-0.7, 0.7)
-                                    bl = random.uniform(2, 6) * intensity
+                                    bl = random.uniform(2, 5) * intensity
                                     bx += math.cos(angle + bda) * bl
                                     by += math.sin(angle + bda) * bl
                                     branches.append((bx, by))
