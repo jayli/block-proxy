@@ -77,7 +77,7 @@ docker run -d \
   --name block-proxy \
   --network=host \
   -v /path/to/config.json:/app/config.json \
-  -v /path/to/rule.js:/app/rule.js \
+  -v /path/to/rule.js:/app/config/rule.js \
   --restart=always \
   crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest
 ```
