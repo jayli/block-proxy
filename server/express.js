@@ -1,6 +1,7 @@
 // server.js
 const express = require('express');
 const fs = require('fs');
+const crypto = require('crypto');
 const _fs = require('../proxy/fs.js');
 const path = require('path');
 const util = require('./util');
@@ -15,11 +16,103 @@ const PORT = 8003;
 const DEV = process.env.BLOCK_PROXY_DEV || 0;
 const configPath = path.join(__dirname, '../config.json');
 
+// 启动时生成随机密钥，用于签发认证 token
+const TOKEN_SECRET = crypto.randomBytes(32).toString('hex');
+
+function generateToken(username) {
+  return crypto.createHmac('sha256', TOKEN_SECRET).update(username).digest('hex');
+}
+
+// 从 Cookie header 中提取指定 cookie 值
+function getCookie(req, name) {
+  const cookies = req.headers.cookie || '';
+  const match = cookies.split(';').map(c => c.trim()).find(c => c.startsWith(name + '='));
+  return match ? decodeURIComponent(match.split('=')[1]) : null;
+}
+
+// 认证中间件：检查 cookie 中的 bp_token
+function checkAuth(req) {
+  const configData = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  const loginUsername = configData.login_username || '';
+  const loginPassword = configData.login_password || '';
+
+  // 未设置登录凭证时跳过认证
+  if (!loginUsername && !loginPassword) {
+    return true;
+  }
+
+  const token = getCookie(req, 'bp_token');
+  if (!token) return false;
+
+  const expected = generateToken(loginUsername);
+  return token === expected;
+}
+
+// 登录接口（不需要认证）
+app.post('/api/login', (req, res) => {
+  let body = '';
+  req.on('data', chunk => { body += chunk.toString(); });
+  req.on('end', () => {
+    try {
+      const { username, password } = JSON.parse(body);
+      const configData = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      const loginUsername = configData.login_username || '';
+      const loginPassword = configData.login_password || '';
+
+      if (!loginUsername && !loginPassword) {
+        return res.status(200).json({ message: '无需登录' });
+      }
+
+      if (username === loginUsername && password === loginPassword) {
+        const token = generateToken(loginUsername);
+        res.setHeader('Set-Cookie', `bp_token=${token}; Path=/; SameSite=Lax`);
+        return res.status(200).json({ message: '登录成功' });
+      }
+
+      res.status(401).json({ error: '用户名或密码错误' });
+    } catch (err) {
+      res.status(400).json({ error: '请求格式错误' });
+    }
+  });
+});
+
+// 检查认证状态接口（不需要认证中间件拦截）
+app.get('/api/auth-check', (req, res) => {
+  try {
+    const authenticated = checkAuth(req);
+    res.status(200).json({ authenticated });
+  } catch (error) {
+    res.status(200).json({ authenticated: true });
+  }
+});
+
+// 登出接口
+app.post('/api/logout', (req, res) => {
+  res.setHeader('Set-Cookie', 'bp_token=; Path=/; Max-Age=0');
+  res.status(200).json({ message: '已登出' });
+});
+
+// 认证中间件：保护 /api/* 路由（排除 login/auth-check/logout）
+app.use('/api', (req, res, next) => {
+  if (req.path === '/login' || req.path === '/auth-check' || req.path === '/logout') {
+    return next();
+  }
+  try {
+    if (checkAuth(req)) {
+      return next();
+    }
+    res.status(401).json({ error: '未登录' });
+  } catch (error) {
+    // config.json 解析失败时跳过认证
+    next();
+  }
+});
+
 // 1. 托管 React build 后的静态文件
 const staticPath = path.join(__dirname, '../build/');
 app.use(express.static(staticPath));
 
-// 2. （可选）处理 API 接口 —— 这里可以放你原来的“本地服务”逻辑
+// 2. （可选）处理 API 接口 —— 这里可以放你原来的”本地服务”逻辑
 app.get('/api/hello', (req, res) => {
   res.json({ message: 'Hello from Express!' });
 });
@@ -74,6 +167,9 @@ app.get('/api/config', async (req, res) => {
     const configPath = path.join(__dirname, '../config.json');
     if (fs.existsSync(configPath)) {
       const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      // 兼容旧配置：补全新字段默认值
+      if (!('login_username' in config)) config.login_username = '';
+      if (!('login_password' in config)) config.login_password = '';
       res.status(200).json(config);
     } else {
       res.status(404).json({ error: 'Config file not found' });
@@ -135,16 +231,16 @@ app.get('/api/config/export', (req, res) => {
 
 // 导入配置接口（带格式校验）
 const REQUIRED_FIELDS = [
-  { key: 'proxy_port',     type: 'number',  label: '代理端口' },
-  { key: 'socks5_port',    type: 'number',  label: 'SOCKS5端口' },
-  { key: 'block_hosts',    type: 'array',   label: '拦截主机列表' },
-  { key: 'auth_username',  type: 'string',  label: '认证用户名' },
-  { key: 'auth_password',  type: 'string',  label: '认证密码' },
-  { key: 'enable_mitm',    type: 'string',  label: 'MITM开关' },
-  { key: 'enable_socks5',  type: 'string',  label: 'SOCKS5开关' },
-  { key: 'enable_express', type: 'string',  label: '管理面板开关' },
-  { key: 'devices',        type: 'array',   label: '设备列表' },
-  { key: 'rule_modules',   type: 'object',  label: '规则模块' },
+  { key: 'proxy_port',       type: 'number',  label: '代理端口' },
+  { key: 'socks5_port',      type: 'number',  label: 'SOCKS5端口' },
+  { key: 'block_hosts',      type: 'array',   label: '拦截主机列表' },
+  { key: 'auth_username',    type: 'string',  label: '认证用户名' },
+  { key: 'auth_password',    type: 'string',  label: '认证密码' },
+  { key: 'enable_mitm',      type: 'string',  label: 'MITM开关' },
+  { key: 'enable_socks5',    type: 'string',  label: 'SOCKS5开关' },
+  { key: 'enable_express',   type: 'string',  label: '管理面板开关' },
+  { key: 'devices',          type: 'array',   label: '设备列表' },
+  { key: 'rule_modules',     type: 'object',  label: '规则模块' },
 ];
 
 app.post('/api/config/import', async (req, res) => {
@@ -210,6 +306,12 @@ app.post('/api/config/import', async (req, res) => {
         // 兼容老旧配置：补全新增字段的默认值
         if (!('socks5_tls' in newConfig)) {
           newConfig.socks5_tls = "1";
+        }
+        if (!('login_username' in newConfig)) {
+          newConfig.login_username = "";
+        }
+        if (!('login_password' in newConfig)) {
+          newConfig.login_password = "";
         }
 
         // 校验通过，写入配置
@@ -317,7 +419,7 @@ app.use(/\/proxy\/*/, async (req, res) => {
   }
 });
 
-// 证书下载接口
+// 证书下载接口（无需登录认证）
 app.get('/fetchCrtFile', (req, res) => {
   try {
     const certPath = path.join(__dirname, '../cert/rootCA.crt');

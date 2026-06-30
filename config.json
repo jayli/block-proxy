@@ -79,5 +79,7 @@
   "socks5_port": 8002,
   "rule_modules": {},
   "devices": [],
-  "enable_mitm": "1"
+  "enable_mitm": "1",
+  "login_username": "",
+  "login_password": ""
 }

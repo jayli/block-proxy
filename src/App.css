@@ -1024,3 +1024,98 @@ button {
   font-size: 13px;
   line-height: 1.4;
 }
+
+/* ===== 登录页 ===== */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0a0d14 0%, #0f1320 30%, #0d1118 70%, #0a0e16 100%);
+  padding: 24px;
+}
+
+.login-form {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 40px 36px;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--surface-border);
+  width: 100%;
+  max-width: 400px;
+}
+
+.login-form h2 {
+  text-align: center;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--gray-800);
+  margin: 0 0 32px;
+  letter-spacing: -0.02em;
+  text-shadow: 0 0 20px rgba(167, 139, 250, 0.15);
+}
+
+.login-error {
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  color: var(--danger);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  margin-bottom: 20px;
+}
+
+.login-field {
+  margin-bottom: 20px;
+}
+
+.login-field label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--gray-700);
+  margin-bottom: 8px;
+}
+
+.login-field input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1.5px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--input-bg);
+  color: var(--gray-800);
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.login-field input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.15);
+}
+
+.login-btn {
+  width: 100%;
+  padding: 14px;
+  background: var(--primary);
+  color: #0a0d14;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition), box-shadow var(--transition);
+  margin-top: 8px;
+}
+
+.login-btn:hover:not(:disabled) {
+  background: var(--primary-hover);
+  box-shadow: 0 2px 12px rgba(167, 139, 250, 0.3);
+}
+
+.login-btn:disabled {
+  background: var(--gray-300);
+  color: var(--gray-500);
+  cursor: not-allowed;
+}

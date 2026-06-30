@@ -1,4 +1,5 @@
 // proxy/fs.js
+const fsSync = require('fs');
 const fs = require('fs').promises;
 const path = require('path');
 
@@ -6,22 +7,21 @@ const configPath = path.join(__dirname, '../config.json');
 const CONFIG_FILE_PATH = configPath;
 const BACKUP_FILE_PATH = path.join(__dirname, '../config_backup.json');
 
-// 传入的是对象
-async function writeConfig(newData) {
+// 同步写入，避免并发写入导致文件损坏
+function writeConfig(newData) {
   try {
     const jsonStr = JSON.stringify(newData, null, 2);
-    await fs.writeFile(CONFIG_FILE_PATH, jsonStr, 'utf8');
-    // 写入成功后同步更新备份，确保 backup 始终是最新有效版本
-    await backupConfig(newData);
+    fsSync.writeFileSync(CONFIG_FILE_PATH, jsonStr, 'utf8');
+    backupConfig(newData);
   } catch (error) {
     console.error('Error writing config file:', error.message);
     throw error;
   }
 }
 
-async function backupConfig(newData) {
+function backupConfig(newData) {
   try {
-    await fs.writeFile(BACKUP_FILE_PATH, JSON.stringify(newData, null, 2), 'utf8');
+    fsSync.writeFileSync(BACKUP_FILE_PATH, JSON.stringify(newData, null, 2), 'utf8');
   } catch (error) {
     console.error('Error writing backup config file:', error.message);
   }

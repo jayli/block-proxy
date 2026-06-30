@@ -15,7 +15,51 @@ const Toast = ({ message, type, onClose }) => {
   );
 };
 
+// 登录页组件
+const LoginPage = ({ onLogin, loading, error }) => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onLogin(username, password);
+  };
+
+  return (
+    <div className="login-page">
+      <form className="login-form" onSubmit={handleSubmit}>
+        <h2>管理面板登录</h2>
+        {error && <div className="login-error">{error}</div>}
+        <div className="login-field">
+          <label>用户名</label>
+          <input
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoFocus
+          />
+        </div>
+        <div className="login-field">
+          <label>密码</label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </div>
+        <button type="submit" className="login-btn" disabled={loading}>
+          {loading ? '登录中...' : '登录'}
+        </button>
+      </form>
+    </div>
+  );
+};
+
 function App() {
+  const [loggedIn, setLoggedIn] = useState(null); // null = 检查中, true = 已登录, false = 未登录
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState('');
+
   const [config, setConfig] = useState({
     block_hosts: [],
     proxy_port: 8001,
@@ -23,6 +67,8 @@ function App() {
     socks5_tls: "1",
     auth_username: "",
     auth_password: "",
+    login_username: "",
+    login_password: "",
   });
 
   const [newHost, setNewHost] = useState('');
@@ -41,12 +87,59 @@ function App() {
   const [activeTab, setActiveTab] = useState(0);
   const fileInputRef = useRef(null);
 
+  // 检查登录状态
+  useEffect(() => {
+    checkAuth();
+  }, []);
+
+  const checkAuth = async () => {
+    try {
+      const response = await fetch('/api/auth-check');
+      const data = await response.json();
+      setLoggedIn(data.authenticated);
+    } catch (error) {
+      setLoggedIn(true); // 网络错误时默认已登录，避免死循环
+    }
+  };
+
+  // 统一处理 401：cookie 失效时跳回登录页
+  const handle401 = (response) => {
+    if (response.status === 401) {
+      setLoggedIn(false);
+      return true;
+    }
+    return false;
+  };
+
+  const handleLogin = async (username, password) => {
+    setLoginLoading(true);
+    setLoginError('');
+    try {
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setLoggedIn(true);
+      } else {
+        setLoginError(data.error || '登录失败');
+      }
+    } catch (error) {
+      setLoginError('网络错误: ' + error.message);
+    }
+    setLoginLoading(false);
+  };
+
   // 组件加载时获取当前配置和服务器IP
   useEffect(() => {
-    fetchConfig();
-    fetchServerIPs();
-    fetchTimeZone();
-    fetchRuleModules();
+    if (loggedIn) {
+      fetchConfig();
+      fetchServerIPs();
+      fetchTimeZone();
+      fetchRuleModules();
+    }
 
     // 清理定时器
     return () => {
@@ -54,10 +147,11 @@ function App() {
         clearTimeout(toastTimer);
       }
     };
-  }, []);
+  }, [loggedIn]);
 
   const fetchTimeZone = async () => {
     const response = await fetch('/api/timezone');
+    if (handle401(response)) return;
     if (response.ok) {
       const data = await response.json();
       setTimeZone(data.timezone);
@@ -69,6 +163,7 @@ function App() {
   const fetchServerIPs = async () => {
     try {
       const response = await fetch('/api/server-ip');
+      if (handle401(response)) return;
       if (response.ok) {
         const data = await response.json();
         setServerIPs(data.ips);
@@ -95,6 +190,7 @@ function App() {
   const fetchConfig = async () => {
     try {
       const response = await fetch('/api/config');
+      if (handle401(response)) return;
       if (response.ok) {
         const data = await response.json();
         setConfig(data);
@@ -113,6 +209,7 @@ function App() {
   const fetchRuleModules = async () => {
     try {
       const response = await fetch('/api/rules');
+      if (handle401(response)) return;
       if (response.ok) {
         const data = await response.json();
         setRuleModules(data);
@@ -225,6 +322,8 @@ function App() {
         body: JSON.stringify(config)
       });
 
+      if (handle401(response)) return false;
+
       if (response.ok) {
         showToast('配置保存成功!', 'success');
         return true;
@@ -252,6 +351,11 @@ function App() {
         method: 'POST'
       });
 
+      if (handle401(response)) {
+        setLoading(false);
+        return;
+      }
+
       if (response.ok) {
         showToast('代理服务器重启成功!', 'success');
       } else {
@@ -273,6 +377,11 @@ function App() {
         method: 'POST'
       });
 
+      if (handle401(response)) {
+        setLoading(false);
+        return;
+      }
+
       if (response.ok) {
         showToast('路由表刷新成功!', 'success');
         await fetchConfig();
@@ -291,6 +400,10 @@ function App() {
     setLoading(true);
     try {
       const response = await fetch('/api/config/export');
+      if (handle401(response)) {
+        setLoading(false);
+        return;
+      }
       if (!response.ok) {
         showToast('导出失败', 'error');
         setLoading(false);
@@ -343,6 +456,11 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: text
       });
+
+      if (handle401(response)) {
+        setLoading(false);
+        return;
+      }
 
       const data = await response.json();
 
@@ -522,6 +640,11 @@ function App() {
   // 星期几的显示名称
   const weekdayNames = ['一', '二', '三', '四', '五', '六', '日'];
 
+  // 未登录时显示登录页
+  if (!loggedIn) {
+    return <LoginPage onLogin={handleLogin} loading={loginLoading} error={loginError} />;
+  }
+
   return (
     <div className="App">
       <div className="config-container">
@@ -634,6 +757,28 @@ function App() {
               value={config.auth_password}
               onChange={(e) => setConfig({...config, auth_password: e.target.value || ""})}
             />
+          </div>
+
+          <div className="setting-row">
+            <label>管理面板登录用户名:</label>
+            <input
+              type="text"
+              value={config.login_username || ""}
+              onChange={(e) => setConfig({...config, login_username: e.target.value || ""})}
+              placeholder="留空则无需登录"
+            />
+          </div>
+          <div className="setting-row">
+            <label>管理面板登录密码:</label>
+            <input
+              type="text"
+              value={config.login_password || ""}
+              onChange={(e) => setConfig({...config, login_password: e.target.value || ""})}
+              placeholder="留空则无需登录"
+            />
+          </div>
+          <div className="help-text" style={{ marginTop: '-8px', marginBottom: '8px' }}>
+            设置后重启代理生效，浏览器会弹出登录框
           </div>
 
           <div className="setting-row full-width">
