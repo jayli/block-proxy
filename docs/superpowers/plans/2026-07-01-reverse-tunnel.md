@@ -20,9 +20,31 @@
 - Heartbeat: Server PING every 30s, Client PONG immediately, 60s timeout both sides
 - Error semantics: HTTPS CONNECT tunnel failures result in connection reset (not 502), because AnyProxy writes `200 OK` before calling `customConnect`
 
+## Commit Policy
+
+Do NOT automatically run `git add` or `git commit` for any repository while executing this plan. All commit steps in this plan are approval checkpoints only: stop after implementation and verification, report the changed files and test results, and wait for an explicit user instruction to commit.
+
+This applies to both repositories:
+- `block-proxy`
+- `node_modules/@bachi/anyproxy` (the symlink target repository)
+
+When the user explicitly confirms a commit, commit only the requested repository/files.
+
 ## Important: @bachi/anyproxy is a symlink
 
-`node_modules/@bachi/anyproxy` is a symlink to `/Users/bachi/jaylli/anyproxy` (a separately versioned repo). Task 4 changes MUST be committed in the `@bachi/anyproxy` repo itself, then update the dependency version in block-proxy's `package.json` (or lock file). Do NOT treat it as a one-off local `node_modules` edit.
+`node_modules/@bachi/anyproxy` is a symlink to a separately versioned `@bachi/anyproxy` checkout. Use the relative path `node_modules/@bachi/anyproxy/` to inspect and edit files so the plan works on different machines. Do NOT treat it as a one-off local `node_modules` edit.
+
+If the user explicitly asks to commit AnyProxy changes, enter the symlink directory and commit from there:
+
+```bash
+cd node_modules/@bachi/anyproxy
+git status
+git add lib/requestHandler.js
+git commit -m "feat: add customConnect hook for reverse tunnel support"
+cd -
+```
+
+After returning to `block-proxy`, only update and commit `package.json` / lock files if the user explicitly asks for that separate commit.
 
 ---
 
@@ -156,7 +178,7 @@ describe('Protocol encodeFrame/decodeFrame', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/bachi/jaylli/block-proxy && node --test tunnel/test/protocol.test.js`
+Run from the `block-proxy` repository root: `node --test tunnel/test/protocol.test.js`
 Expected: FAIL with "Cannot find module '../protocol'"
 
 - [ ] **Step 3: Implement protocol.js**
@@ -355,7 +377,7 @@ module.exports = { FRAME_TYPES, ATYP, encodeFrame, decodeFrame, encodeAddress, d
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/bachi/jaylli/block-proxy && node --test tunnel/test/protocol.test.js`
+Run from the `block-proxy` repository root: `node --test tunnel/test/protocol.test.js`
 Expected: PASS (11 tests)
 
 - [ ] **Step 5: Commit**
@@ -537,7 +559,7 @@ describe('TunnelServer', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/bachi/jaylli/block-proxy && node --test tunnel/test/server.test.js`
+Run from the `block-proxy` repository root: `node --test tunnel/test/server.test.js`
 Expected: FAIL with "Cannot find module '../server'"
 
 - [ ] **Step 3: Implement TunnelServer**
@@ -740,7 +762,7 @@ module.exports = TunnelServer;
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/bachi/jaylli/block-proxy && node --test tunnel/test/server.test.js`
+Run from the `block-proxy` repository root: `node --test tunnel/test/server.test.js`
 Expected: PASS (4 tests)
 
 - [ ] **Step 5: Commit**
@@ -858,7 +880,7 @@ describe('TunnelManager.forward', () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/bachi/jaylli/block-proxy && node --test tunnel/test/manager.test.js`
+Run from the `block-proxy` repository root: `node --test tunnel/test/manager.test.js`
 Expected: FAIL with "Cannot find module '../manager'"
 
 - [ ] **Step 3: Implement TunnelManager**
@@ -1037,7 +1059,7 @@ module.exports = TunnelManager;
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/bachi/jaylli/block-proxy && node --test tunnel/test/manager.test.js`
+Run from the `block-proxy` repository root: `node --test tunnel/test/manager.test.js`
 Expected: PASS (8 tests)
 
 - [ ] **Step 5: Commit**
@@ -1052,9 +1074,9 @@ git commit -m "feat(tunnel): implement TunnelManager with single-concurrent forw
 ### Task 4: Modify @bachi/anyproxy to support customConnect
 
 **Files:**
-- Modify: `node_modules/@bachi/anyproxy/lib/requestHandler.js` (around line 877) — **this is a symlink to `/Users/bachi/jaylli/anyproxy`**
+- Modify: `node_modules/@bachi/anyproxy/lib/requestHandler.js` (around line 877) — **this is a symlink to the local `@bachi/anyproxy` repository**
 
-**⚠️ Commit location:** Changes MUST be committed in the `@bachi/anyproxy` repo (`/Users/bachi/jaylli/anyproxy`), NOT in block-proxy. After committing there, update block-proxy's `package.json` dependency version or lock file.
+**⚠️ Commit location:** Do NOT commit automatically. If the user explicitly asks to commit AnyProxy changes, commit from inside `node_modules/@bachi/anyproxy/`, not from `block-proxy`. After that, return to `block-proxy` with `cd -` and only update dependency metadata if the user explicitly asks for that separate change.
 
 **Interfaces:**
 - Produces: `reqHandlerCtx.customConnect(host, port, callback)` hook
@@ -1122,20 +1144,27 @@ return new Promise((resolve, reject) => {
 - The callback is called when the stream is ready for piping (same semantics as `net.connect` callback)
 - `conn.on('error')` is registered on the returned stream, so error stream from TunnelManager will trigger reject
 
-- [ ] **Step 3: Commit in @bachi/anyproxy repo**
+- [ ] **Step 3: Commit checkpoint for @bachi/anyproxy repo**
+
+Stop here and report the AnyProxy changes and verification results. Do not run `git add` or `git commit` unless the user explicitly asks.
+
+If the user confirms committing the AnyProxy change, use:
 
 ```bash
-cd /Users/bachi/jaylli/anyproxy
+cd node_modules/@bachi/anyproxy
+git status
 git add lib/requestHandler.js
 git commit -m "feat: add customConnect hook for reverse tunnel support"
+cd -
 ```
 
-Then update block-proxy to use the new version:
+If the user separately confirms updating `block-proxy` dependency metadata, use:
 
 ```bash
-cd /Users/bachi/jaylli/block-proxy
+# Back in the block-proxy repository after `cd -`
 # Update package.json @bachi/anyproxy version or run pnpm i to refresh lock file
-git add package.json pnpm-lock.yaml
+git status
+git add package.json pnpm-lock.yaml package-lock.json
 git commit -m "chore: update @bachi/anyproxy for customConnect hook"
 ```
 
@@ -1224,7 +1253,20 @@ customConnect: (host, port, callback) => {
 
 **⚠️ Critical:** `customConnect` must NEVER return null for a tunnel domain. Returning null causes AnyProxy to fallback to `net.connect()`, leaking the internal domain to the public internet. `TunnelManager.forward()` guarantees non-null return (error stream on all failure paths).
 
-- [ ] **Step 4: Integrate tunnel lifecycle into LocalProxy**
+- [ ] **Step 4: Bypass MITM for tunnel domains**
+
+In `beforeDealHttpsRequest`, after authentication succeeds and after parsing `host`, return `false` for tunnel domains before any `shouldMitm(host)` check:
+
+```javascript
+// Tunnel domains must stay pure TCP. Never MITM/decrypt them.
+if (tunnelManager && tunnelManager.matchesTunnelDomain(host)) {
+  return false;
+}
+```
+
+This preserves the core constraint: tunnel traffic is transparent TCP only. If this check is missing and `enable_mitm == "1"`, AnyProxy may route a tunnel domain into the MITM path instead of the `customConnect` TCP tunnel path.
+
+- [ ] **Step 5: Integrate tunnel lifecycle into LocalProxy**
 
 LocalProxy is an object literal with `init()`, `start(callback)`, `restart(callback)`. There is no `close()` method. Config is loaded inside `LocalProxy.start()`, so tunnel startup belongs in `start()`, not in `init()`.
 
@@ -1416,7 +1458,7 @@ class TestDecodeFrame:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/bachi/jaylli/block-proxy/client && python -m pytest tests/test_tunnel_client.py -v`
+Run from `block-proxy/client`: `python -m pytest tests/test_tunnel_client.py -v`
 Expected: FAIL with "ModuleNotFoundError"
 
 - [ ] **Step 3: Implement frame protocol and TunnelClient**
@@ -1455,6 +1497,11 @@ IDLE_TIMEOUT = 60     # seconds without data → disconnect
 
 class TunnelOccupiedError(Exception):
     """Server tunnel port is occupied by another client."""
+    pass
+
+
+class TunnelAuthFailedError(Exception):
+    """Tunnel authentication failed. This is not recoverable by retrying."""
     pass
 
 
@@ -1574,7 +1621,7 @@ class TunnelClient:
         config: full config dict with 'server' and 'tunnel' sections.
         on_status_change: callback(status: str, detail: str) -> None.
             status values: 'connecting', 'connected', 'reconnecting',
-                          'occupied', 'disconnected'
+                          'occupied', 'auth_failed', 'disconnected'
         """
         self._tunnel_cfg = config['tunnel']
         self._server_cfg = config['server']
@@ -1643,6 +1690,10 @@ class TunnelClient:
                 self._on_status_change('occupied', str(e))
                 logger.error(f'Tunnel occupied: {e}')
                 break  # Don't retry
+            except TunnelAuthFailedError as e:
+                self._on_status_change('auth_failed', str(e))
+                logger.error(f'Tunnel authentication failed: {e}')
+                break  # Don't retry: bad credentials will not heal by reconnecting
             except Exception as e:
                 logger.error(f'Tunnel connection failed: {e}')
                 self._on_status_change('reconnecting', f'{backoff}s')
@@ -1691,7 +1742,7 @@ class TunnelClient:
             elif response['type'] == FRAME_ERROR:
                 raise TunnelOccupiedError(response.get('message', 'Port occupied'))
             elif response['type'] == FRAME_AUTH_FAIL:
-                raise Exception('Authentication failed')
+                raise TunnelAuthFailedError('Authentication failed')
             else:
                 raise Exception(f'Unexpected response: {response["type"]:#x}')
         finally:
@@ -1705,6 +1756,21 @@ class TunnelClient:
     async def _handle_requests(self, reader, writer):
         """Main frame processing loop. Handles PING/PONG, CONNECT, DATA, CLOSE."""
         active_writers = {}  # reqid → target_writer
+        target_write_tasks = set()
+
+        async def write_to_target(reqid, target_writer, data):
+            """Write tunnel DATA to target without blocking the main frame loop.
+
+            The main loop must keep reading tunnel frames so PING can receive PONG
+            promptly even when the target TCP connection applies backpressure.
+            """
+            try:
+                target_writer.write(data)
+                await target_writer.drain()
+            except (ConnectionResetError, BrokenPipeError, OSError) as e:
+                logger.debug(f'Target write failed {reqid}: {e}')
+                active_writers.pop(reqid, None)
+                target_writer.close()
 
         while self._running:
             try:
@@ -1723,8 +1789,9 @@ class TunnelClient:
                     reqid = frame['reqid']
                     tw = active_writers.get(reqid)
                     if tw and not tw.is_closing():
-                        tw.write(frame['data'])
-                        await tw.drain()
+                        task = asyncio.create_task(write_to_target(reqid, tw, frame['data']))
+                        target_write_tasks.add(task)
+                        task.add_done_callback(target_write_tasks.discard)
 
                 elif frame['type'] == FRAME_CLOSE:
                     reqid = frame['reqid']
@@ -1743,6 +1810,8 @@ class TunnelClient:
                 break
 
         # Clean up active target connections
+        for task in target_write_tasks:
+            task.cancel()
         for reqid, tw in active_writers.items():
             tw.close()
         active_writers.clear()
@@ -1792,7 +1861,7 @@ class TunnelClient:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/bachi/jaylli/block-proxy/client && python -m pytest tests/test_tunnel_client.py -v`
+Run from `block-proxy/client`: `python -m pytest tests/test_tunnel_client.py -v`
 Expected: PASS (8 tests)
 
 - [ ] **Step 5: Commit**
@@ -1933,6 +2002,7 @@ def _on_tunnel_status_change(self, status, detail=""):
         'connecting':   '隧道配置 (连接中...)',
         'reconnecting': f'隧道配置 (重连中 {detail})',
         'occupied':     '隧道配置 (端口被占)',
+        'auth_failed':  '隧道配置 (认证失败)',
         'disconnected': '隧道配置'
     }
     title = title_map.get(status, '隧道配置')
@@ -2143,7 +2213,7 @@ describe('Tunnel end-to-end', () => {
 
 - [ ] **Step 2: Run test**
 
-Run: `cd /Users/bachi/jaylli/block-proxy && node --test test/tunnel-integration.test.js`
+Run from the `block-proxy` repository root: `node --test test/tunnel-integration.test.js`
 Expected: PASS (3 tests)
 
 - [ ] **Step 3: Commit**
