@@ -334,6 +334,7 @@ class AppController(NSObject):
         return "python3"
 
     def _show_config_window(self):
+        self.config.load()
         self.config.save()
         script_path = os.path.join(_bundle_resource_dir(), "config_window.py")
         python_path = self._find_python() if _is_compiled() else sys.executable
@@ -397,9 +398,10 @@ class AppController(NSObject):
 
     def openTunnelWindow_(self, sender):
         config_path = self.config.config_path
-        tunnel_window_path = os.path.join(os.path.dirname(__file__), 'tunnel_window.py')
+        tunnel_window_path = os.path.join(_bundle_resource_dir(), 'tunnel_window.py')
+        python_path = self._find_python() if _is_compiled() else sys.executable
         self._tunnel_proc = subprocess.Popen(
-            [sys.executable, tunnel_window_path, config_path]
+            [python_path, tunnel_window_path, config_path]
         )
 
         def _reload_after():

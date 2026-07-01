@@ -223,7 +223,12 @@ class ConfigWindowController(NSObject):
         self._window.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
 
+    def _commit_active_editing(self):
+        if hasattr(self, "_window"):
+            self._window.makeFirstResponder_(None)
+
     def saveAndClose_(self, sender):
+        self._commit_active_editing()
         config = self._config
 
         config["server"]["protocol"] = self._protocol_popup.titleOfSelectedItem()
@@ -239,11 +244,11 @@ class ConfigWindowController(NSObject):
         config["local"]["proxy_private"] = bool(self._proxy_private_cb.state())
         config["autostart"] = bool(self._autostart_cb.state())
 
-        from autostart import sync
-        sync(getattr(self, "_app_path", None), config["autostart"])
-
         with open(self._config_path, "w") as f:
             json.dump(config, f, indent=2)
+
+        from autostart import sync
+        sync(getattr(self, "_app_path", None), config["autostart"])
 
         self._window.close()
         NSApp.stopModal()

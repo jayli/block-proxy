@@ -61,8 +61,10 @@ $PYTHON -m nuitka \
     --macos-app-mode=ui-element \
     --include-data-dir=icons=icons \
     --include-data-files=config_window.py=config_window.py \
+    --include-data-files=autostart.py=autostart.py \
     --include-data-files=log_window.py=log_window.py \
     --include-data-files=routing_window.py=routing_window.py \
+    --include-data-files=tunnel_window.py=tunnel_window.py \
     --include-data-files=geodata_loader.py=geodata_loader.py \
     --include-data-files=proto_parser.py=proto_parser.py \
     --include-data-files=traffic_stats.py=traffic_stats.py \
