@@ -151,7 +151,7 @@ async function testRejectsSyntaxInvalidSaveWithoutOverwrite() {
   assert.ok(read(paths.runtimeCustomRulePath).includes('good.example.com'));
 }
 
-async function testSaveCreatesBackupAndRestoreWorks() {
+async function testSaveDoesNotCreateBackup() {
   const root = tempRoot();
   const paths = runtimeCustomRule.createPaths(root);
   write(paths.runtimeCustomRulePath, makeSource('old.example.com'));
@@ -162,8 +162,23 @@ async function testSaveCreatesBackupAndRestoreWorks() {
   });
 
   const backups = await runtimeCustomRule.listBackups(paths);
-  assert.strictEqual(backups.length, 1);
+  assert.strictEqual(backups.length, 0);
   assert.ok(read(paths.runtimeCustomRulePath).includes('new.example.com'));
+}
+
+async function testManualBackupAndRestoreWorks() {
+  const root = tempRoot();
+  const paths = runtimeCustomRule.createPaths(root);
+  write(paths.runtimeCustomRulePath, makeSource('old.example.com'));
+
+  await runtimeCustomRule.createBackup(paths);
+  await runtimeCustomRule.saveRuntimeCustomRule(paths, {
+    source: makeSource('new.example.com'),
+    preferRuntimeRule: true
+  });
+
+  const backups = await runtimeCustomRule.listBackups(paths);
+  assert.strictEqual(backups.length, 1);
 
   await runtimeCustomRule.restoreBackup(paths, backups[0].id);
   assert.ok(read(paths.runtimeCustomRulePath).includes('old.example.com'));
@@ -175,7 +190,8 @@ async function testSaveCreatesBackupAndRestoreWorks() {
     testDockerImportWinsOverCli,
     testPreferRuntimeKeepsExistingRule,
     testRejectsSyntaxInvalidSaveWithoutOverwrite,
-    testSaveCreatesBackupAndRestoreWorks
+    testSaveDoesNotCreateBackup,
+    testManualBackupAndRestoreWorks
   ]) {
     await testFn();
     console.log(`PASS ${testFn.name}`);
@@ -386,7 +402,7 @@ async function prepareRuntimeCustomRule({ paths = createPaths(), cliRulePath = n
 }
 ```
 
-- [ ] **Step 6: Implement save, backups, listing, and restore**
+- [ ] **Step 6: Implement save, explicit backups, listing, and restore**
 
 Add:
 
@@ -436,7 +452,6 @@ async function saveRuntimeCustomRule(paths = createPaths(), { source, preferRunt
   if (!validation.ok) {
     throw new Error((validation.errors || ['Invalid rule source']).join('\n'));
   }
-  createBackup(paths);
   const tempPath = `${paths.runtimeCustomRulePath}.tmp`;
   fs.writeFileSync(tempPath, source, 'utf8');
   fs.renameSync(tempPath, paths.runtimeCustomRulePath);
@@ -457,7 +472,6 @@ async function restoreBackup(paths = createPaths(), id) {
   }
   const source = fs.readFileSync(backupPath, 'utf8');
   assertSyntax(source);
-  createBackup(paths);
   fs.copyFileSync(backupPath, paths.runtimeCustomRulePath);
   return writeMeta(paths, {
     last_import_source: 'admin',
@@ -484,6 +498,7 @@ module.exports = {
   validateSyntax,
   validateStructure,
   validateSource,
+  createBackup,
   saveRuntimeCustomRule,
   listBackups,
   restoreBackup
@@ -681,14 +696,17 @@ await runtimeCustomRule.saveRuntimeCustomRule(runtimeCustomRulePaths, {
 
 Return updated meta and validation result.
 
-- [ ] **Step 5: Add backup list and restore routes**
+- [ ] **Step 5: Add explicit backup, backup list, and restore routes**
 
 Add:
 
 ```txt
 GET /api/custom-rule/backups
+POST /api/custom-rule/backups
 POST /api/custom-rule/backups/:id/restore
 ```
+
+`POST /api/custom-rule/backups` calls `runtimeCustomRule.createBackup(runtimeCustomRulePaths)` and returns the updated backup list. It backs up the current saved `runtime-custom-rule.js` file, not unsaved editor text. Saving through `POST /api/custom-rule` must not create a backup.
 
 - [ ] **Step 6: Validate before restart**
 
@@ -738,6 +756,7 @@ Add helper functions:
 const fetchCustomRule = async () => { ... GET /api/custom-rule ... };
 const validateCustomRule = async () => { ... POST /api/custom-rule/validate ... };
 const saveCustomRule = async () => { ... POST /api/custom-rule ... };
+const backupCustomRule = async () => { ... POST /api/custom-rule/backups ... };
 const fetchCustomRuleBackups = async () => { ... GET /api/custom-rule/backups ... };
 const restoreCustomRuleBackup = async (id) => { ... POST /api/custom-rule/backups/${id}/restore ... };
 ```
@@ -779,6 +798,7 @@ Render when `activeTab === 'customRule'`:
   <div className="custom-rule-toolbar">
     <button onClick={validateCustomRule}>检查语法</button>
     <button onClick={saveCustomRule}>保存</button>
+    <button onClick={backupCustomRule}>备份</button>
     <button onClick={fetchCustomRuleBackups}>恢复备份</button>
     <button className="restart-btn" onClick={restartProxy}>重启代理</button>
   </div>
@@ -905,7 +925,8 @@ Open `http://localhost:8003`, then verify:
 - "自定义 rule" tab loads source.
 - Syntax error blocks save and does not overwrite the previous file.
 - Valid source saves.
-- Backup appears after save.
+- Save does not create a backup automatically.
+- Clicking "备份" creates a backup.
 - Restore replaces editor content.
 - "优先使用当前自定义 rule" persists after reload.
 - "重启代理" succeeds with a valid rule and fails with invalid runtime source.

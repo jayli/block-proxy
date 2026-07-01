@@ -127,7 +127,7 @@ Save behavior:
 
 ## Backups
 
-Before every successful admin save, create a timestamped backup of the previous `runtime-custom-rule.js` and current metadata. Backups live under `config/rule-backups/`.
+Backups are created only when the user explicitly clicks the "备份" button. Saving `runtime-custom-rule.js` does not create a backup automatically. A backup captures the current saved `runtime-custom-rule.js` file and current metadata at the time the button is clicked; unsaved editor text is not included until the user saves it. Backups live under `config/rule-backups/`.
 
 Backup listing should include:
 
@@ -146,9 +146,10 @@ Restore behavior:
 - Restoring a backup copies the backup file to `runtime-custom-rule.js`.
 - Restoring also updates metadata to `last_import_source: "admin"` and `last_saved_by: "admin"`.
 - Restore validates syntax before overwriting.
+- Restore does not create an extra backup automatically. If the user wants to preserve the current version before restoring, they must click "备份" first.
 - Restore does not automatically restart the proxy; the UI should let users save/restore first, then restart explicitly.
 
-Retention can be simple in the first version: keep the latest 20 backups and delete older entries after a successful backup.
+Retention can be simple in the first version: keep the latest 20 backups and delete older entries after a successful manual backup.
 
 ## Admin API
 
@@ -159,6 +160,7 @@ GET  /api/custom-rule
 POST /api/custom-rule
 POST /api/custom-rule/validate
 GET  /api/custom-rule/backups
+POST /api/custom-rule/backups
 POST /api/custom-rule/backups/:id/restore
 ```
 
@@ -232,7 +234,8 @@ Add focused Node tests for the runtime rule manager:
 - Imports Docker source over CLI source when both exist and `prefer_runtime_rule` is false.
 - Keeps existing runtime rule when `prefer_runtime_rule` is true.
 - Does not mutate original CLI or Docker source files.
-- Creates backups before saving.
+- Saving does not create a backup automatically.
+- Explicit backup creation stores the current runtime rule and metadata.
 - Restores backups.
 - Rejects syntax-invalid source without overwriting the current runtime rule.
 
