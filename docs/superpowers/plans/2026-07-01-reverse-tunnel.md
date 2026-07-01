@@ -206,6 +206,10 @@ const ATYP = {
   IPV6:   0x04,
 };
 
+const MAX_FRAME_PAYLOAD = 0xFFFF;
+const DATA_HEADER_LEN = 3; // type(1) + reqid(2)
+const MAX_DATA_CHUNK = MAX_FRAME_PAYLOAD - DATA_HEADER_LEN;
+
 function encodeAddress(atyp, addr) {
   if (atyp === ATYP.IPV4) {
     const parts = addr.split('.').map(Number);
@@ -307,6 +311,10 @@ function encodeFrame(frame) {
       throw new Error(`Unknown frame type: 0x${frame.type.toString(16)}`);
   }
 
+  if (payload.length > MAX_FRAME_PAYLOAD) {
+    throw new Error(`Frame too large: ${payload.length} > ${MAX_FRAME_PAYLOAD}`);
+  }
+
   const header = Buffer.alloc(2);
   header.writeUInt16BE(payload.length, 0);
   return Buffer.concat([header, payload]);
@@ -372,7 +380,16 @@ function decodeFrame(buffer) {
   }
 }
 
-module.exports = { FRAME_TYPES, ATYP, encodeFrame, decodeFrame, encodeAddress, decodeAddress };
+module.exports = {
+  FRAME_TYPES,
+  ATYP,
+  MAX_FRAME_PAYLOAD,
+  MAX_DATA_CHUNK,
+  encodeFrame,
+  decodeFrame,
+  encodeAddress,
+  decodeAddress
+};
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -888,7 +905,7 @@ Expected: FAIL with "Cannot find module '../manager'"
 ```javascript
 // tunnel/manager.js
 const { Duplex } = require('stream');
-const { FRAME_TYPES, ATYP } = require('./protocol');
+const { FRAME_TYPES, ATYP, MAX_DATA_CHUNK } = require('./protocol');
 
 class TunnelManager {
   constructor(tunnelServer, config) {
@@ -930,7 +947,7 @@ class TunnelManager {
     const reqid = this._allocateReqid();
     const stream = new TunnelDuplex(this, reqid);
 
-    this._activeRequest = { reqid, stream, confirmed: false };
+    this._activeRequest = { reqid, stream, confirmed: false, timeout: null };
 
     // Send CONNECT frame
     this._server.sendFrame({
@@ -949,6 +966,7 @@ class TunnelManager {
         stream.destroy(new Error('tunnel-connect-timeout'));
       }
     }, 30000);
+    this._activeRequest.timeout = timeout;
 
     stream.once('tunnel-connect-ok', () => {
       clearTimeout(timeout);
@@ -985,28 +1003,41 @@ class TunnelManager {
       }
 
       case FRAME_TYPES.CLOSE: {
-        this._activeRequest.stream.push(null); // EOF
-        this._activeRequest = null;
+        const stream = this._activeRequest.stream;
+        this._clearActiveRequest(frame.reqid);
+        stream.push(null); // EOF
         break;
       }
 
       case FRAME_TYPES.CONNECT_FAILED: {
         this._activeRequest.stream.destroy(new Error('tunnel-connect-failed'));
-        this._activeRequest = null;
+        this._clearActiveRequest(frame.reqid);
         break;
       }
     }
   }
 
+  _clearActiveRequest(reqid) {
+    if (!this._activeRequest || this._activeRequest.reqid !== reqid) return;
+    if (this._activeRequest.timeout) clearTimeout(this._activeRequest.timeout);
+    this._activeRequest = null;
+  }
+
   _sendData(reqid, data) {
     if (!this._activeRequest || this._activeRequest.reqid !== reqid) return;
-    this._server.sendFrame({ type: FRAME_TYPES.DATA, reqid, data });
+    for (let offset = 0; offset < data.length; offset += MAX_DATA_CHUNK) {
+      this._server.sendFrame({
+        type: FRAME_TYPES.DATA,
+        reqid,
+        data: data.slice(offset, offset + MAX_DATA_CHUNK)
+      });
+    }
   }
 
   _sendClose(reqid) {
     if (!this._activeRequest || this._activeRequest.reqid !== reqid) return;
     this._server.sendFrame({ type: FRAME_TYPES.CLOSE, reqid });
-    this._activeRequest = null;
+    this._clearActiveRequest(reqid);
   }
 
   reloadConfig(config) {
@@ -1051,6 +1082,11 @@ class TunnelDuplex extends Duplex {
   _final(callback) {
     this._manager._sendClose(this._reqid);
     callback();
+  }
+
+  _destroy(err, callback) {
+    this._manager._sendClose(this._reqid);
+    callback(err);
   }
 }
 
@@ -1192,6 +1228,8 @@ Add near other module-level variables:
 ```javascript
 let tunnelServer = null;
 let tunnelManager = null;
+const tunnelCertFile = path.join(__dirname, '../cert/rootCA.crt');
+const tunnelKeyFile = path.join(__dirname, '../cert/rootCA.key');
 ```
 
 - [ ] **Step 2: Add initTunnel and closeTunnel functions**
@@ -1203,10 +1241,17 @@ async function initTunnel(config) {
   const tunnelPort = config.tunnel_port || 8004;
   if (enableTunnel !== "1") return;
 
+  if (!fs.existsSync(tunnelCertFile) || !fs.existsSync(tunnelKeyFile)) {
+    throw new Error(`Tunnel TLS cert/key missing: cert=${tunnelCertFile}, key=${tunnelKeyFile}`);
+  }
+
+  const tunnelCert = fs.readFileSync(tunnelCertFile);
+  const tunnelKey = fs.readFileSync(tunnelKeyFile);
+
   tunnelServer = new TunnelServer({
     port: tunnelPort,
-    cert: TLS_CERT,
-    key: TLS_KEY,
+    cert: tunnelCert,
+    key: tunnelKey,
     credentials: {
       username: config.auth_username,
       password: config.auth_password
@@ -1331,12 +1376,42 @@ Ensure `config.json` includes the fields (add manually or via API):
 
 - [ ] **Step 2: Add config import validation in server/express.js**
 
-In the `POST /api/config/import` endpoint, add to the validation schema:
+`server/express.js` uses a `REQUIRED_FIELDS` array plus explicit validation logic, not a schema object. Add tunnel fields to `REQUIRED_FIELDS`:
 
 ```javascript
-enable_tunnel:  { type: 'string',  validate: v => v === "0" || v === "1" },
-tunnel_port:    { type: 'number',  validate: v => Number.isInteger(v) && v >= 1 && v <= 65535 },
-tunnel_domains: { type: 'array',   validate: v => v.every(item => typeof item === 'string') }
+{ key: 'enable_tunnel',  type: 'string', label: '隧道开关' },
+{ key: 'tunnel_port',    type: 'number', label: '隧道端口' },
+{ key: 'tunnel_domains', type: 'array',  label: '隧道域名列表' },
+```
+
+Before the `for (const field of REQUIRED_FIELDS)` validation loop, fill backward-compatible defaults so older exported configs import cleanly:
+
+```javascript
+if (!('enable_tunnel' in newConfig)) newConfig.enable_tunnel = "0";
+if (!('tunnel_port' in newConfig)) newConfig.tunnel_port = 8004;
+if (!('tunnel_domains' in newConfig)) newConfig.tunnel_domains = [];
+```
+
+Then extend the existing special-value checks in the import loop:
+
+```javascript
+if (['enable_mitm', 'enable_socks5', 'enable_express', 'socks5_tls', 'enable_tunnel'].includes(field.key)) {
+  if (value !== '0' && value !== '1') {
+    details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是 "0" 或 "1"`);
+  }
+}
+
+if (['proxy_port', 'socks5_port', 'tunnel_port'].includes(field.key)) {
+  if (!Number.isInteger(value) || value <= 0 || value > 65535) {
+    details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是 1-65535 的整数`);
+  }
+}
+
+if (field.key === 'tunnel_domains') {
+  if (!value.every(item => typeof item === 'string')) {
+    details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是字符串数组`);
+  }
+}
 ```
 
 - [ ] **Step 3: Commit**
@@ -1493,6 +1568,9 @@ ATYP_IPV6   = 0x04
 
 CONNECT_TIMEOUT = 30  # seconds for target connection
 IDLE_TIMEOUT = 60     # seconds without data → disconnect
+MAX_FRAME_PAYLOAD = 65535
+DATA_HEADER_LEN = 3   # type(1) + reqid(2)
+MAX_DATA_CHUNK = MAX_FRAME_PAYLOAD - DATA_HEADER_LEN
 
 
 class TunnelOccupiedError(Exception):
@@ -1535,7 +1613,10 @@ def encode_frame(frame_type, **kwargs):
 
     elif frame_type == FRAME_DATA:
         payload.extend(struct.pack('!H', kwargs['reqid']))
-        payload.extend(kwargs['data'])
+        data = kwargs['data']
+        if len(data) > MAX_DATA_CHUNK:
+            raise ValueError(f'DATA frame too large: {len(data)} > {MAX_DATA_CHUNK}')
+        payload.extend(data)
 
     # PING, PONG, AUTH_OK, AUTH_FAIL: just the type byte
 
@@ -1845,7 +1926,7 @@ class TunnelClient:
         # Read from target → send as DATA frames
         try:
             while True:
-                data = await target_reader.read(65536)
+                data = await target_reader.read(MAX_DATA_CHUNK)
                 if not data:
                     break
                 tunnel_writer.write(encode_frame(FRAME_DATA, reqid=reqid, data=data))
@@ -1879,7 +1960,7 @@ git commit -m "feat(client): implement TunnelClient with CONNECT_OK and direct c
 - Create: `client/tunnel_window.py`
 
 **Interfaces:**
-- Consumes: config dict, tunnel status from parent process
+- Consumes: config dict
 - Produces: TunnelWindowController class (PyObjC)
 
 - [ ] **Step 1: Implement TunnelWindowController**
@@ -1889,15 +1970,9 @@ Follow the existing pattern from `client/config_window.py`. Key UI elements:
 1. **NSSwitch** — "启用反向隧道" toggle
 2. **NSTextField** — 隧道服务器地址 (server_address, placeholder: "同代理地址")
 3. **NSTextField** — 隧道服务器端口 (server_port, default 8004)
-4. **NSTextField** (read-only) — 连接状态 with color indicator
-5. **NSButton** — "应用并重启代理"
+4. **NSButton** — "应用并重启代理"
 
-Status display mapping:
-- `connected` → `● 已连接` (green)
-- `connecting` → `● 连接中...` (orange)
-- `reconnecting` → `● 重连中 (Ns)` (orange)
-- `occupied` → `● 连接失败: 隧道端口已被占用` (red)
-- `disconnected` → `● 未连接` (gray)
+Do not show live tunnel connection status in this subprocess window. The existing subprocess window pattern has no IPC or shared status channel from the parent app, so live status would be stale or misleading. Show live status only in the main status-bar menu via `AppController._on_tunnel_status_change()`.
 
 On "apply": save config, exit subprocess (parent detects change and restarts proxy).
 
