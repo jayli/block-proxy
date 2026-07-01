@@ -1148,7 +1148,7 @@ git commit -m "chore: update @bachi/anyproxy for customConnect hook"
 
 **Interfaces:**
 - Consumes: `TunnelServer`, `TunnelManager`
-- Produces: `customConnect` option in AnyProxy, `createErrorStream()` helper
+- Produces: `customConnect` option in AnyProxy
 
 - [ ] **Step 1: Add imports and module-level variables**
 
@@ -1156,7 +1156,6 @@ git commit -m "chore: update @bachi/anyproxy for customConnect hook"
 // At top of proxy/proxy.js
 const TunnelServer = require('../tunnel/server');
 const TunnelManager = require('../tunnel/manager');
-const { Duplex } = require('stream');
 ```
 
 Add near other module-level variables:
@@ -1166,22 +1165,7 @@ let tunnelServer = null;
 let tunnelManager = null;
 ```
 
-- [ ] **Step 2: Add createErrorStream helper**
-
-```javascript
-function createErrorStream(code) {
-  const stream = new Duplex({
-    read() {},
-    write(chunk, enc, cb) { cb(); }
-  });
-  process.nextTick(() => {
-    stream.destroy(new Error(code));
-  });
-  return stream;
-}
-```
-
-- [ ] **Step 3: Add initTunnel and closeTunnel functions**
+- [ ] **Step 2: Add initTunnel and closeTunnel functions**
 
 ```javascript
 async function initTunnel(config) {
@@ -1222,7 +1206,7 @@ async function closeTunnel() {
 }
 ```
 
-- [ ] **Step 4: Add customConnect to AnyProxy options**
+- [ ] **Step 3: Add customConnect to AnyProxy options**
 
 In `getAnyProxyOptions()`, add to the options object:
 
@@ -1240,7 +1224,7 @@ customConnect: (host, port, callback) => {
 
 **⚠️ Critical:** `customConnect` must NEVER return null for a tunnel domain. Returning null causes AnyProxy to fallback to `net.connect()`, leaking the internal domain to the public internet. `TunnelManager.forward()` guarantees non-null return (error stream on all failure paths).
 
-- [ ] **Step 5: Integrate tunnel lifecycle into LocalProxy**
+- [ ] **Step 4: Integrate tunnel lifecycle into LocalProxy**
 
 LocalProxy is an object literal with `init()`, `start(callback)`, `restart(callback)`. There is no `close()` method. Config is loaded inside `LocalProxy.start()`, so tunnel startup belongs in `start()`, not in `init()`.
 

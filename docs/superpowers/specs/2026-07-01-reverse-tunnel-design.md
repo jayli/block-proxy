@@ -265,18 +265,22 @@ class TunnelManager {
 
   isAvailable() → boolean
   // 隧道是否可用（Client 已连接）
-  // 用于 customConnect 判断：命中域名但不可用时返回 error stream
+  // 用于状态展示或诊断，不参与 customConnect 的错误分支判断
 
   forward(host, port, callback) → Duplex stream
+  // 始终返回 Duplex stream：
+  // - 隧道未连接 → 返回 tunnel-disconnected error stream
+  // - 隧道忙 → 返回 tunnel-busy error stream
+  // - 可转发时：
   // 1. 分配 REQID
   // 2. 通过 TunnelServer 发送 CONNECT 帧
-  // 3. 创建 Duplex stream：
+  // 3. 创建隧道 Duplex stream：
   //    write() → 编码为 DATA 帧发送给 Client
   //    收到 DATA 帧 → push() 到 stream
   // 4. 收到 CONNECT_OK 帧 → 调用 callback()（连接确认）
   // 5. 收到 CLOSE 帧 → stream end
-  // 6. 收到 CONNECT_FAILED 帧 → stream destroy（连接失败）
-  // 7. 超时 30 秒无 CONNECT_OK → stream destroy（超时）
+  // 6. 收到 CONNECT_FAILED 帧 → stream destroy(new Error('tunnel-connect-failed'))
+  // 7. 超时 30 秒无 CONNECT_OK → stream destroy(new Error('tunnel-connect-timeout'))
 
   reloadConfig(config)
   // 热更新 tunnel_domains 列表
@@ -285,16 +289,11 @@ class TunnelManager {
 }
 ```
 
-**关键设计**：隧道域名**绝不 fallback** 到正常连接。调用方使用：
+**关键设计**：隧道域名**绝不 fallback** 到正常连接。`forward()` 自己处理所有错误路径并返回 error stream，调用方只负责域名匹配：
 
 ```javascript
 if (tunnelManager && tunnelManager.matchesTunnelDomain(host)) {
-  if (tunnelManager.isAvailable()) {
-    return tunnelManager.forward(host, port, callback);
-  } else {
-    // 域名命中但隧道不可用 → 返回 error stream
-    return createErrorStream('tunnel-disconnected');
-  }
+  return tunnelManager.forward(host, port, callback);
 }
 return null; // 非隧道域名，走正常连接
 ```
@@ -304,29 +303,12 @@ return null; // 非隧道域名，走正常连接
 在 AnyProxy options 中注入 `customConnect`：
 
 ```javascript
-const { Duplex } = require('stream');
-
-function createErrorStream(code) {
-  const stream = new Duplex({
-    read() {},
-    write(chunk, enc, cb) { cb(); }
-  });
-  process.nextTick(() => {
-    stream.destroy(new Error(code));
-  });
-  return stream;
-}
-
 const options = {
   port: proxyPort,
   // ... 现有 options
   customConnect: (host, port, callback) => {
     if (tunnelManager && tunnelManager.matchesTunnelDomain(host)) {
-      if (tunnelManager.isAvailable()) {
-        return tunnelManager.forward(host, port, callback);
-      }
-      // 隧道域名命中但 Client 未连接 → error stream
-      return createErrorStream('tunnel-disconnected');
+      return tunnelManager.forward(host, port, callback);
     }
     return null; // 非隧道域名，走正常 net.connect
   }
