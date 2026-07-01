@@ -241,6 +241,9 @@ const REQUIRED_FIELDS = [
   { key: 'enable_express',   type: 'string',  label: '管理面板开关' },
   { key: 'devices',          type: 'array',   label: '设备列表' },
   { key: 'rule_modules',     type: 'object',  label: '规则模块' },
+  { key: 'enable_tunnel',   type: 'string', label: '隧道开关' },
+  { key: 'tunnel_port',     type: 'number', label: '隧道端口' },
+  { key: 'tunnel_domains',  type: 'array',  label: '隧道域名列表' },
 ];
 
 app.post('/api/config/import', async (req, res) => {
@@ -262,6 +265,11 @@ app.post('/api/config/import', async (req, res) => {
         }
 
         const details = [];
+
+        // 兼容老旧配置：补全新增字段的默认值
+        if (!('enable_tunnel' in newConfig)) newConfig.enable_tunnel = "1";
+        if (!('tunnel_port' in newConfig)) newConfig.tunnel_port = 8004;
+        if (!('tunnel_domains' in newConfig)) newConfig.tunnel_domains = [];
 
         // 校验每个必需字段
         for (const field of REQUIRED_FIELDS) {
@@ -286,15 +294,21 @@ app.post('/api/config/import', async (req, res) => {
           }
 
           // 特殊值校验
-          if (['enable_mitm', 'enable_socks5', 'enable_express', 'socks5_tls'].includes(field.key)) {
+          if (['enable_mitm', 'enable_socks5', 'enable_express', 'socks5_tls', 'enable_tunnel'].includes(field.key)) {
             if (value !== '0' && value !== '1') {
               details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是 "0" 或 "1"`);
             }
           }
 
-          if (['proxy_port', 'socks5_port'].includes(field.key)) {
+          if (['proxy_port', 'socks5_port', 'tunnel_port'].includes(field.key)) {
             if (!Number.isInteger(value) || value <= 0 || value > 65535) {
               details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是 1-65535 的整数`);
+            }
+          }
+
+          if (field.key === 'tunnel_domains') {
+            if (!value.every(item => typeof item === 'string')) {
+              details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是字符串数组`);
             }
           }
         }

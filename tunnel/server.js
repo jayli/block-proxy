@@ -1,0 +1,191 @@
+const tls = require('tls');
+const { FRAME_TYPES, encodeFrame, decodeFrame } = require('./protocol');
+
+class TunnelServer {
+  constructor(options) {
+    this.port = options.port;
+    this.cert = options.cert;
+    this.key = options.key;
+    this.credentials = options.credentials;
+    this.onConnect = options.onConnect || (() => {});
+    this.onDisconnect = options.onDisconnect || (() => {});
+
+    this._frameHandlers = [];
+    this._clientSocket = null;
+    this._server = null;
+
+    // Per-socket receive buffer: Map<socket, Buffer>
+    this._socketBuffers = new Map();
+
+    // Heartbeat state
+    this._pingTimer = null;
+    this._lastPongTime = 0;
+  }
+
+  start() {
+    return new Promise((resolve) => {
+      const tlsOptions = {
+        key: this.key,
+        cert: this.cert,
+        minVersion: 'TLSv1.2'
+      };
+
+      this._server = tls.createServer(tlsOptions, (socket) => {
+        this._handleConnection(socket);
+      });
+
+      this._server.listen(this.port, () => {
+        console.log(`[Tunnel] Server listening on port ${this.port}`);
+        resolve();
+      });
+    });
+  }
+
+  stop() {
+    this._stopHeartbeat();
+    if (this._clientSocket) {
+      this._clientSocket.destroy();
+      this._clientSocket = null;
+    }
+    // Destroy all pending sockets
+    for (const [socket] of this._socketBuffers) {
+      socket.destroy();
+    }
+    this._socketBuffers.clear();
+    if (!this._server) return Promise.resolve();
+
+    const server = this._server;
+    this._server = null;
+    return new Promise((resolve) => {
+      server.close(() => resolve());
+    });
+  }
+
+  _handleConnection(socket) {
+    // Single client limit
+    if (this._clientSocket) {
+      const errorFrame = encodeFrame({
+        type: FRAME_TYPES.ERROR,
+        message: 'Tunnel port occupied'
+      });
+      socket.write(errorFrame);
+      return;
+    }
+
+    // Per-socket buffer
+    this._socketBuffers.set(socket, Buffer.alloc(0));
+
+    socket.on('data', (chunk) => {
+      const buf = this._socketBuffers.get(socket);
+      if (!buf) return;
+      this._socketBuffers.set(socket, Buffer.concat([buf, chunk]));
+      this._processBuffer(socket);
+    });
+
+    socket.on('close', () => {
+      this._socketBuffers.delete(socket);
+      if (this._clientSocket === socket) {
+        this._clientSocket = null;
+        this._stopHeartbeat();
+        console.log('[Tunnel] Client disconnected');
+        this.onDisconnect();
+      }
+    });
+
+    socket.on('error', (err) => {
+      console.error('[Tunnel] Socket error:', err.message);
+    });
+  }
+
+  _processBuffer(socket) {
+    let buf = this._socketBuffers.get(socket);
+    if (!buf) return;
+
+    while (buf.length >= 2) {
+      const length = buf.readUInt16BE(0);
+      if (buf.length < 2 + length) break;
+
+      const frameData = buf.slice(0, 2 + length);
+      buf = buf.slice(2 + length);
+      this._socketBuffers.set(socket, buf);
+
+      try {
+        const frame = decodeFrame(frameData);
+
+        if (frame.type === FRAME_TYPES.AUTH && !this._clientSocket) {
+          this._handleAuth(socket, frame);
+        } else if (this._clientSocket === socket) {
+          // Only update heartbeat on PONG frames
+          if (frame.type === FRAME_TYPES.PONG) {
+            this._lastPongTime = Date.now();
+          }
+          // Forward to handlers
+          this._frameHandlers.forEach(handler => handler(frame));
+        }
+      } catch (err) {
+        console.error('[Tunnel] Frame decode error:', err.message);
+      }
+    }
+  }
+
+  _handleAuth(socket, frame) {
+    const { username, password } = frame;
+
+    if (username === this.credentials.username &&
+        password === this.credentials.password) {
+      this._clientSocket = socket;
+      socket.write(encodeFrame({ type: FRAME_TYPES.AUTH_OK }));
+      console.log('[Tunnel] Client authenticated:', socket.remoteAddress);
+      this._startHeartbeat();
+      this.onConnect(socket.remoteAddress, socket.remotePort);
+    } else {
+      socket.write(encodeFrame({ type: FRAME_TYPES.AUTH_FAIL }));
+      socket.destroy();
+    }
+  }
+
+  sendFrame(frame) {
+    if (!this._clientSocket) {
+      throw new Error('No client connected');
+    }
+    this._clientSocket.write(encodeFrame(frame));
+  }
+
+  onFrame(handler) {
+    this._frameHandlers.push(handler);
+  }
+
+  // --- Heartbeat ---
+
+  _startHeartbeat() {
+    this._stopHeartbeat();
+    this._lastPongTime = Date.now();
+
+    // Send PING every 30s
+    this._pingTimer = setInterval(() => {
+      if (!this._clientSocket) { this._stopHeartbeat(); return; }
+
+      // Check if we received PONG within 60s
+      if (Date.now() - this._lastPongTime > 60000) {
+        console.log('[Tunnel] Heartbeat timeout (60s no PONG), disconnecting');
+        this._clientSocket.destroy();
+        return;
+      }
+
+      try {
+        this.sendFrame({ type: FRAME_TYPES.PING });
+      } catch (e) {
+        // ignore
+      }
+    }, 30000);
+  }
+
+  _stopHeartbeat() {
+    if (this._pingTimer) {
+      clearInterval(this._pingTimer);
+      this._pingTimer = null;
+    }
+  }
+}
+
+module.exports = TunnelServer;

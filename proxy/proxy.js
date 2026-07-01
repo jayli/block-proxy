@@ -25,8 +25,16 @@ const domain = require('./domain.js');
 const wanip = require('./wanip.js');
 const operator = require("./operator.js");
 const mitmRegistry = require("./mitm/registry.js");
+const TunnelServer = require('../tunnel/server');
+const TunnelManager = require('../tunnel/manager');
 let ruleRegistry = mitmRegistry.createRegistry({ config: {} });
 let cliRulePath = null;
+
+// Tunnel module-level variables
+let tunnelServer = null;
+let tunnelManager = null;
+const tunnelCertFile = path.join(__dirname, '../cert/rootCA.crt');
+const tunnelKeyFile = path.join(__dirname, '../cert/rootCA.key');
 
 // 启用全局 keep-alive，使 AnyProxy 内部转发也复用连接
 http.globalAgent.keepAlive = true;
@@ -212,6 +220,9 @@ async function loadConfig() {
     enable_socks5: enable_socks5,
     socks5_tls: socks5_tls,
     socks5_port: socks5Port,
+    enable_tunnel: "1",
+    tunnel_port: 8004,
+    tunnel_domains: [],
     rule_modules: {},
     devices: []
   };
@@ -269,6 +280,10 @@ async function loadConfig() {
       enable_mitm = loadedConfig.enable_mitm || "1"; // 默认开启，兼容旧配置文件缺少此字段
       config.enable_mitm = enable_mitm;
 
+      config.enable_tunnel = loadedConfig.enable_tunnel || "1";
+      config.tunnel_port = loadedConfig.tunnel_port || 8004;
+      config.tunnel_domains = loadedConfig.tunnel_domains || [];
+
       config.rule_modules = loadedConfig.rule_modules || {};
 
       socks5Port = loadedConfig.socks5_port;
@@ -302,6 +317,9 @@ async function loadConfig() {
         enable_socks5: enable_socks5,
         socks5_tls: socks5_tls,
         enable_mitm: enable_mitm,
+        enable_tunnel: "1",
+        tunnel_port: 8004,
+        tunnel_domains: [],
         rule_modules: {},
         vpn_proxy: ""
       });
@@ -928,9 +946,59 @@ function passRequestWithHttpAgent(requestDetail, isHttps) {
   };
 }
 
+async function initTunnel(config) {
+  await closeTunnel();
+  const enableTunnel = config.enable_tunnel || "1";
+  const tunnelPort = config.tunnel_port || 8004;
+  if (enableTunnel !== "1") return;
+
+  if (!fs.existsSync(tunnelCertFile) || !fs.existsSync(tunnelKeyFile)) {
+    throw new Error(`Tunnel TLS cert/key missing: cert=${tunnelCertFile}, key=${tunnelKeyFile}`);
+  }
+
+  const tunnelCert = fs.readFileSync(tunnelCertFile);
+  const tunnelKey = fs.readFileSync(tunnelKeyFile);
+
+  tunnelServer = new TunnelServer({
+    port: tunnelPort,
+    cert: tunnelCert,
+    key: tunnelKey,
+    credentials: {
+      username: config.auth_username,
+      password: config.auth_password
+    },
+    onConnect: (addr, port) => {
+      tunnelManager.setConnected(true, `${addr}:${port}`);
+      console.log(`[Tunnel] Client connected: ${addr}:${port}`);
+    },
+    onDisconnect: () => {
+      tunnelManager.setConnected(false);
+      console.log('[Tunnel] Client disconnected');
+    }
+  });
+
+  tunnelManager = new TunnelManager(tunnelServer, config);
+  await tunnelServer.start();
+  console.log(`[Tunnel] Server started on port ${tunnelPort}`);
+}
+
+async function closeTunnel() {
+  if (tunnelServer) {
+    await tunnelServer.stop();
+    tunnelServer = null;
+    tunnelManager = null;
+  }
+}
+
 function getAnyProxyOptions() {
   return {
     port: proxyPort,
+    customConnect: (host, port, callback) => {
+      if (tunnelManager && tunnelManager.matchesTunnelDomain(host)) {
+        return tunnelManager.forward(host, port, callback);
+      }
+      return null;
+    },
     rule: {
       responseRules: getResponseRules(),
       // 验证 Proxy-Authorization
@@ -1078,6 +1146,11 @@ function getAnyProxyOptions() {
             // 没有冒号，整个字符串就是 host
             host = requestDetail.host;
           }
+        }
+
+        // Tunnel domains must stay pure TCP. Never MITM/decrypt them.
+        if (tunnelManager && tunnelManager.matchesTunnelDomain(host)) {
+          return false;
         }
 
         // rewrite 规则判断（YouTube 去广告、有道词典 VIP 等）
@@ -1407,6 +1480,7 @@ var LocalProxy = {
     // 每次启动时都重新加载配置并重建规则注册表
     const config = await loadConfig();
     await rebuildRuleRegistry(config);
+    await initTunnel(config);
 
     // 如果代理服务器已在运行，先停止它
     if (proxyServerInstance && proxyServerInstance.httpProxyServer && proxyServerInstance.httpProxyServer.listening) {
@@ -1425,8 +1499,9 @@ var LocalProxy = {
       }
     }
   },
-  restart: async function(callback) { 
+  restart: async function(callback) {
     // 实现重启功能
+    await closeTunnel();
     if (proxyServerInstance) {
       console.log('Restarting proxy server...');
       proxyServerInstance.close();
