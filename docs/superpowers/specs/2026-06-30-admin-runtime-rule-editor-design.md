@@ -36,16 +36,16 @@ Use stable files under the project runtime config directory instead of OS tempor
 ```txt
 config/
   rule.js                    # Docker-mounted source, optional, read-only from admin semantics
-  runtime-rule.js            # Admin-managed runtime rule, loaded by registry
-  runtime-rule-meta.json     # Runtime rule setting and source metadata
+  runtime-custom-rule.js            # Admin-managed runtime rule, loaded by registry
+  runtime-custom-rule-meta.json     # Runtime rule setting and source metadata
   rule-backups/
     20260630-153012-rule.js
     20260630-153012-meta.json
 ```
 
-`config/runtime-rule.js` is the only non-built-in external rule file loaded by the proxy registry. The CLI path and Docker path are only copied into `runtime-rule.js` during full process startup when import policy allows it.
+`config/runtime-custom-rule.js` is the only non-built-in external rule file loaded by the proxy registry. The CLI path and Docker path are only copied into `runtime-custom-rule.js` during full process startup when import policy allows it.
 
-If `config/` does not exist, the backend creates it. If `runtime-rule.js` does not exist and no source is imported, the backend creates an empty valid module:
+If `config/` does not exist, the backend creates it. If `runtime-custom-rule.js` does not exist and no source is imported, the backend creates an empty valid module:
 
 ```js
 module.exports = {};
@@ -53,7 +53,7 @@ module.exports = {};
 
 ## Metadata
 
-`config/runtime-rule-meta.json` stores:
+`config/runtime-custom-rule-meta.json` stores:
 
 ```json
 {
@@ -68,7 +68,7 @@ module.exports = {};
 
 Field semantics:
 
-- `prefer_runtime_rule`: when `true`, full process startup keeps the existing `runtime-rule.js` and ignores CLI/Docker imports.
+- `prefer_runtime_rule`: when `true`, full process startup keeps the existing `runtime-custom-rule.js` and ignores CLI/Docker imports.
 - `last_import_source`: `cli`, `docker`, `runtime`, `empty`, or `admin`.
 - `last_import_path`: original source path for CLI/Docker imports, or empty string.
 - `last_import_hash`: SHA-256 hash of the imported or saved rule content.
@@ -81,23 +81,23 @@ On every full process start:
 
 1. Capture the CLI rule path from the existing one-shot `config_file` mechanism.
 2. Detect the Docker source at `config/rule.js`.
-3. Read `runtime-rule-meta.json`, defaulting `prefer_runtime_rule` to `false`.
+3. Read `runtime-custom-rule-meta.json`, defaulting `prefer_runtime_rule` to `false`.
 4. If `prefer_runtime_rule === true`:
    - Do not copy CLI or Docker source files.
-   - Ensure `runtime-rule.js` exists.
+   - Ensure `runtime-custom-rule.js` exists.
 5. If `prefer_runtime_rule !== true`:
-   - If Docker source exists, copy `config/rule.js` to `config/runtime-rule.js`.
-   - Else if CLI source exists, copy the CLI file to `config/runtime-rule.js`.
-   - Else if `runtime-rule.js` does not exist, create an empty valid module.
-   - Else keep the existing `runtime-rule.js`.
+   - If Docker source exists, copy `config/rule.js` to `config/runtime-custom-rule.js`.
+   - Else if CLI source exists, copy the CLI file to `config/runtime-custom-rule.js`.
+   - Else if `runtime-custom-rule.js` does not exist, create an empty valid module.
+   - Else keep the existing `runtime-custom-rule.js`.
 6. Update metadata with source, path, hash, and timestamp.
-7. Rebuild the registry from built-in rules plus `runtime-rule.js`.
+7. Rebuild the registry from built-in rules plus `runtime-custom-rule.js`.
 
 Docker keeps priority over CLI to match the current registry behavior where Docker rules shadow CLI rules.
 
 ## Admin Restart Policy
 
-The admin "重启代理" action must not re-import CLI or Docker source files. It only restarts the in-process proxy and reloads the current `runtime-rule.js`.
+The admin "重启代理" action must not re-import CLI or Docker source files. It only restarts the in-process proxy and reloads the current `runtime-custom-rule.js`.
 
 This is the central isolation rule:
 
@@ -121,13 +121,13 @@ Validation has two levels:
 Save behavior:
 
 - `POST /api/custom-rule` validates syntax before writing.
-- If syntax fails, do not overwrite `runtime-rule.js`.
+- If syntax fails, do not overwrite `runtime-custom-rule.js`.
 - If structure has invalid groups/items but the file can load, allow saving only if the registry can safely skip invalid entries. Return warnings to the UI.
-- `POST /api/restart` should fail before restarting if `runtime-rule.js` cannot be loaded safely.
+- `POST /api/restart` should fail before restarting if `runtime-custom-rule.js` cannot be loaded safely.
 
 ## Backups
 
-Before every successful admin save, create a timestamped backup of the previous `runtime-rule.js` and current metadata. Backups live under `config/rule-backups/`.
+Before every successful admin save, create a timestamped backup of the previous `runtime-custom-rule.js` and current metadata. Backups live under `config/rule-backups/`.
 
 Backup listing should include:
 
@@ -143,7 +143,7 @@ Backup listing should include:
 
 Restore behavior:
 
-- Restoring a backup copies the backup file to `runtime-rule.js`.
+- Restoring a backup copies the backup file to `runtime-custom-rule.js`.
 - Restoring also updates metadata to `last_import_source: "admin"` and `last_saved_by: "admin"`.
 - Restore validates syntax before overwriting.
 - Restore does not automatically restart the proxy; the UI should let users save/restore first, then restart explicitly.
@@ -228,7 +228,7 @@ This design does not sandbox rule execution. That is consistent with the existin
 
 Add focused Node tests for the runtime rule manager:
 
-- Creates `config/` and empty `runtime-rule.js` when no source exists.
+- Creates `config/` and empty `runtime-custom-rule.js` when no source exists.
 - Imports Docker source over CLI source when both exist and `prefer_runtime_rule` is false.
 - Keeps existing runtime rule when `prefer_runtime_rule` is true.
 - Does not mutate original CLI or Docker source files.
@@ -238,7 +238,7 @@ Add focused Node tests for the runtime rule manager:
 
 Extend registry tests:
 
-- `createRegistryFromFiles()` loads `runtimeRulePath`.
+- `createRegistryFromFiles()` loads `runtimeCustomRulePath`.
 - CLI/Docker direct paths are no longer required by proxy integration once runtime import is complete.
 
 Add API tests where practical using direct helper calls first. If Express integration tests become too heavy for the current test setup, keep the route handlers thin and cover file/validation behavior in the runtime rule manager.
@@ -248,6 +248,6 @@ Add API tests where practical using direct helper calls first. If Express integr
 Update `README.md`, `Useage.md`, and `wiki.md`:
 
 - Explain that CLI/Docker rule files are startup import sources.
-- Explain that 8003 edits `config/runtime-rule.js`.
+- Explain that 8003 edits `config/runtime-custom-rule.js`.
 - Explain the "优先使用当前自定义 rule" checkbox.
 - Explain persistence expectations for Docker volume mounts.

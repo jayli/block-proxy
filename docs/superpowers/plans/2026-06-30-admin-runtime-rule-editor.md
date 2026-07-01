@@ -4,7 +4,7 @@
 
 **Goal:** Add a 8003 admin tab for editing an isolated runtime `rule.js` copy, with validation, save, backups, restore, and predictable CLI/Docker startup import behavior.
 
-**Architecture:** Introduce a focused runtime rule manager that owns `config/runtime-rule.js`, metadata, import policy, validation, backups, and restore. The proxy registry loads built-in rules plus the runtime rule file only; CLI and Docker files become startup import sources. Express exposes thin authenticated APIs, and React adds a "自定义 rule" tab backed by those APIs.
+**Architecture:** Introduce a focused runtime rule manager that owns `config/runtime-custom-rule.js`, metadata, import policy, validation, backups, and restore. The proxy registry loads built-in rules plus the runtime rule file only; CLI and Docker files become startup import sources. Express exposes thin authenticated APIs, and React adds a "自定义 rule" tab backed by those APIs.
 
 **Tech Stack:** Node.js CommonJS, Express 5, React 19 / CRA, existing MITM registry, Node `assert` test scripts, filesystem-backed runtime config.
 
@@ -12,16 +12,16 @@
 
 ## File Structure
 
-- Create: `proxy/mitm/runtimeRule.js`
+- Create: `proxy/mitm/runtimeCustomRule.js`
   - Owns runtime rule paths, metadata defaults, source import, syntax validation, structural validation, atomic save, backup listing, backup creation, and restore.
 - Modify: `proxy/mitm/registry.js`
-  - Add `runtimeRulePath` support in `createRegistryFromFiles()`.
-  - Keep old `cliRulePath` and `dockerRulePath` support for tests/backward compatibility during migration, but proxy integration should pass only `runtimeRulePath`.
+  - Add `runtimeCustomRulePath` support in `createRegistryFromFiles()`.
+  - Keep old `cliRulePath` and `dockerRulePath` support for tests/backward compatibility during migration, but proxy integration should pass only `runtimeCustomRulePath`.
 - Modify: `proxy/proxy.js`
-  - Replace direct CLI/Docker registry loading with startup import into `runtime-rule.js`.
+  - Replace direct CLI/Docker registry loading with startup import into `runtime-custom-rule.js`.
   - Keep `loadGlobalConfigFile()` as the one-shot CLI path capture.
   - Call runtime rule manager during `LocalProxy.init()` before `start()`.
-  - Rebuild registry from `runtimeRulePath` on initial start and admin restart.
+  - Rebuild registry from `runtimeCustomRulePath` on initial start and admin restart.
 - Modify: `server/express.js`
   - Add authenticated custom-rule APIs.
   - Validate runtime rule before `/api/restart`.
@@ -30,19 +30,19 @@
   - Fetch, edit, validate, save, list backups, restore, and restart.
 - Modify: `src/App.css`
   - Add compact code editor, toolbar, validation, and backup list styles consistent with current admin UI.
-- Create: `test/runtime-rule-tests.js`
+- Create: `test/runtime-custom-rule-tests.js`
   - Pure Node tests for import policy, validation, save, backup, restore, and source isolation.
 - Modify: `test/mitm-registry-tests.js`
   - Add runtime rule path loading coverage.
 - Modify: `package.json`
-  - Add `test:runtime-rule` and include it in the manual verification path.
+  - Add `test:runtime-custom-rule` and include it in the manual verification path.
 - Modify: `README.md`, `Useage.md`, `wiki.md`
   - Document the startup import model and admin editor behavior.
 
 ## Task 1: Runtime Rule Manager Failing Tests
 
 **Files:**
-- Create: `test/runtime-rule-tests.js`
+- Create: `test/runtime-custom-rule-tests.js`
 - Modify: `package.json`
 
 - [ ] **Step 1: Add the test script**
@@ -50,12 +50,12 @@
 Modify `package.json` scripts:
 
 ```json
-"test:runtime-rule": "node test/runtime-rule-tests.js"
+"test:runtime-custom-rule": "node test/runtime-custom-rule-tests.js"
 ```
 
 - [ ] **Step 2: Write failing tests for import policy and file isolation**
 
-Create `test/runtime-rule-tests.js`:
+Create `test/runtime-custom-rule-tests.js`:
 
 ```js
 #!/usr/bin/env node
@@ -65,10 +65,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const runtimeRule = require('../proxy/mitm/runtimeRule');
+const runtimeCustomRule = require('../proxy/mitm/runtimeCustomRule');
 
 function tempRoot() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'bp-runtime-rule-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'bp-runtime-custom-rule-'));
 }
 
 function read(file) {
@@ -86,87 +86,87 @@ function makeSource(host) {
 
 async function testCreatesEmptyRuntimeRuleWithoutSource() {
   const root = tempRoot();
-  const paths = runtimeRule.createPaths(root);
+  const paths = runtimeCustomRule.createPaths(root);
 
-  const result = await runtimeRule.prepareRuntimeRule({
+  const result = await runtimeCustomRule.prepareRuntimeRule({
     paths,
     cliRulePath: null,
     dockerRulePath: null
   });
 
   assert.strictEqual(result.last_import_source, 'empty');
-  assert.strictEqual(read(paths.runtimeRulePath), 'module.exports = {};\n');
+  assert.strictEqual(read(paths.runtimeCustomRulePath), 'module.exports = {};\n');
 }
 
 async function testDockerImportWinsOverCli() {
   const root = tempRoot();
-  const paths = runtimeRule.createPaths(root);
+  const paths = runtimeCustomRule.createPaths(root);
   const cliPath = path.join(root, 'cli-rule.js');
   const dockerPath = paths.dockerRulePath;
   write(cliPath, makeSource('cli.example.com'));
   write(dockerPath, makeSource('docker.example.com'));
 
-  const result = await runtimeRule.prepareRuntimeRule({
+  const result = await runtimeCustomRule.prepareRuntimeRule({
     paths,
     cliRulePath: cliPath,
     dockerRulePath: dockerPath
   });
 
   assert.strictEqual(result.last_import_source, 'docker');
-  assert.ok(read(paths.runtimeRulePath).includes('docker.example.com'));
+  assert.ok(read(paths.runtimeCustomRulePath).includes('docker.example.com'));
   assert.ok(read(cliPath).includes('cli.example.com'));
   assert.ok(read(dockerPath).includes('docker.example.com'));
 }
 
 async function testPreferRuntimeKeepsExistingRule() {
   const root = tempRoot();
-  const paths = runtimeRule.createPaths(root);
-  write(paths.runtimeRulePath, makeSource('admin.example.com'));
-  await runtimeRule.writeMeta(paths, { prefer_runtime_rule: true });
+  const paths = runtimeCustomRule.createPaths(root);
+  write(paths.runtimeCustomRulePath, makeSource('admin.example.com'));
+  await runtimeCustomRule.writeMeta(paths, { prefer_runtime_rule: true });
   write(paths.dockerRulePath, makeSource('docker.example.com'));
 
-  const result = await runtimeRule.prepareRuntimeRule({
+  const result = await runtimeCustomRule.prepareRuntimeRule({
     paths,
     cliRulePath: null,
     dockerRulePath: paths.dockerRulePath
   });
 
   assert.strictEqual(result.last_import_source, 'runtime');
-  assert.ok(read(paths.runtimeRulePath).includes('admin.example.com'));
+  assert.ok(read(paths.runtimeCustomRulePath).includes('admin.example.com'));
 }
 
 async function testRejectsSyntaxInvalidSaveWithoutOverwrite() {
   const root = tempRoot();
-  const paths = runtimeRule.createPaths(root);
-  write(paths.runtimeRulePath, makeSource('good.example.com'));
+  const paths = runtimeCustomRule.createPaths(root);
+  write(paths.runtimeCustomRulePath, makeSource('good.example.com'));
 
   await assert.rejects(
-    () => runtimeRule.saveRuntimeRule(paths, {
+    () => runtimeCustomRule.saveRuntimeRule(paths, {
       source: 'module.exports = {',
       preferRuntimeRule: true
     }),
     /syntax/i
   );
 
-  assert.ok(read(paths.runtimeRulePath).includes('good.example.com'));
+  assert.ok(read(paths.runtimeCustomRulePath).includes('good.example.com'));
 }
 
 async function testSaveCreatesBackupAndRestoreWorks() {
   const root = tempRoot();
-  const paths = runtimeRule.createPaths(root);
-  write(paths.runtimeRulePath, makeSource('old.example.com'));
+  const paths = runtimeCustomRule.createPaths(root);
+  write(paths.runtimeCustomRulePath, makeSource('old.example.com'));
 
-  await runtimeRule.saveRuntimeRule(paths, {
+  await runtimeCustomRule.saveRuntimeRule(paths, {
     source: makeSource('new.example.com'),
     preferRuntimeRule: true
   });
 
-  const backups = await runtimeRule.listBackups(paths);
+  const backups = await runtimeCustomRule.listBackups(paths);
   assert.strictEqual(backups.length, 1);
-  assert.ok(read(paths.runtimeRulePath).includes('new.example.com'));
+  assert.ok(read(paths.runtimeCustomRulePath).includes('new.example.com'));
 
-  await runtimeRule.restoreBackup(paths, backups[0].id);
-  assert.ok(read(paths.runtimeRulePath).includes('old.example.com'));
+  await runtimeCustomRule.restoreBackup(paths, backups[0].id);
+  assert.ok(read(paths.runtimeCustomRulePath).includes('old.example.com'));
 }
 
 (async () => {
@@ -188,27 +188,27 @@ async function testSaveCreatesBackupAndRestoreWorks() {
 Run:
 
 ```bash
-npm run test:runtime-rule
+npm run test:runtime-custom-rule
 ```
 
-Expected: FAIL with `Cannot find module '../proxy/mitm/runtimeRule'`.
+Expected: FAIL with `Cannot find module '../proxy/mitm/runtimeCustomRule'`.
 
 - [ ] **Step 4: Commit the failing test**
 
 ```bash
-git add package.json test/runtime-rule-tests.js
+git add package.json test/runtime-custom-rule-tests.js
 git commit -m "test: add runtime rule manager coverage"
 ```
 
 ## Task 2: Runtime Rule Manager Implementation
 
 **Files:**
-- Create: `proxy/mitm/runtimeRule.js`
-- Test: `test/runtime-rule-tests.js`
+- Create: `proxy/mitm/runtimeCustomRule.js`
+- Test: `test/runtime-custom-rule-tests.js`
 
 - [ ] **Step 1: Implement paths, metadata, and hashing**
 
-Create `proxy/mitm/runtimeRule.js` with these exported functions:
+Create `proxy/mitm/runtimeCustomRule.js` with these exported functions:
 
 ```js
 const crypto = require('crypto');
@@ -231,8 +231,8 @@ function createPaths(rootDir = path.join(__dirname, '../../config')) {
   return {
     configDir: rootDir,
     dockerRulePath: path.join(rootDir, 'rule.js'),
-    runtimeRulePath: path.join(rootDir, 'runtime-rule.js'),
-    metaPath: path.join(rootDir, 'runtime-rule-meta.json'),
+    runtimeCustomRulePath: path.join(rootDir, 'runtime-custom-rule.js'),
+    metaPath: path.join(rootDir, 'runtime-custom-rule-meta.json'),
     backupDir: path.join(rootDir, 'rule-backups')
   };
 }
@@ -244,8 +244,8 @@ function ensureDirs(paths) {
 
 function ensureRuntimeRule(paths) {
   ensureDirs(paths);
-  if (!fs.existsSync(paths.runtimeRulePath)) {
-    fs.writeFileSync(paths.runtimeRulePath, EMPTY_RULE, 'utf8');
+  if (!fs.existsSync(paths.runtimeCustomRulePath)) {
+    fs.writeFileSync(paths.runtimeCustomRulePath, EMPTY_RULE, 'utf8');
   }
 }
 
@@ -261,7 +261,7 @@ Add:
 ```js
 function validateSyntax(source) {
   try {
-    new vm.Script(source, { filename: 'runtime-rule.js' });
+    new vm.Script(source, { filename: 'runtime-custom-rule.js' });
     return { ok: true, errors: [] };
   } catch (error) {
     return { ok: false, errors: [`Syntax error: ${error.message}`] };
@@ -347,7 +347,7 @@ async function prepareRuntimeRule({ paths = createPaths(), cliRulePath = null, d
     return writeMeta(paths, {
       last_import_source: 'runtime',
       last_import_path: '',
-      last_import_hash: hashContent(fs.readFileSync(paths.runtimeRulePath, 'utf8')),
+      last_import_hash: hashContent(fs.readFileSync(paths.runtimeCustomRulePath, 'utf8')),
       last_saved_at: new Date().toISOString(),
       last_saved_by: 'startup'
     });
@@ -369,13 +369,13 @@ async function prepareRuntimeRule({ paths = createPaths(), cliRulePath = null, d
   if (sourcePath) {
     const content = fs.readFileSync(sourcePath, 'utf8');
     assertSyntax(content);
-    fs.writeFileSync(paths.runtimeRulePath, content, 'utf8');
-  } else if (!fs.existsSync(paths.runtimeRulePath)) {
-    fs.writeFileSync(paths.runtimeRulePath, EMPTY_RULE, 'utf8');
+    fs.writeFileSync(paths.runtimeCustomRulePath, content, 'utf8');
+  } else if (!fs.existsSync(paths.runtimeCustomRulePath)) {
+    fs.writeFileSync(paths.runtimeCustomRulePath, EMPTY_RULE, 'utf8');
     createdEmpty = true;
   }
 
-  const content = fs.readFileSync(paths.runtimeRulePath, 'utf8');
+  const content = fs.readFileSync(paths.runtimeCustomRulePath, 'utf8');
   return writeMeta(paths, {
     last_import_source: sourcePath ? source : (createdEmpty ? 'empty' : 'runtime'),
     last_import_path: sourcePath || '',
@@ -397,11 +397,11 @@ function makeBackupId(date = new Date()) {
 
 function createBackup(paths) {
   ensureDirs(paths);
-  if (!fs.existsSync(paths.runtimeRulePath)) return null;
+  if (!fs.existsSync(paths.runtimeCustomRulePath)) return null;
   const id = makeBackupId();
   const ruleBackupPath = path.join(paths.backupDir, `${id}-rule.js`);
   const metaBackupPath = path.join(paths.backupDir, `${id}-meta.json`);
-  fs.copyFileSync(paths.runtimeRulePath, ruleBackupPath);
+  fs.copyFileSync(paths.runtimeCustomRulePath, ruleBackupPath);
   fs.writeFileSync(metaBackupPath, JSON.stringify(readMeta(paths), null, 2), 'utf8');
   return id;
 }
@@ -437,9 +437,9 @@ async function saveRuntimeRule(paths = createPaths(), { source, preferRuntimeRul
     throw new Error((validation.errors || ['Invalid rule source']).join('\n'));
   }
   createBackup(paths);
-  const tempPath = `${paths.runtimeRulePath}.tmp`;
+  const tempPath = `${paths.runtimeCustomRulePath}.tmp`;
   fs.writeFileSync(tempPath, source, 'utf8');
-  fs.renameSync(tempPath, paths.runtimeRulePath);
+  fs.renameSync(tempPath, paths.runtimeCustomRulePath);
   return writeMeta(paths, {
     prefer_runtime_rule: !!preferRuntimeRule,
     last_import_source: 'admin',
@@ -458,7 +458,7 @@ async function restoreBackup(paths = createPaths(), id) {
   const source = fs.readFileSync(backupPath, 'utf8');
   assertSyntax(source);
   createBackup(paths);
-  fs.copyFileSync(backupPath, paths.runtimeRulePath);
+  fs.copyFileSync(backupPath, paths.runtimeCustomRulePath);
   return writeMeta(paths, {
     last_import_source: 'admin',
     last_import_path: '',
@@ -495,7 +495,7 @@ module.exports = {
 Run:
 
 ```bash
-npm run test:runtime-rule
+npm run test:runtime-custom-rule
 ```
 
 Expected: all tests PASS.
@@ -503,7 +503,7 @@ Expected: all tests PASS.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add proxy/mitm/runtimeRule.js test/runtime-rule-tests.js
+git add proxy/mitm/runtimeCustomRule.js test/runtime-custom-rule-tests.js
 git commit -m "feat: add runtime rule manager"
 ```
 
@@ -513,9 +513,9 @@ git commit -m "feat: add runtime rule manager"
 - Modify: `proxy/mitm/registry.js`
 - Modify: `test/mitm-registry-tests.js`
 
-- [ ] **Step 1: Add a failing registry test for runtimeRulePath**
+- [ ] **Step 1: Add a failing registry test for runtimeCustomRulePath**
 
-Append a test that creates a temp `runtime-rule.js`, calls `createRegistryFromFiles({ runtimeRulePath })`, and asserts the exported host is enabled.
+Append a test that creates a temp `runtime-custom-rule.js`, calls `createRegistryFromFiles({ runtimeCustomRulePath })`, and asserts the exported host is enabled.
 
 - [ ] **Step 2: Run failing registry test**
 
@@ -525,19 +525,19 @@ Run:
 npm run test:registry
 ```
 
-Expected: FAIL because `runtimeRulePath` is ignored.
+Expected: FAIL because `runtimeCustomRulePath` is ignored.
 
-- [ ] **Step 3: Implement `runtimeRulePath` support**
+- [ ] **Step 3: Implement `runtimeCustomRulePath` support**
 
 In `createRegistryFromFiles(options = {})`, load:
 
 ```js
-const runtimeRules = options.runtimeRulePath ? safeRequire(path.resolve(options.runtimeRulePath), 'Runtime rule.js') : null;
+const runtimeCustomRules = options.runtimeCustomRulePath ? safeRequire(path.resolve(options.runtimeCustomRulePath), 'Runtime rule.js') : null;
 ```
 
 Then call `createRegistry()` so runtime rules are an external source. Recommended source id: `external:runtime`.
 
-Implementation detail: add `runtimeRules` to `createRegistry()` sources after built-in rules. Keep CLI/Docker sources after runtime only for backward compatibility tests, but proxy integration should not pass CLI/Docker paths.
+Implementation detail: add `runtimeCustomRules` to `createRegistry()` sources after built-in rules. Keep CLI/Docker sources after runtime only for backward compatibility tests, but proxy integration should not pass CLI/Docker paths.
 
 - [ ] **Step 4: Run registry tests**
 
@@ -560,15 +560,15 @@ git commit -m "feat: load runtime rule source in registry"
 
 **Files:**
 - Modify: `proxy/proxy.js`
-- Test: `test/runtime-rule-tests.js`, `test/mitm-registry-tests.js`, `test/mitm-runtime-tests.js`
+- Test: `test/runtime-custom-rule-tests.js`, `test/mitm-registry-tests.js`, `test/mitm-runtime-tests.js`
 
 - [ ] **Step 1: Import runtime rule manager**
 
 At the top of `proxy/proxy.js`, add:
 
 ```js
-const runtimeRule = require('./mitm/runtimeRule.js');
-let runtimeRulePaths = runtimeRule.createPaths();
+const runtimeCustomRule = require('./mitm/runtimeCustomRule.js');
+let runtimeCustomRulePaths = runtimeCustomRule.createPaths();
 ```
 
 - [ ] **Step 2: Prepare runtime rule during `LocalProxy.init()`**
@@ -576,8 +576,8 @@ let runtimeRulePaths = runtimeRule.createPaths();
 After `await loadGlobalConfigFile();`, add:
 
 ```js
-await runtimeRule.prepareRuntimeRule({
-  paths: runtimeRulePaths,
+await runtimeCustomRule.prepareRuntimeRule({
+  paths: runtimeCustomRulePaths,
   cliRulePath,
   dockerRulePath: path.join(__dirname, '../config/rule.js')
 });
@@ -591,7 +591,7 @@ Modify `rebuildRuleRegistry(config)`:
 async function rebuildRuleRegistry(config) {
   ruleRegistry = mitmRegistry.createRegistryFromFiles({
     config,
-    runtimeRulePath: runtimeRulePaths.runtimeRulePath
+    runtimeCustomRulePath: runtimeCustomRulePaths.runtimeCustomRulePath
   });
 }
 ```
@@ -606,7 +606,7 @@ If tests need isolated runtime paths, expose a test-only hook:
 
 ```js
 setRuntimeRulePathsForTest(nextPaths) {
-  runtimeRulePaths = nextPaths;
+  runtimeCustomRulePaths = nextPaths;
 }
 ```
 
@@ -615,7 +615,7 @@ setRuntimeRulePathsForTest(nextPaths) {
 Run:
 
 ```bash
-npm run test:runtime-rule
+npm run test:runtime-custom-rule
 npm run test:registry
 npm run test:mitm-runtime
 ```
@@ -633,15 +633,15 @@ git commit -m "feat: load admin runtime rule in proxy"
 
 **Files:**
 - Modify: `server/express.js`
-- Test: `test/runtime-rule-tests.js`
+- Test: `test/runtime-custom-rule-tests.js`
 
 - [ ] **Step 1: Import runtime rule manager**
 
 Add near existing imports:
 
 ```js
-const runtimeRule = require('../proxy/mitm/runtimeRule.js');
-const runtimeRulePaths = runtimeRule.createPaths();
+const runtimeCustomRule = require('../proxy/mitm/runtimeCustomRule.js');
+const runtimeCustomRulePaths = runtimeCustomRule.createPaths();
 ```
 
 - [ ] **Step 2: Add `GET /api/custom-rule`**
@@ -651,12 +651,12 @@ Return source, meta, and syntax validation. This route must not call `prepareRun
 ```js
 app.get('/api/custom-rule', async (req, res) => {
   try {
-    runtimeRule.ensureRuntimeRule(runtimeRulePaths);
-    const source = fs.readFileSync(runtimeRulePaths.runtimeRulePath, 'utf8');
+    runtimeCustomRule.ensureRuntimeRule(runtimeCustomRulePaths);
+    const source = fs.readFileSync(runtimeCustomRulePaths.runtimeCustomRulePath, 'utf8');
     res.status(200).json({
       source,
-      meta: runtimeRule.readMeta(runtimeRulePaths),
-      validation: runtimeRule.validateSyntax(source)
+      meta: runtimeCustomRule.readMeta(runtimeCustomRulePaths),
+      validation: runtimeCustomRule.validateSyntax(source)
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -666,14 +666,14 @@ app.get('/api/custom-rule', async (req, res) => {
 
 - [ ] **Step 3: Add `POST /api/custom-rule/validate`**
 
-Parse JSON body and return `runtimeRule.validateSource(source)`.
+Parse JSON body and return `runtimeCustomRule.validateSource(source)`.
 
 - [ ] **Step 4: Add `POST /api/custom-rule`**
 
 Parse JSON body and call:
 
 ```js
-await runtimeRule.saveRuntimeRule(runtimeRulePaths, {
+await runtimeCustomRule.saveRuntimeRule(runtimeCustomRulePaths, {
   source: body.source,
   preferRuntimeRule: body.prefer_runtime_rule
 });
@@ -692,14 +692,14 @@ POST /api/custom-rule/backups/:id/restore
 
 - [ ] **Step 6: Validate before restart**
 
-At the start of `/api/restart`, read `runtime-rule.js`; if `runtimeRule.validateSource(source)` fails, return HTTP 400 and do not call `LocalProxy.restart()`.
+At the start of `/api/restart`, read `runtime-custom-rule.js`; if `runtimeCustomRule.validateSource(source)` fails, return HTTP 400 and do not call `LocalProxy.restart()`.
 
 - [ ] **Step 7: Run smoke checks**
 
 Run:
 
 ```bash
-npm run test:runtime-rule
+npm run test:runtime-custom-rule
 npm run test:registry
 ```
 
@@ -839,8 +839,8 @@ git commit -m "feat: add custom rule admin tab"
 Add language explaining:
 
 - `-c rule.js` and `/app/config/rule.js` are startup import sources.
-- The admin editor writes `config/runtime-rule.js`.
-- Admin proxy restart reloads `runtime-rule.js` only.
+- The admin editor writes `config/runtime-custom-rule.js`.
+- Admin proxy restart reloads `runtime-custom-rule.js` only.
 - Full process/container restart may re-import CLI/Docker source unless "优先使用当前自定义 rule" is enabled.
 
 - [ ] **Step 2: Document Docker persistence**
@@ -869,7 +869,7 @@ git commit -m "docs: describe custom runtime rule editor"
 - [ ] **Step 1: Run focused tests**
 
 ```bash
-npm run test:runtime-rule
+npm run test:runtime-custom-rule
 npm run test:registry
 npm run test:mitm-runtime
 ```
