@@ -36,8 +36,8 @@ Use stable files under the project runtime config directory instead of OS tempor
 ```txt
 config/
   rule.js                    # Docker-mounted source, optional, read-only from admin semantics
-  runtime-custom-rule.js            # Admin-managed runtime rule, loaded by registry
-  runtime-custom-rule-meta.json     # Runtime rule setting and source metadata
+  runtime-custom-rule.js       # Admin-managed runtime rule, loaded by registry
+  runtime-custom-rule-meta.json # Runtime rule setting and source metadata
   rule-backups/
     20260630-153012-rule.js
     20260630-153012-meta.json

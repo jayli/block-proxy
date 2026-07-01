@@ -88,7 +88,7 @@ async function testCreatesEmptyRuntimeRuleWithoutSource() {
   const root = tempRoot();
   const paths = runtimeCustomRule.createPaths(root);
 
-  const result = await runtimeCustomRule.prepareRuntimeRule({
+  const result = await runtimeCustomRule.prepareRuntimeCustomRule({
     paths,
     cliRulePath: null,
     dockerRulePath: null
@@ -106,7 +106,7 @@ async function testDockerImportWinsOverCli() {
   write(cliPath, makeSource('cli.example.com'));
   write(dockerPath, makeSource('docker.example.com'));
 
-  const result = await runtimeCustomRule.prepareRuntimeRule({
+  const result = await runtimeCustomRule.prepareRuntimeCustomRule({
     paths,
     cliRulePath: cliPath,
     dockerRulePath: dockerPath
@@ -125,7 +125,7 @@ async function testPreferRuntimeKeepsExistingRule() {
   await runtimeCustomRule.writeMeta(paths, { prefer_runtime_rule: true });
   write(paths.dockerRulePath, makeSource('docker.example.com'));
 
-  const result = await runtimeCustomRule.prepareRuntimeRule({
+  const result = await runtimeCustomRule.prepareRuntimeCustomRule({
     paths,
     cliRulePath: null,
     dockerRulePath: paths.dockerRulePath
@@ -141,7 +141,7 @@ async function testRejectsSyntaxInvalidSaveWithoutOverwrite() {
   write(paths.runtimeCustomRulePath, makeSource('good.example.com'));
 
   await assert.rejects(
-    () => runtimeCustomRule.saveRuntimeRule(paths, {
+    () => runtimeCustomRule.saveRuntimeCustomRule(paths, {
       source: 'module.exports = {',
       preferRuntimeRule: true
     }),
@@ -156,7 +156,7 @@ async function testSaveCreatesBackupAndRestoreWorks() {
   const paths = runtimeCustomRule.createPaths(root);
   write(paths.runtimeCustomRulePath, makeSource('old.example.com'));
 
-  await runtimeCustomRule.saveRuntimeRule(paths, {
+  await runtimeCustomRule.saveRuntimeCustomRule(paths, {
     source: makeSource('new.example.com'),
     preferRuntimeRule: true
   });
@@ -242,7 +242,7 @@ function ensureDirs(paths) {
   fs.mkdirSync(paths.backupDir, { recursive: true });
 }
 
-function ensureRuntimeRule(paths) {
+function ensureRuntimeCustomRule(paths) {
   ensureDirs(paths);
   if (!fs.existsSync(paths.runtimeCustomRulePath)) {
     fs.writeFileSync(paths.runtimeCustomRulePath, EMPTY_RULE, 'utf8');
@@ -335,15 +335,15 @@ async function writeMeta(paths, patch) {
 
 - [ ] **Step 5: Implement startup import**
 
-Add `prepareRuntimeRule({ paths, cliRulePath, dockerRulePath })`:
+Add `prepareRuntimeCustomRule({ paths, cliRulePath, dockerRulePath })`:
 
 ```js
-async function prepareRuntimeRule({ paths = createPaths(), cliRulePath = null, dockerRulePath = null } = {}) {
+async function prepareRuntimeCustomRule({ paths = createPaths(), cliRulePath = null, dockerRulePath = null } = {}) {
   ensureDirs(paths);
   const meta = readMeta(paths);
 
   if (meta.prefer_runtime_rule === true) {
-    ensureRuntimeRule(paths);
+    ensureRuntimeCustomRule(paths);
     return writeMeta(paths, {
       last_import_source: 'runtime',
       last_import_path: '',
@@ -431,7 +431,7 @@ async function listBackups(paths = createPaths()) {
     });
 }
 
-async function saveRuntimeRule(paths = createPaths(), { source, preferRuntimeRule }) {
+async function saveRuntimeCustomRule(paths = createPaths(), { source, preferRuntimeRule }) {
   const validation = validateSource(source);
   if (!validation.ok) {
     throw new Error((validation.errors || ['Invalid rule source']).join('\n'));
@@ -477,14 +477,14 @@ Export:
 module.exports = {
   EMPTY_RULE,
   createPaths,
-  ensureRuntimeRule,
-  prepareRuntimeRule,
+  ensureRuntimeCustomRule,
+  prepareRuntimeCustomRule,
   readMeta,
   writeMeta,
   validateSyntax,
   validateStructure,
   validateSource,
-  saveRuntimeRule,
+  saveRuntimeCustomRule,
   listBackups,
   restoreBackup
 };
@@ -576,7 +576,7 @@ let runtimeCustomRulePaths = runtimeCustomRule.createPaths();
 After `await loadGlobalConfigFile();`, add:
 
 ```js
-await runtimeCustomRule.prepareRuntimeRule({
+await runtimeCustomRule.prepareRuntimeCustomRule({
   paths: runtimeCustomRulePaths,
   cliRulePath,
   dockerRulePath: path.join(__dirname, '../config/rule.js')
@@ -598,14 +598,14 @@ async function rebuildRuleRegistry(config) {
 
 - [ ] **Step 4: Keep admin restart free of startup imports**
 
-Confirm `LocalProxy.restart()` calls `start()` only. Do not call `prepareRuntimeRule()` from `restart()`.
+Confirm `LocalProxy.restart()` calls `start()` only. Do not call `prepareRuntimeCustomRule()` from `restart()`.
 
 - [ ] **Step 5: Add test hook if needed**
 
 If tests need isolated runtime paths, expose a test-only hook:
 
 ```js
-setRuntimeRulePathsForTest(nextPaths) {
+setRuntimeCustomRulePathsForTest(nextPaths) {
   runtimeCustomRulePaths = nextPaths;
 }
 ```
@@ -646,12 +646,12 @@ const runtimeCustomRulePaths = runtimeCustomRule.createPaths();
 
 - [ ] **Step 2: Add `GET /api/custom-rule`**
 
-Return source, meta, and syntax validation. This route must not call `prepareRuntimeRule()`, because reading the editor must not re-import CLI or Docker source files. It should also avoid structural validation so opening the editor does not execute top-level rule module code.
+Return source, meta, and syntax validation. This route must not call `prepareRuntimeCustomRule()`, because reading the editor must not re-import CLI or Docker source files. It should also avoid structural validation so opening the editor does not execute top-level rule module code.
 
 ```js
 app.get('/api/custom-rule', async (req, res) => {
   try {
-    runtimeCustomRule.ensureRuntimeRule(runtimeCustomRulePaths);
+    runtimeCustomRule.ensureRuntimeCustomRule(runtimeCustomRulePaths);
     const source = fs.readFileSync(runtimeCustomRulePaths.runtimeCustomRulePath, 'utf8');
     res.status(200).json({
       source,
@@ -673,7 +673,7 @@ Parse JSON body and return `runtimeCustomRule.validateSource(source)`.
 Parse JSON body and call:
 
 ```js
-await runtimeCustomRule.saveRuntimeRule(runtimeCustomRulePaths, {
+await runtimeCustomRule.saveRuntimeCustomRule(runtimeCustomRulePaths, {
   source: body.source,
   preferRuntimeRule: body.prefer_runtime_rule
 });
