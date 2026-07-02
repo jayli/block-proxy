@@ -76,6 +76,7 @@ function App() {
   const [newMatchRule, setNewMatchRule] = useState('');
   const [newStartTime, setNewStartTime] = useState('00:00');
   const [newEndTime, setNewEndTime] = useState('23:59');
+  const [newTunnelDomain, setNewTunnelDomain] = useState('');
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState({ message: '', type: '' });
   const [toastTimer, setToastTimer] = useState(null);
@@ -709,6 +710,12 @@ function App() {
           >
             路由表
           </button>
+          <button
+            className={`tab-btn ${activeTab === 3 ? 'active' : ''}`}
+            onClick={() => setActiveTab(3)}
+          >
+            隧道配置
+          </button>
         </div>
 
         {/* Tab 0: HTTP/Socks5 端口设置 */}
@@ -1024,6 +1031,115 @@ function App() {
           >
             {loading ? '刷新中...' : '更新路由表'}
           </button>
+        </div>
+        )}
+
+        {/* Tab 3: 隧道配置 */}
+        {activeTab === 3 && (
+        <div className="config-section tab-content">
+          <h2>隧道配置</h2>
+          <div className="setting-row">
+            <label>启用隧道:</label>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={(config.enable_tunnel || "1") === "1"}
+                onChange={(e) => setConfig({...config, enable_tunnel: e.target.checked ? "1" : "0"})}
+              />
+              <span className="switch-slider"></span>
+            </label>
+            <span className="switch-label">
+              {(config.enable_tunnel || "1") === "1" ? "已开启" : "已关闭"}
+            </span>
+          </div>
+          <div className="setting-row">
+            <label>隧道端口:</label>
+            <input
+              type="number"
+              value={config.tunnel_port || 8004}
+              onChange={(e) => setConfig({...config, tunnel_port: parseInt(e.target.value) || 8004})}
+              min="1"
+              max="65535"
+            />
+          </div>
+          <div className="setting-row full-width">
+            <label>隧道域名列表:</label>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                <input
+                  type="text"
+                  value={newTunnelDomain}
+                  onChange={(e) => setNewTunnelDomain(e.target.value)}
+                  placeholder="输入域名，例如: example.com"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newTunnelDomain.trim()) {
+                      const domains = config.tunnel_domains || [];
+                      if (!domains.includes(newTunnelDomain.trim())) {
+                        setConfig({...config, tunnel_domains: [...domains, newTunnelDomain.trim()]});
+                      }
+                      setNewTunnelDomain('');
+                    }
+                  }}
+                  style={{ flex: 1, padding: '10px 14px', border: '1.5px solid var(--input-border)', borderRadius: 'var(--radius-sm)', fontSize: '14px', background: 'var(--input-bg)', color: 'var(--gray-800)' }}
+                />
+                <button
+                  onClick={() => {
+                    if (newTunnelDomain.trim()) {
+                      const domains = config.tunnel_domains || [];
+                      if (!domains.includes(newTunnelDomain.trim())) {
+                        setConfig({...config, tunnel_domains: [...domains, newTunnelDomain.trim()]});
+                      }
+                      setNewTunnelDomain('');
+                    }
+                  }}
+                  className="save-btn"
+                  style={{ flex: 'none', width: 'auto', padding: '10px 20px' }}
+                >
+                  添加
+                </button>
+              </div>
+              {(config.tunnel_domains || []).length > 0 ? (
+                <ul className="ip-list">
+                  {(config.tunnel_domains || []).map((domain, index) => (
+                    <li key={index} className="ip-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>{domain}</span>
+                      <button
+                        onClick={() => {
+                          const domains = config.tunnel_domains || [];
+                          setConfig({...config, tunnel_domains: domains.filter((_, i) => i !== index)});
+                        }}
+                        className="refresh-btn"
+                        style={{ flex: 'none', width: 'auto', padding: '4px 12px', fontSize: '12px', marginLeft: '12px' }}
+                      >
+                        删除
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="empty-hint">暂无隧道域名</p>
+              )}
+            </div>
+          </div>
+          <div className="help-text" style={{ marginTop: '-8px', marginBottom: '8px' }}>
+            隧道域名列表用于指定哪些域名的流量需要通过反向隧道转发到客户端处理
+          </div>
+          <div className="setting-row actions">
+            <button
+              onClick={handleSaveConfig}
+              disabled={loading}
+              className="save-btn"
+            >
+              {loading ? '保存中...' : '保存配置'}
+            </button>
+            <button
+              onClick={handleRestartProxy}
+              disabled={loading}
+              className="restart-btn"
+            >
+              {loading ? '重启中...' : '重启代理'}
+            </button>
+          </div>
         </div>
         )}
 
