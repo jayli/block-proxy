@@ -78,6 +78,7 @@ class TunnelServer {
 
     socket.on('close', () => {
       this._socketBuffers.delete(socket);
+      this._socketPongTimes.delete(socket);
       const wasAuthenticated = this._clientSockets.has(socket);
       this._clientSockets.delete(socket);
       if (wasAuthenticated) {
@@ -137,6 +138,10 @@ class TunnelServer {
     if (username === this.credentials.username &&
         password === this.credentials.password) {
       this._clientSockets.add(socket);
+      // 为新连接初始化 pong 时间（心跳已启动时）
+      if (this._pingTimer) {
+        this._socketPongTimes.set(socket, Date.now());
+      }
       socket.write(encodeFrame({ type: FRAME_TYPES.AUTH_OK }));
       console.log(`[Tunnel] Client authenticated: ${socket.remoteAddress} (${this._clientSockets.size}/2)`);
       if (this._clientSockets.size === 1) {

@@ -540,6 +540,7 @@ class AppController(NSObject):
                         reason_map = {
                             "auth_failed": "鉴权失败",
                             "unreachable": "节点不通",
+                            "reconnecting": "重试中...",
                         }
                         suffix = reason_map.get(failure_reason)
                         if suffix:

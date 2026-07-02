@@ -433,7 +433,13 @@ class ProxyCore:
 
         # 隧道协议：复用已建立的隧道连接，通过 CONNECT 握手测量延迟
         if protocol == "tunnel":
-            if not self._tunnel_client or not self._tunnel_client.is_connected():
+            if not self._tunnel_client:
+                raise NodeUnreachableError("Tunnel not configured")
+            # 检查隧道当前状态
+            tunnel_status = self._tunnel_client.get_status()
+            if tunnel_status == 'reconnecting':
+                return (None, "reconnecting")
+            if not self._tunnel_client.is_connected():
                 raise NodeUnreachableError("Tunnel not connected")
             latency = self._tunnel_client.measure_latency(timeout=5)
             if latency is None:

@@ -169,7 +169,8 @@ class TunnelClient:
         """
         self._tunnel_cfg = config['tunnel']
         self._server_cfg = config['server']
-        self._on_status_change = on_status_change
+        self._user_on_status_change = on_status_change
+        self._last_status = 'disconnected'
         self._running = False
         self._thread = None
         self._loop = None
@@ -192,6 +193,15 @@ class TunnelClient:
 
     def is_connected(self):
         return self._connected
+
+    def get_status(self):
+        """Return current tunnel status: 'connecting', 'connected', 'reconnecting', etc."""
+        return getattr(self, '_last_status', 'disconnected')
+
+    def _on_status_change(self, status, detail=''):
+        """Internal wrapper: track status and invoke user callback."""
+        self._last_status = status
+        self._user_on_status_change(status, detail)
 
     @staticmethod
     def _set_tcp_options(writer):
