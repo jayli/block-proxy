@@ -88,13 +88,11 @@ class AppController(NSObject):
         self.config.load()
         self.proxy = ProxyCore()
         self.tunnel_client = None
-        self._tunnel_menu_item = None
         self.sys_proxy = SystemProxy()
         self.connected = False
         self._config_proc = None
         self._routing_proc = None
         self._log_proc = None
-        self._tunnel_proc = None
         self._measuring = False
 
         self._build_status_item()
@@ -148,14 +146,6 @@ class AppController(NSObject):
         )
         self._add_menu_item(menu, "Socks/HTTP 节点配置...", "openConfig:")
         self._add_menu_item(menu, "分流规则...", "openRouting:")
-        menu.addItem_(NSMenuItem.separatorItem())
-        self._tunnel_menu_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "节点隧道...", None, ""
-        )
-        self._tunnel_menu_item.setTarget_(self)
-        self._tunnel_menu_item.setAction_("openTunnelWindow:")
-        self._tunnel_menu_item.setEnabled_(True)
-        menu.addItem_(self._tunnel_menu_item)
         menu.addItem_(NSMenuItem.separatorItem())
 
         self.global_item = self._add_menu_item(
@@ -227,7 +217,7 @@ class AppController(NSObject):
                 if self.config.data.get('tunnel', {}).get('enabled'):
                     self.tunnel_client = TunnelClient(
                         self.config.data,
-                        on_status_change=self._on_tunnel_status_change
+                        on_status_change=lambda status, detail="": None
                     )
                     self.tunnel_client.start()
                     self.proxy.set_tunnel_client(self.tunnel_client)
@@ -381,44 +371,6 @@ class AppController(NSObject):
         self._connect()
 
     # ------------------------------------------------------------------
-    # Reverse tunnel
-    # ------------------------------------------------------------------
-
-    def _on_tunnel_status_change(self, status, detail=""):
-        title_map = {
-            'connected':    '节点隧道... (已连接)',
-            'connecting':   '节点隧道... (连接中...)',
-            'reconnecting': '节点隧道... (重连中 {})'.format(detail),
-            'occupied':     '节点隧道... (端口被占)',
-            'auth_failed':  '节点隧道... (认证失败)',
-            'disconnected': '节点隧道...'
-        }
-        title = title_map.get(status, '节点隧道...')
-        if self._tunnel_menu_item:
-            self._tunnel_menu_item.performSelectorOnMainThread_withObject_waitUntilDone_(
-                'setTitle:', title, False
-            )
-
-    def openTunnelWindow_(self, sender):
-        config_path = self.config.config_path
-        tunnel_window_path = os.path.join(_bundle_resource_dir(), 'tunnel_window.py')
-        python_path = self._find_python() if _is_compiled() else sys.executable
-        self._tunnel_proc = subprocess.Popen(
-            [python_path, tunnel_window_path, config_path]
-        )
-
-        def _reload_after():
-            self._tunnel_proc.wait()
-            self._tunnel_proc = None
-            old_tunnel = self.config.data.get('tunnel', {})
-            self.config.load()
-            new_tunnel = self.config.data.get('tunnel', {})
-            if self.connected and new_tunnel != old_tunnel:
-                self._run_on_main(self._reconnect)
-
-        threading.Thread(target=_reload_after, daemon=True).start()
-
-    # ------------------------------------------------------------------
     # About
     # ------------------------------------------------------------------
 
@@ -453,8 +405,6 @@ class AppController(NSObject):
             self._routing_proc.terminate()
         if self._log_proc and self._log_proc.poll() is None:
             self._log_proc.terminate()
-        if self._tunnel_proc and self._tunnel_proc.poll() is None:
-            self._tunnel_proc.terminate()
         if self.tunnel_client:
             self.tunnel_client.stop()
             self.tunnel_client = None
@@ -535,19 +485,33 @@ class AppController(NSObject):
 
         def _check():
             try:
-                latency = self.proxy.measure_latency()
+                result = self.proxy.measure_latency()
 
                 def _update():
                     if not self.connected:
                         return
-                    if latency == "tunnel":
-                        self.toggle_item.setTitle_("关闭代理（隧道模式）")
-                    elif latency is not None:
+                    if result is None:
+                        # 代理未运行，不更新标题
+                        return
+                    protocol_name, latency, failure_reason = result
+                    if latency is not None:
                         self.toggle_item.setTitle_(
-                            f"关闭代理（{latency}ms）"
+                            f"关闭代理（{protocol_name} 已连接 - {latency}ms）"
                         )
                     else:
-                        self.toggle_item.setTitle_("关闭代理（超时）")
+                        reason_map = {
+                            "auth_failed": "鉴权失败",
+                            "unreachable": "节点不通",
+                        }
+                        suffix = reason_map.get(failure_reason)
+                        if suffix:
+                            self.toggle_item.setTitle_(
+                                f"关闭代理（{protocol_name} 已中断 - {suffix}）"
+                            )
+                        else:
+                            self.toggle_item.setTitle_(
+                                f"关闭代理（{protocol_name} 已中断）"
+                            )
 
                 self._run_on_main(_update)
             finally:

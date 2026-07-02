@@ -15,6 +15,5 @@ def test_build_includes_all_subprocess_windows():
         "config_window.py",
         "log_window.py",
         "routing_window.py",
-        "tunnel_window.py",
     ]:
         assert f"--include-data-files={window_script}={window_script}" in build_script

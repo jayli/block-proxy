@@ -12,6 +12,16 @@ from logger import access_logger, crash_logger
 from traffic_stats import add_bytes, flush as flush_stats, init_writer
 
 
+class AuthFailedError(Exception):
+    """鉴权失败"""
+    pass
+
+
+class NodeUnreachableError(Exception):
+    """节点不可达"""
+    pass
+
+
 def _log_access(dest_addr, dest_port, method, direct, error=None):
     route = "direct" if direct else "proxy"
     if error:
@@ -329,6 +339,7 @@ class ProxyCore:
         self._http_server = None
         self._running = False
         self._server_config = None
+        self._tunnel_config = {}
         self._proxy_private = False
         self._udp_enabled = True
         self._socks_port = 1080
@@ -357,6 +368,7 @@ class ProxyCore:
             self.stop()
 
         self._server_config = user_config["server"]
+        self._tunnel_config = user_config.get("tunnel", {})
         local = user_config["local"]
         self._socks_port = local["socks_port"]
         self._http_port = local["http_port"]
@@ -419,29 +431,43 @@ class ProxyCore:
         username = self._server_config.get("username", "")
         password = self._server_config.get("password", "")
 
+        # 隧道协议使用独立的地址和端口
+        if protocol == "tunnel":
+            addr = self._tunnel_config.get("server_address") or self._server_config["address"]
+            port = self._tunnel_config.get("server_port", 8004)
+        else:
+            addr = self._server_config["address"]
+            port = self._server_config["port"]
+
         start = time.monotonic()
         reader = None
         writer = None
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(
-                    self._server_config["address"],
-                    self._server_config["port"],
+                    addr, port,
                     ssl=self._ssl_ctx if self._server_config["tls"] else None,
-                    server_hostname=self._server_config["address"] if self._server_config["tls"] else None,
+                    server_hostname=addr if self._server_config["tls"] else None,
                 ),
                 timeout=5,
             )
 
-            if protocol == "http":
+            if protocol == "tunnel":
+                await self._measure_latency_tunnel(reader, writer, username, password)
+            elif protocol == "http":
                 await self._measure_latency_http(reader, writer, username, password)
             else:
                 await self._measure_latency_socks5(reader, writer, username, password)
 
             elapsed = time.monotonic() - start
-            return int(elapsed * 1000)
+            return (int(elapsed * 1000), None)
+        except AuthFailedError:
+            return (None, "auth_failed")
+        except (NodeUnreachableError, ConnectionRefusedError, ConnectionResetError,
+                OSError, asyncio.TimeoutError, TimeoutError):
+            return (None, "unreachable")
         except Exception:
-            return None
+            return (None, "error")
         finally:
             if writer:
                 writer.close()
@@ -470,7 +496,7 @@ class ProxyCore:
             await writer.drain()
             auth_resp = await asyncio.wait_for(reader.readexactly(2), timeout=5)
             if auth_resp[1] != 0x00:
-                raise Exception("SOCKS5 auth failed")
+                raise AuthFailedError("SOCKS5 auth failed")
 
     async def _measure_latency_http(self, reader, writer, username, password):
         import base64
@@ -486,21 +512,64 @@ class ProxyCore:
 
         status_line = await asyncio.wait_for(reader.readline(), timeout=5)
         if not status_line:
-            raise Exception("HTTP proxy closed connection")
+            raise NodeUnreachableError("HTTP proxy closed connection")
         parts = status_line.decode().split(" ", 2)
         if len(parts) < 2 or not parts[1].startswith("2"):
-            raise Exception(f"HTTP proxy CONNECT failed: {status_line.decode().strip()}")
+            status_code = parts[1] if len(parts) >= 2 else "?"
+            if status_code == "407":
+                raise AuthFailedError(f"HTTP proxy auth failed: {status_line.decode().strip()}")
+            raise NodeUnreachableError(f"HTTP proxy CONNECT failed: {status_line.decode().strip()}")
+
+    async def _measure_latency_tunnel(self, reader, writer, username, password):
+        """测量隧道 TLS + AUTH 握手延迟。内联实现帧编解码，避免循环导入 tunnel_client。"""
+        FRAME_AUTH = 0x20
+        FRAME_AUTH_OK = 0x21
+        FRAME_AUTH_FAIL = 0x22
+        FRAME_ERROR = 0x23
+
+        # 编码 AUTH 帧: 2字节长度 + 1字节type + 1字节username_len + username + 1字节password_len + password
+        u = username.encode("utf-8")
+        p = password.encode("utf-8")
+        payload = bytearray([FRAME_AUTH])
+        payload.extend(struct.pack("B", len(u)))
+        payload.extend(u)
+        payload.extend(struct.pack("B", len(p)))
+        payload.extend(p)
+        frame = struct.pack("!H", len(payload)) + bytes(payload)
+        writer.write(frame)
+        await writer.drain()
+
+        # 读取响应帧: 2字节长度 + payload
+        header = await asyncio.wait_for(reader.readexactly(2), timeout=5)
+        length = struct.unpack("!H", header)[0]
+        resp_payload = await asyncio.wait_for(reader.readexactly(length), timeout=5)
+        resp_type = resp_payload[0]
+
+        if resp_type == FRAME_AUTH_OK:
+            return  # 握手成功，计时在外层完成
+        elif resp_type == FRAME_AUTH_FAIL:
+            raise AuthFailedError("Tunnel auth failed")
+        elif resp_type == FRAME_ERROR:
+            msg_len = resp_payload[1]
+            msg = resp_payload[2:2+msg_len].decode("utf-8")
+            raise NodeUnreachableError(f"Tunnel error: {msg}")
+        else:
+            raise NodeUnreachableError(f"Unexpected tunnel response: {resp_type:#x}")
 
     def measure_latency(self):
+        """测量代理延迟，返回 (protocol_name, latency_ms_or_None, failure_reason_or_None)。代理未运行时返回 None。"""
         if not self._running or not self._loop or not self._loop.is_running():
             return None
-        if self._server_config and self._server_config.get("protocol") == "tunnel":
-            return "tunnel"
+        protocol = self._server_config.get("protocol", "socks5")
+        name_map = {"http": "http", "socks5": "socks5", "tunnel": "隧道"}
+        protocol_name = name_map.get(protocol, protocol)
+
         future = asyncio.run_coroutine_threadsafe(self._measure_latency(), self._loop)
         try:
-            return future.result(timeout=6)
+            latency, failure_reason = future.result(timeout=6)
+            return (protocol_name, latency, failure_reason)
         except Exception:
-            return None
+            return (protocol_name, None, "unreachable")
 
     def _run_loop(self, started_event):
         asyncio.set_event_loop(self._loop)

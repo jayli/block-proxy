@@ -85,18 +85,3 @@ def test_show_config_window_reloads_disk_config_before_saving():
     assert load_index is not None
     assert save_index is not None
     assert load_index < save_index
-
-
-def test_tunnel_window_uses_packaged_resource_dir_and_python_interpreter():
-    source = Path(__file__).parents[1].joinpath("app.py").read_text()
-    tree = ast.parse(source)
-    app_controller = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "AppController"
-    )
-    body = _method_body(app_controller, "openTunnelWindow_")
-
-    assert any(_calls_name(node, "_bundle_resource_dir") for node in body)
-    assert any(_calls_self_method(node, "_find_python") for node in body)
-    assert any(_popen_first_arg_name(node) == "python_path" for node in body)
