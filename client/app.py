@@ -230,6 +230,7 @@ class AppController(NSObject):
                         on_status_change=self._on_tunnel_status_change
                     )
                     self.tunnel_client.start()
+                    self.proxy.set_tunnel_client(self.tunnel_client)
             except OSError as e:
                 self._run_on_main(
                     lambda: self._show_notification(
@@ -273,6 +274,7 @@ class AppController(NSObject):
     def _disconnect(self):
         self.sys_proxy.disable()
         self.proxy.stop()
+        self.proxy.set_tunnel_client(None)
         if self.tunnel_client:
             self.tunnel_client.stop()
             self.tunnel_client = None
@@ -538,11 +540,14 @@ class AppController(NSObject):
                 def _update():
                     if not self.connected:
                         return
-                    self.toggle_item.setTitle_(
-                        f"关闭代理（{latency}ms）"
-                        if latency is not None
-                        else "关闭代理（超时）"
-                    )
+                    if latency == "tunnel":
+                        self.toggle_item.setTitle_("关闭代理（隧道模式）")
+                    elif latency is not None:
+                        self.toggle_item.setTitle_(
+                            f"关闭代理（{latency}ms）"
+                        )
+                    else:
+                        self.toggle_item.setTitle_("关闭代理（超时）")
 
                 self._run_on_main(_update)
             finally:

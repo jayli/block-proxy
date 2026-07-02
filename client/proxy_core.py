@@ -336,6 +336,10 @@ class ProxyCore:
         self._ssl_ctx = None
         self._semaphore = None
         self._routing = None
+        self._tunnel_client = None
+
+    def set_tunnel_client(self, tc):
+        self._tunnel_client = tc
 
     def _build_ssl_context(self):
         server = self._server_config
@@ -490,6 +494,12 @@ class ProxyCore:
     def measure_latency(self):
         if not self._running or not self._loop or not self._loop.is_running():
             return None
+        if self._tunnel_client is not None:
+            try:
+                if self._tunnel_client.is_connected():
+                    return "tunnel"
+            except Exception:
+                pass
         future = asyncio.run_coroutine_threadsafe(self._measure_latency(), self._loop)
         try:
             return future.result(timeout=6)
@@ -568,19 +578,38 @@ class ProxyCore:
             route = self._routing.resolve(dest_addr, is_domain)
             if route == "direct":
                 return "direct"
-            # route == "proxy" or resolve returned default → fall through to upstream
+            # route == "proxy" or resolve returned default → fall through
 
-        # 2. Fallback: upstream proxy
+        # 2. Tunnel check (if connected, replaces upstream proxy)
+        if self._tunnel_client is not None:
+            try:
+                if self._tunnel_client.is_connected():
+                    return "tunnel"
+            except Exception:
+                pass
+
+        # 3. Fallback: upstream proxy
         return "proxy"
 
     async def _connect_target(self, dest_addr, dest_port, is_domain=None, route=None):
         if route is None:
             route = self._select_route(dest_addr, is_domain=is_domain)
+        if route == "tunnel":
+            reader, writer = await self._connect_via_tunnel(dest_addr, dest_port)
+            return reader, writer, "tunnel"
         if route == "direct":
             reader, writer = await connect_direct(dest_addr, dest_port)
             return reader, writer, "direct"
         reader, writer = await self._connect_upstream(dest_addr, dest_port)
         return reader, writer, "proxy"
+
+    async def _connect_via_tunnel(self, dest_addr, dest_port):
+        loop = asyncio.get_event_loop()
+        sock = await loop.run_in_executor(
+            None, self._tunnel_client.forward_connect_sync, dest_addr, dest_port
+        )
+        reader, writer = await asyncio.open_connection(sock=sock)
+        return reader, writer
 
     async def _connect_upstream(self, dest_addr, dest_port):
         protocol = self._server_config.get("protocol", "socks5")

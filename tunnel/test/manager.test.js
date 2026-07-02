@@ -53,7 +53,7 @@ describe('TunnelManager.isAvailable', () => {
 });
 
 describe('TunnelManager.forward', () => {
-  it('should return error stream when busy (single concurrent)', async () => {
+  it('should support multiple concurrent reverse connections', async () => {
     const server = createMockServer();
     const manager = new TunnelManager(server, { tunnel_domains: ['a.com'] });
     manager.setConnected(true);
@@ -62,11 +62,10 @@ describe('TunnelManager.forward', () => {
     assert.ok(stream1, 'First forward should return stream');
 
     const stream2 = manager.forward('b.com', 443, () => {});
-    assert.ok(stream2, 'Second forward should return error stream');
-    const [busyErr] = await once(stream2, 'error');
-    assert.equal(busyErr.message, 'tunnel-busy');
+    assert.ok(stream2, 'Second forward should return stream');
 
     stream1.destroy();
+    stream2.destroy();
   });
 
   it('should return error stream when disconnected', async () => {
