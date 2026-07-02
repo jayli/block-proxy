@@ -60,14 +60,21 @@ $PYTHON -m nuitka \
     --macos-app-icon=icons/app.icns \
     --macos-app-mode=ui-element \
     --include-data-dir=icons=icons \
-    --include-data-files=config_window.py=config_window.py \
+    --include-data-files=app.py=app.py \
     --include-data-files=autostart.py=autostart.py \
-    --include-data-files=log_window.py=log_window.py \
-    --include-data-files=routing_window.py=routing_window.py \
+    --include-data-files=config.py=config.py \
+    --include-data-files=config_window.py=config_window.py \
     --include-data-files=geodata_loader.py=geodata_loader.py \
+    --include-data-files=logger.py=logger.py \
+    --include-data-files=log_window.py=log_window.py \
     --include-data-files=proto_parser.py=proto_parser.py \
+    --include-data-files=proxy_core.py=proxy_core.py \
+    --include-data-files=routing.py=routing.py \
+    --include-data-files=routing_window.py=routing_window.py \
+    --include-data-files=system_proxy.py=system_proxy.py \
     --include-data-files=traffic_stats.py=traffic_stats.py \
     --include-data-files=traffic_view.py=traffic_view.py \
+    --include-data-files=tunnel_client.py=tunnel_client.py \
     --include-data-dir=geodata=geodata \
     --enable-plugin=no-qt \
     --output-dir="$DIST_DIR" \
