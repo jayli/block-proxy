@@ -411,7 +411,13 @@ class ProxyCore:
 
     async def _measure_latency(self):
         import time
+        protocol = self._server_config.get("protocol", "socks5")
+        username = self._server_config.get("username", "")
+        password = self._server_config.get("password", "")
+
         start = time.monotonic()
+        reader = None
+        writer = None
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(
@@ -422,39 +428,64 @@ class ProxyCore:
                 ),
                 timeout=5,
             )
-            username = self._server_config.get("username", "")
-            password = self._server_config.get("password", "")
-            if username and password:
-                writer.write(b"\x05\x01\x02")
+
+            if protocol == "http":
+                await self._measure_latency_http(reader, writer, username, password)
             else:
-                writer.write(b"\x05\x01\x00")
-            await writer.drain()
-            resp = await asyncio.wait_for(reader.readexactly(2), timeout=5)
-            if resp[0] != 0x05:
-                writer.close()
-                return None
-            if resp[1] == 0x02 and username and password:
-                uname = username.encode("utf-8")
-                passwd = password.encode("utf-8")
-                writer.write(
-                    b"\x01"
-                    + struct.pack("B", len(uname)) + uname
-                    + struct.pack("B", len(passwd)) + passwd
-                )
-                await writer.drain()
-                auth_resp = await asyncio.wait_for(reader.readexactly(2), timeout=5)
-                if auth_resp[1] != 0x00:
-                    writer.close()
-                    return None
+                await self._measure_latency_socks5(reader, writer, username, password)
+
             elapsed = time.monotonic() - start
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except OSError:
-                pass
             return int(elapsed * 1000)
         except Exception:
             return None
+        finally:
+            if writer:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except OSError:
+                    pass
+
+    async def _measure_latency_socks5(self, reader, writer, username, password):
+        if username and password:
+            writer.write(b"\x05\x01\x02")
+        else:
+            writer.write(b"\x05\x01\x00")
+        await writer.drain()
+        resp = await asyncio.wait_for(reader.readexactly(2), timeout=5)
+        if resp[0] != 0x05:
+            raise Exception("not a SOCKS5 server")
+        if resp[1] == 0x02 and username and password:
+            uname = username.encode("utf-8")
+            passwd = password.encode("utf-8")
+            writer.write(
+                b"\x01"
+                + struct.pack("B", len(uname)) + uname
+                + struct.pack("B", len(passwd)) + passwd
+            )
+            await writer.drain()
+            auth_resp = await asyncio.wait_for(reader.readexactly(2), timeout=5)
+            if auth_resp[1] != 0x00:
+                raise Exception("SOCKS5 auth failed")
+
+    async def _measure_latency_http(self, reader, writer, username, password):
+        import base64
+        target = "127.0.0.1:80"
+        lines = [f"CONNECT {target} HTTP/1.1", f"Host: {target}"]
+        if username and password:
+            cred = base64.b64encode(f"{username}:{password}".encode()).decode()
+            lines.append(f"Proxy-Authorization: Basic {cred}")
+        lines.append("")
+        lines.append("")
+        writer.write("\r\n".join(lines).encode())
+        await writer.drain()
+
+        status_line = await asyncio.wait_for(reader.readline(), timeout=5)
+        if not status_line:
+            raise Exception("HTTP proxy closed connection")
+        parts = status_line.decode().split(" ", 2)
+        if len(parts) < 2 or not parts[1].startswith("2"):
+            raise Exception(f"HTTP proxy CONNECT failed: {status_line.decode().strip()}")
 
     def measure_latency(self):
         if not self._running or not self._loop or not self._loop.is_running():

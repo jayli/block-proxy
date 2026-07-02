@@ -84,7 +84,10 @@ class TunnelWindowController(NSObject):
     def _build_window(self):
         config = self._config
         tunnel_cfg = config.get("tunnel", {})
-        w, h = 380, 260
+        server_cfg = config.get("server", {})
+        server_addr = server_cfg.get("address", "")
+
+        w, h = 380, 235
         pos = _center_on_mouse_screen(w, h)
         if pos is None:
             x = (NSScreen.mainScreen().frame().size.width - w) // 2
@@ -134,13 +137,12 @@ class TunnelWindowController(NSObject):
         self._enabled_cb = checkbox(y_pos, "启用反向隧道", tunnel_cfg.get("enabled", False))
         y_pos -= row_h + 12
 
-        # Server address
+        # Server address (read-only, synced from node config)
         label("服务器地址:", y_pos)
-        self._address_field = text_field(
-            y_pos,
-            tunnel_cfg.get("server_address", ""),
-            placeholder="留空使用代理服务器地址",
-        )
+        addr_text = f"{server_addr}（同节点配置）" if server_addr else "（未配置节点地址）"
+        self._addr_label = NSTextField.labelWithString_(addr_text)
+        self._addr_label.setFrame_(((CX, y_pos + 1), (FW, 22)))
+        content.addSubview_(self._addr_label)
         y_pos -= row_h + 4
 
         # Server port
@@ -153,7 +155,7 @@ class TunnelWindowController(NSObject):
 
         # Apply button
         btn = NSButton.alloc().initWithFrame_(((w // 2 - 50, y_pos), (100, 28)))
-        btn.setTitle_("应用并重启代理")
+        btn.setTitle_("保存并应用")
         btn.setBezelStyle_(BEZEL_ROUNDED)
         btn.setTarget_(self)
         btn.setAction_("saveAndClose:")
@@ -178,7 +180,7 @@ class TunnelWindowController(NSObject):
             config["tunnel"] = {}
 
         config["tunnel"]["enabled"] = bool(self._enabled_cb.state())
-        config["tunnel"]["server_address"] = self._address_field.stringValue()
+        config["tunnel"]["server_address"] = ""
 
         port_str = self._port_field.stringValue()
         try:

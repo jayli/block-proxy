@@ -148,8 +148,9 @@ class AppController(NSObject):
         )
         self._add_menu_item(menu, "Socks/HTTP 节点配置...", "openConfig:")
         self._add_menu_item(menu, "分流规则...", "openRouting:")
+        menu.addItem_(NSMenuItem.separatorItem())
         self._tunnel_menu_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "隧道配置", None, ""
+            "节点隧道...", None, ""
         )
         self._tunnel_menu_item.setTarget_(self)
         self._tunnel_menu_item.setAction_("openTunnelWindow:")
@@ -383,14 +384,14 @@ class AppController(NSObject):
 
     def _on_tunnel_status_change(self, status, detail=""):
         title_map = {
-            'connected':    '隧道配置 (已连接)',
-            'connecting':   '隧道配置 (连接中...)',
-            'reconnecting': '隧道配置 (重连中 {})'.format(detail),
-            'occupied':     '隧道配置 (端口被占)',
-            'auth_failed':  '隧道配置 (认证失败)',
-            'disconnected': '隧道配置'
+            'connected':    '节点隧道... (已连接)',
+            'connecting':   '节点隧道... (连接中...)',
+            'reconnecting': '节点隧道... (重连中 {})'.format(detail),
+            'occupied':     '节点隧道... (端口被占)',
+            'auth_failed':  '节点隧道... (认证失败)',
+            'disconnected': '节点隧道...'
         }
-        title = title_map.get(status, '隧道配置')
+        title = title_map.get(status, '节点隧道...')
         if self._tunnel_menu_item:
             self._tunnel_menu_item.performSelectorOnMainThread_withObject_waitUntilDone_(
                 'setTitle:', title, False
