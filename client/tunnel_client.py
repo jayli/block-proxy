@@ -5,6 +5,7 @@ import ssl
 import threading
 import socket
 import logging
+from logger import crash_logger
 
 logger = logging.getLogger('tunnel_client')
 
@@ -183,6 +184,7 @@ class TunnelClient:
         # Forward direction: client-initiated connections (reqid range 0x8000-0xFFFE)
         self._forward_reqid_counter = FORWARD_REQID_START
         self._forward_requests = {}  # reqid → {'connected': Event, 'connect_error': str|None, 'queue': Queue}
+        self._relay_tasks = set()  # Keep references to relay tasks to prevent GC
 
     def is_connected(self):
         return self._connected
@@ -216,6 +218,9 @@ class TunnelClient:
             raise Exception('Tunnel not connected')
 
         a, b = socket.socketpair()
+        # Set both sockets to non-blocking mode
+        a.setblocking(False)
+        b.setblocking(False)
         try:
             fut = asyncio.run_coroutine_threadsafe(
                 self._forward_connect_async(host, port, b), self._loop
@@ -365,20 +370,18 @@ class TunnelClient:
                     reqid = frame['reqid']
                     fwd = self._forward_requests.get(reqid)
                     if fwd:
-                        logger.info(f'[Tunnel] Received CONNECT_OK for reqid={reqid}, setting connected event')
                         fwd['connected'].set()
                     else:
-                        logger.warning(f'[Tunnel] Received CONNECT_OK for unknown reqid={reqid}, active reqids: {list(self._forward_requests.keys())}')
+                        logger.warning(f'Received CONNECT_OK for unknown reqid={reqid}')
 
                 elif frame['type'] == FRAME_CONNECT_FAILED:
                     reqid = frame['reqid']
                     fwd = self._forward_requests.get(reqid)
                     if fwd:
-                        logger.warning(f'[Tunnel] Received CONNECT_FAILED for reqid={reqid}')
                         fwd['connect_error'] = 'connect failed'
                         fwd['connected'].set()
                     else:
-                        logger.warning(f'[Tunnel] Received CONNECT_FAILED for unknown reqid={reqid}')
+                        logger.warning(f'Received CONNECT_FAILED for unknown reqid={reqid}')
 
                 elif frame['type'] == FRAME_DATA:
                     reqid = frame['reqid']
@@ -484,7 +487,6 @@ class TunnelClient:
             'queue': queue,
         }
         self._forward_requests[reqid] = fwd
-        logger.info(f'[Tunnel] Forward CONNECT: reqid={reqid}, target={host}:{port}')
 
         try:
             atyp = ATYP_DOMAIN
@@ -498,16 +500,11 @@ class TunnelClient:
                 FRAME_CONNECT, reqid=reqid, atyp=atyp, addr=host, port=port
             ))
             await self._tunnel_writer.drain()
-            logger.info(f'[Tunnel] Forward CONNECT frame sent: reqid={reqid}')
 
-            logger.info(f'[Tunnel] Waiting for CONNECT_OK: reqid={reqid}')
             await asyncio.wait_for(fwd['connected'].wait(), timeout=CONNECT_TIMEOUT)
-            logger.info(f'[Tunnel] Connected event received: reqid={reqid}, error={fwd["connect_error"]}')
 
             if fwd['connect_error']:
                 raise Exception(fwd['connect_error'])
-
-            logger.info(f'[Tunnel] Forward CONNECT successful: reqid={reqid}, starting relay tasks')
 
             # Start relay tasks
             # Task 1: sock → tunnel
@@ -552,8 +549,13 @@ class TunnelClient:
                     except OSError:
                         pass
 
-            asyncio.ensure_future(sock_to_tunnel())
-            asyncio.ensure_future(tunnel_to_sock())
+            task1 = asyncio.ensure_future(sock_to_tunnel())
+            task2 = asyncio.ensure_future(tunnel_to_sock())
+            # Keep references to prevent GC
+            self._relay_tasks.add(task1)
+            self._relay_tasks.add(task2)
+            task1.add_done_callback(self._relay_tasks.discard)
+            task2.add_done_callback(self._relay_tasks.discard)
 
         except Exception:
             self._forward_requests.pop(reqid, None)
