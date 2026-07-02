@@ -519,9 +519,14 @@ class AppController(NSObject):
                         # 代理未运行，不更新标题
                         return
                     protocol_name, latency, failure_reason = result
+                    # 中英文之间加空格，中文之间不加空格
+                    if protocol_name.isascii():
+                        proto_display = f"{protocol_name} 已连接"
+                    else:
+                        proto_display = f"{protocol_name}已连接"
                     if latency is not None:
                         self.toggle_item.setTitle_(
-                            f"关闭代理（{protocol_name} 已连接 - {latency}ms）"
+                            f"关闭代理（{proto_display} - {latency}ms）"
                         )
                     else:
                         reason_map = {
@@ -530,13 +535,23 @@ class AppController(NSObject):
                         }
                         suffix = reason_map.get(failure_reason)
                         if suffix:
-                            self.toggle_item.setTitle_(
-                                f"关闭代理（{protocol_name} 已中断 - {suffix}）"
-                            )
+                            if protocol_name.isascii():
+                                self.toggle_item.setTitle_(
+                                    f"关闭代理（{protocol_name} 已中断 - {suffix}）"
+                                )
+                            else:
+                                self.toggle_item.setTitle_(
+                                    f"关闭代理（{protocol_name}已中断 - {suffix}）"
+                                )
                         else:
-                            self.toggle_item.setTitle_(
-                                f"关闭代理（{protocol_name} 已中断）"
-                            )
+                            if protocol_name.isascii():
+                                self.toggle_item.setTitle_(
+                                    f"关闭代理（{protocol_name} 已中断）"
+                                )
+                            else:
+                                self.toggle_item.setTitle_(
+                                    f"关闭代理（{protocol_name}已中断）"
+                                )
 
                 self._run_on_main(_update)
             finally:
