@@ -535,6 +535,7 @@ class TunnelClient:
                     break
                 tunnel_writer.write(encode_frame(FRAME_DATA, reqid=reqid, data=data))
                 await tunnel_writer.drain()
+                await asyncio.sleep(0)  # Yield to other reqids
         except (ConnectionResetError, BrokenPipeError, OSError) as e:
             logger.debug(f'Target read ended {reqid}: {e}')
         finally:
@@ -596,6 +597,7 @@ class TunnelClient:
                             FRAME_DATA, reqid=reqid, data=data
                         ))
                         await self._tunnel_writer.drain()
+                        await asyncio.sleep(0)  # Yield to other reqids
                 except (ConnectionResetError, BrokenPipeError, OSError):
                     pass
                 except Exception:

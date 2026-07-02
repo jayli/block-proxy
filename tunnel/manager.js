@@ -228,6 +228,7 @@ class TunnelManager {
         reqid,
         data: data.slice(offset, offset + MAX_DATA_CHUNK)
       });
+      await new Promise(r => setImmediate(r));
     }
   }
 
@@ -251,6 +252,7 @@ class TunnelManager {
         reqid,
         data: data.slice(offset, offset + MAX_DATA_CHUNK)
       });
+      await new Promise(r => setImmediate(r));
     }
   }
 
