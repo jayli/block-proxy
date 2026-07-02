@@ -77,6 +77,7 @@
   "enable_socks5": "1",
   "socks5_tls": "1",
   "socks5_port": 8002,
+  "express_port": 8003,
   "enable_tunnel": "1",
   "tunnel_port": 8004,
   "tunnel_domains": [],
