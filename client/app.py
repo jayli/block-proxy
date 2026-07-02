@@ -147,18 +147,12 @@ class AppController(NSObject):
         menu.addItem_(NSMenuItem.separatorItem())
 
         config_item = self._add_menu_item(menu, "节点配置...", "openConfig:")
-        config_image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
-            "gearshape", None
-        )
-        if config_image:
-            config_item.setImage_(config_image)
+        config_item.setKeyEquivalent_("p")
+        config_item.setKeyEquivalentModifierMask_(NSCommandKeyMask)
 
         routing_item = self._add_menu_item(menu, "分流规则...", "openRouting:")
-        routing_image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
-            "arrow.triangle.branch", None
-        )
-        if routing_image:
-            routing_item.setImage_(routing_image)
+        routing_item.setKeyEquivalent_("f")
+        routing_item.setKeyEquivalentModifierMask_(NSCommandKeyMask)
         menu.addItem_(NSMenuItem.separatorItem())
 
         self.global_item = self._add_menu_item(
