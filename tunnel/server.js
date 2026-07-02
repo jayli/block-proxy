@@ -27,7 +27,8 @@ class TunnelServer {
       const tlsOptions = {
         key: this.key,
         cert: this.cert,
-        minVersion: 'TLSv1.2'
+        minVersion: 'TLSv1.2',
+        sessionTimeout: 300
       };
 
       this._server = tls.createServer(tlsOptions, (socket) => {
@@ -62,6 +63,9 @@ class TunnelServer {
   }
 
   _handleConnection(socket) {
+    socket.setNoDelay(true);
+    socket.setKeepAlive(true, 60000);
+
     // Single client limit
     if (this._clientSocket) {
       const errorFrame = encodeFrame({
@@ -148,7 +152,18 @@ class TunnelServer {
     if (!this._clientSocket) {
       throw new Error('No client connected');
     }
-    this._clientSocket.write(encodeFrame(frame));
+    const socket = this._clientSocket;
+    const data = encodeFrame(frame);
+    return new Promise((resolve) => {
+      if (socket.write(data)) {
+        resolve();
+      } else {
+        const onDrain = () => { socket.removeListener('close', onClose); resolve(); };
+        const onClose = () => { socket.removeListener('drain', onDrain); resolve(); };
+        socket.once('drain', onDrain);
+        socket.once('close', onClose);
+      }
+    });
   }
 
   onFrame(handler) {
@@ -173,7 +188,7 @@ class TunnelServer {
       }
 
       try {
-        this.sendFrame({ type: FRAME_TYPES.PING });
+        this.sendFrame({ type: FRAME_TYPES.PING }).catch(() => {});
       } catch (e) {
         // ignore
       }

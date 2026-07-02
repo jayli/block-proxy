@@ -100,7 +100,14 @@ class TunnelManager {
 
       case FRAME_TYPES.DATA: {
         if (entry.direction === 'forward' && entry._anyproxySocket) {
-          entry._anyproxySocket.write(frame.data);
+          const canContinue = entry._anyproxySocket.write(frame.data);
+          if (!canContinue) {
+            const tunnelSocket = this._server._clientSocket;
+            if (tunnelSocket) {
+              tunnelSocket.pause();
+              entry._anyproxySocket.once('drain', () => tunnelSocket.resume());
+            }
+          }
         } else {
           entry.stream.push(frame.data);
         }
@@ -144,6 +151,8 @@ class TunnelManager {
     this._activeRequests.set(reqid, entry);
 
     const anyproxySocket = new net.Socket();
+    anyproxySocket.setNoDelay(true);
+    anyproxySocket.setKeepAlive(true, 60000);
     entry._anyproxySocket = anyproxySocket;
 
     const cleanup = () => {
@@ -184,14 +193,14 @@ class TunnelManager {
         // Forward any remaining data after headers
         const remaining = responseBuffer.substring(headerEnd + 4);
         if (remaining.length > 0) {
-          this._sendDataToClient(reqid, Buffer.from(remaining));
+          this._sendDataToClient(reqid, Buffer.from(remaining)).catch(() => {});
         }
         responseBuffer = '';
         return;
       }
 
       // Relay data from AnyProxy to client
-      this._sendDataToClient(reqid, data);
+      this._sendDataToClient(reqid, data).catch(() => {});
     });
 
     anyproxySocket.on('close', () => {
@@ -212,9 +221,9 @@ class TunnelManager {
     });
   }
 
-  _sendDataToClient(reqid, data) {
+  async _sendDataToClient(reqid, data) {
     for (let offset = 0; offset < data.length; offset += MAX_DATA_CHUNK) {
-      this._server.sendFrame({
+      await this._server.sendFrame({
         type: FRAME_TYPES.DATA,
         reqid,
         data: data.slice(offset, offset + MAX_DATA_CHUNK)
@@ -233,11 +242,11 @@ class TunnelManager {
     this._activeRequests.delete(reqid);
   }
 
-  _sendData(reqid, data) {
+  async _sendData(reqid, data) {
     const entry = this._activeRequests.get(reqid);
     if (!entry) return;
     for (let offset = 0; offset < data.length; offset += MAX_DATA_CHUNK) {
-      this._server.sendFrame({
+      await this._server.sendFrame({
         type: FRAME_TYPES.DATA,
         reqid,
         data: data.slice(offset, offset + MAX_DATA_CHUNK)
@@ -284,7 +293,7 @@ class TunnelManager {
 
 class TunnelDuplex extends Duplex {
   constructor(manager, reqid) {
-    super();
+    super({ highWaterMark: 65536 });
     this._manager = manager;
     this._reqid = reqid;
   }
@@ -294,8 +303,9 @@ class TunnelDuplex extends Duplex {
   }
 
   _write(chunk, encoding, callback) {
-    this._manager._sendData(this._reqid, chunk);
-    callback();
+    this._manager._sendData(this._reqid, chunk)
+      .then(() => callback())
+      .catch(() => callback());
   }
 
   _final(callback) {

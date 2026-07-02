@@ -189,6 +189,24 @@ class TunnelClient:
     def is_connected(self):
         return self._connected
 
+    @staticmethod
+    def _set_tcp_options(writer):
+        """Set TCP_NODELAY and SO_KEEPALIVE on the underlying socket."""
+        sock = writer.get_extra_info('socket')
+        if sock is None:
+            return
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            if hasattr(socket, 'TCP_KEEPIDLE'):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)
+            if hasattr(socket, 'TCP_KEEPINTVL'):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+            if hasattr(socket, 'TCP_KEEPCNT'):
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+        except OSError:
+            pass  # Unix domain sockets or closed sockets
+
     def measure_latency(self, timeout=5):
         """Measure tunnel round-trip latency via a lightweight CONNECT.
         Returns latency in ms on success, or None on failure.
@@ -352,6 +370,8 @@ class TunnelClient:
             timeout=10
         )
 
+        self._set_tcp_options(writer)
+
         self._tunnel_writer = writer
 
         try:
@@ -443,7 +463,7 @@ class TunnelClient:
                     # Forward direction: data from tunnel → queue → sock
                     fwd = self._forward_requests.get(reqid)
                     if fwd and 'queue' in fwd:
-                        fwd['queue'].put_nowait(frame['data'])
+                        await fwd['queue'].put(frame['data'])
                         continue
                     # Reverse direction: data from tunnel → target socket
                     tw = active_writers.get(reqid)
@@ -457,7 +477,7 @@ class TunnelClient:
                     # Forward direction: EOF signal
                     fwd = self._forward_requests.get(reqid)
                     if fwd and 'queue' in fwd:
-                        fwd['queue'].put_nowait(None)
+                        await fwd['queue'].put(None)
                         continue
                     # Reverse direction: close target socket
                     tw = active_writers.pop(reqid, None)
@@ -494,6 +514,7 @@ class TunnelClient:
                 asyncio.open_connection(addr, port),
                 timeout=CONNECT_TIMEOUT
             )
+            self._set_tcp_options(target_writer)
         except Exception as e:
             logger.error(f'CONNECT failed {reqid}: {e}')
             tunnel_writer.write(encode_frame(FRAME_CONNECT_FAILED, reqid=reqid))
@@ -535,7 +556,7 @@ class TunnelClient:
         reqid = self._allocate_forward_reqid()
         loop = asyncio.get_event_loop()
 
-        queue = asyncio.Queue()
+        queue = asyncio.Queue(maxsize=128)
         fwd = {
             'connected': asyncio.Event(),
             'connect_error': None,
