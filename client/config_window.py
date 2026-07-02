@@ -42,7 +42,7 @@ WINDOW_STYLE = (
     | NSWindowStyleMaskMiniaturizable
 )
 
-PROTOCOLS = [("socks5", "socks5"), ("http", "http"), ("tunnel", "隧道")]
+PROTOCOLS = [("socks5", "socks5"), ("http", "http"), ("tunnel", "隧道(双向)")]
 
 
 def _center_on_mouse_screen(w, h):
@@ -213,14 +213,14 @@ class ConfigWindowController(NSObject):
         self._udp_cb = checkbox(y_pos, "启用 UDP", config.get("local", {}).get("udp", True))
         y_pos -= row_h + 4
 
-        if is_tunnel:
-            self._set_tunnel_mode(True)
-
         self._proxy_private_cb = checkbox(
             y_pos, "代理私有地址段（192.168.x / 172.16.x / 10.x）",
             config.get("local", {}).get("proxy_private", False),
         )
         y_pos -= row_h + 4
+
+        if is_tunnel:
+            self._set_tunnel_mode(True)
 
         separator(y_pos)
         y_pos -= 32
@@ -246,9 +246,11 @@ class ConfigWindowController(NSObject):
         """Enable/disable tunnel-only UI state."""
         if enabled:
             self._tls_cb.setState_(NSOnState)
+            self._proxy_private_cb.setState_(NSOffState)
         self._tls_cb.setEnabled_(not enabled)
         self._insecure_cb.setEnabled_(not enabled)
         self._udp_cb.setEnabled_(not enabled)
+        self._proxy_private_cb.setEnabled_(not enabled)
 
     def onProtocolChange_(self, sender):
         idx = self._protocol_popup.indexOfSelectedItem()

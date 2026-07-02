@@ -13,7 +13,7 @@ const _fs = require('../proxy/fs.js');
   if (config.enable_express && config.enable_express == "1") {
     console.log("启动express");
     const ExpressServer = require("./express.js");
-    ExpressServer.init();
+    ExpressServer.init(config.express_port);
   } else {
     console.log("只启动proxy");
     const LocalProxy = require('../proxy/proxy');

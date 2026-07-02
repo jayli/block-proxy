@@ -52,6 +52,7 @@ var anyproxy_started = false;
 var blockHosts = [];
 var proxyPort = 8001; // http 代理端口
 var socks5Port = 8002; // socks5 端口
+var expressPort = 8003; // 管理面板端口
 
 var vpn_proxy = "";
 var devices = [];
@@ -220,6 +221,7 @@ async function loadConfig() {
     enable_socks5: enable_socks5,
     socks5_tls: socks5_tls,
     socks5_port: socks5Port,
+    express_port: expressPort,
     enable_tunnel: "1",
     tunnel_port: 8004,
     tunnel_domains: [],
@@ -289,6 +291,11 @@ async function loadConfig() {
       socks5Port = loadedConfig.socks5_port;
       config.socks5_port = socks5Port;
 
+      if (loadedConfig.express_port) {
+        expressPort = loadedConfig.express_port;
+        config.express_port = expressPort;
+      }
+
       your_domain = loadedConfig.your_domain;
       config.your_domain = your_domain;
       
@@ -314,6 +321,7 @@ async function loadConfig() {
         enable_express: enable_express,
         your_domain: your_domain,
         socks5_port: socks5Port,
+        express_port: expressPort,
         enable_socks5: enable_socks5,
         socks5_tls: socks5_tls,
         enable_mitm: enable_mitm,

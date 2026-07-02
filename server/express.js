@@ -12,7 +12,7 @@ const { exec, execSync } = require('child_process');
 const LocalProxy = require('../proxy/proxy');
 
 const app = express();
-const PORT = 8003;
+let PORT = 8003; // 默认端口，可通过 init(port) 覆盖
 const DEV = process.env.BLOCK_PROXY_DEV || 0;
 const configPath = path.join(__dirname, '../config.json');
 
@@ -233,6 +233,7 @@ app.get('/api/config/export', (req, res) => {
 const REQUIRED_FIELDS = [
   { key: 'proxy_port',       type: 'number',  label: '代理端口' },
   { key: 'socks5_port',      type: 'number',  label: 'SOCKS5端口' },
+  { key: 'express_port',     type: 'number',  label: '管理面板端口' },
   { key: 'block_hosts',      type: 'array',   label: '拦截主机列表' },
   { key: 'auth_username',    type: 'string',  label: '认证用户名' },
   { key: 'auth_password',    type: 'string',  label: '认证密码' },
@@ -455,7 +456,8 @@ app.get((req, res) => {
 });
 
 module.exports = {
-  init: function() {
+  init: function(port) {
+    if (port) PORT = port;
     // 启动服务器
     app.listen(PORT, async () => {
       // 如果是开发环境，则启动SSR服务，开启端口3000
