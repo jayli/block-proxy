@@ -13,7 +13,9 @@ COPY package.json pnpm-lock.yaml ./
 
 # 安装依赖 - 这一步现在会在目标架构 (e.g., arm64) 的容器中执行
 # 这样生成的 node_modules 中的 native addons 就是为正确的架构编译的
-RUN pnpm install --force --registry=https://registry.npmmirror.com && \
+# 使用 hoisted node-linker 避免 pnpm symlink 在多阶段构建中的解析问题
+RUN echo "node-linker=hoisted" > .npmrc && \
+    pnpm install --force --registry=https://registry.npmmirror.com && \
     pnpm store prune && \
     rm -rf /root/.pnpm-store
 

@@ -1,0 +1,8 @@
+node_modules
+.git
+client/dist
+client/main.build
+client/main.dist
+*.zip
+*.tar
+.DS_Store
