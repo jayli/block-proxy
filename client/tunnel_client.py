@@ -632,7 +632,10 @@ class TunnelClient:
         if not self._tunnel_writers:
             raise Exception('No tunnel connections available')
         self._rr_counter += 1
-        writer = self._tunnel_writers[self._rr_counter % len(self._tunnel_writers)]
+        writer_idx = self._rr_counter % len(self._tunnel_writers)
+        writer = self._tunnel_writers[writer_idx]
+
+        logger.debug(f'Forward {host}:{port} -> connection {writer_idx + 1}/{len(self._tunnel_writers)}')
 
         reqid = self._allocate_forward_reqid()
         loop = asyncio.get_event_loop()

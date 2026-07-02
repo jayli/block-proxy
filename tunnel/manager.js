@@ -41,6 +41,10 @@ class TunnelManager {
     const socket = this._selectSocket();
     if (!socket) return createErrorStream('tunnel-disconnected');
 
+    // 调试日志：显示选择了哪个连接
+    const socketId = [...this._server._clientSockets].indexOf(socket);
+    console.log(`[Tunnel] Forward ${host}:${port} (reqid will be allocated) -> connection ${socketId + 1}/${this._server._clientSockets.size}`);
+
     const reqid = this._allocateReqid();
     const stream = new TunnelDuplex(this, reqid);
 
@@ -153,7 +157,7 @@ class TunnelManager {
     const targetHost = frame.addr;
     const targetPort = frame.port;
 
-    console.log(`[Tunnel] Forward CONNECT ${reqid}: ${targetHost}:${targetPort}`);
+    console.log(`[Tunnel] Forward CONNECT ${reqid}: ${targetHost}:${targetPort} (connection ${[...this._server._clientSockets].indexOf(socket) + 1}/${this._server._clientSockets.size})`);
 
     const stream = new TunnelDuplex(this, reqid);
     const entry = {
