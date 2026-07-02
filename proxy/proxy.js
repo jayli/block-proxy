@@ -1015,12 +1015,12 @@ async function initTunnel(config) {
       username: config.auth_username,
       password: config.auth_password
     },
-    onConnect: (addr, port) => {
-      tunnelManager.setConnected(true, `${addr}:${port}`);
+    onConnect: (socket, addr, port) => {
+      tunnelManager.setConnected(socket, true, `${addr}:${port}`);
       console.log(`[Tunnel] Client connected: ${addr}:${port}`);
     },
-    onDisconnect: () => {
-      tunnelManager.setConnected(false);
+    onDisconnect: (socket) => {
+      tunnelManager.setConnected(socket, false);
       console.log('[Tunnel] Client disconnected');
     }
   });

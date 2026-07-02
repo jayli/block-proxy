@@ -71,7 +71,7 @@ describe('TunnelServer', () => {
     socket.destroy();
   });
 
-  it('should reject second client with ERROR frame', async () => {
+  it('should accept second client (dual mode) and reject third', async () => {
     const port = nextPort();
     server = new TunnelServer({
       port,
@@ -87,27 +87,47 @@ describe('TunnelServer', () => {
       username: 'admin',
       password: 'secret'
     }));
-    const authResp = await readFrame(socket1);
-    assert.equal(authResp.type, FRAME_TYPES.AUTH_OK);
+    const authResp1 = await readFrame(socket1);
+    assert.equal(authResp1.type, FRAME_TYPES.AUTH_OK);
 
-    // Second client connects — should be rejected (don't send AUTH, just read ERROR)
+    // Second client connects — should be accepted (dual mode)
     const socket2 = await connectClient(port);
-    const errorResp = await readFrame(socket2);
+    socket2.write(encodeFrame({
+      type: FRAME_TYPES.AUTH,
+      username: 'admin',
+      password: 'secret'
+    }));
+    const authResp2 = await readFrame(socket2);
+    assert.equal(authResp2.type, FRAME_TYPES.AUTH_OK);
+
+    // Third client connects — should be rejected (limit is 2)
+    const socket3 = await connectClient(port);
+    socket3.write(encodeFrame({
+      type: FRAME_TYPES.AUTH,
+      username: 'admin',
+      password: 'secret'
+    }));
+    const errorResp = await readFrame(socket3);
     assert.equal(errorResp.type, FRAME_TYPES.ERROR);
-    assert.match(errorResp.message, /occupied/i);
+    assert.match(errorResp.message, /limit/i);
 
     socket1.destroy();
     socket2.destroy();
+    socket3.destroy();
   });
 
   it('should call onConnect after successful auth', async () => {
     const port = nextPort();
+    let connectedSocket = null;
     let connectedAddr = null;
     server = new TunnelServer({
       port,
       cert, key,
       credentials: { username: 'admin', password: 'secret' },
-      onConnect: (addr) => { connectedAddr = addr; }
+      onConnect: (socket, addr) => {
+        connectedSocket = socket;
+        connectedAddr = addr;
+      }
     });
     await server.start();
 
@@ -121,7 +141,8 @@ describe('TunnelServer', () => {
 
     // Give onConnect a tick to fire
     await new Promise(r => setTimeout(r, 50));
-    assert.ok(connectedAddr, 'onConnect should have been called');
+    assert.ok(connectedSocket, 'onConnect should have been called with socket');
+    assert.ok(connectedAddr, 'onConnect should have been called with addr');
 
     socket.destroy();
   });

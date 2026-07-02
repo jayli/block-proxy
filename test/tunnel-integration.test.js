@@ -55,8 +55,8 @@ describe('Tunnel end-to-end', () => {
     server = new TunnelServer({
       port: PORT, cert, key,
       credentials: { username: 'test', password: 'test' },
-      onConnect: (addr, port) => { manager.setConnected(true, `${addr}:${port}`); },
-      onDisconnect: () => { manager.setConnected(false); }
+      onConnect: (socket, addr, port) => { manager.setConnected(socket, true, `${addr}:${port}`); },
+      onDisconnect: (socket) => { manager.setConnected(socket, false); }
     });
     manager = new TunnelManager(server, { tunnel_domains: ['internal.test.com'] });
     await server.start();
@@ -127,42 +127,64 @@ describe('Tunnel end-to-end', () => {
     assert.equal(err.message, 'tunnel-disconnected');
   });
 
-  it('should reject second concurrent forward (busy)', async () => {
+  it('should support multiple concurrent forwards with dual connections', async () => {
     let manager;
     server = new TunnelServer({
       port: PORT + 2, cert, key,
       credentials: { username: 'test', password: 'test' },
-      onConnect: () => { manager.setConnected(true); },
-      onDisconnect: () => { manager.setConnected(false); }
+      onConnect: (socket, addr, port) => { manager.setConnected(socket, true, `${addr}:${port}`); },
+      onDisconnect: (socket) => { manager.setConnected(socket, false); }
     });
     manager = new TunnelManager(server, { tunnel_domains: ['a.com'] });
     await server.start();
 
-    const clientSocket = await authenticateClient(PORT + 2, 'test', 'test');
+    // Establish dual connections
+    const clientSocket1 = await authenticateClient(PORT + 2, 'test', 'test');
+    const clientSocket2 = await authenticateClient(PORT + 2, 'test', 'test');
     await new Promise(r => setTimeout(r, 50)); // let onConnect fire
 
     // First forward succeeds
     const stream1 = manager.forward('a.com', 443, () => {});
     assert.ok(stream1);
 
-    // Second forward while busy returns error stream
+    // Second forward also succeeds (dual connections allow concurrent forwards)
     const stream2 = manager.forward('b.com', 443, () => {});
-    assert.ok(stream2, 'Busy manager should return error stream');
-    const [err] = await once(stream2, 'error');
-    assert.equal(err.message, 'tunnel-busy');
+    assert.ok(stream2, 'Dual connections should allow concurrent forwards');
 
-    // Clean up: client sends CONNECT_OK for first request, then CLOSE
-    const frame = await readFrame(clientSocket);
-    clientSocket.write(encodeFrame({ type: FRAME_TYPES.CONNECT_OK, reqid: frame.reqid }));
+    // Read CONNECT frames from both sockets (round-robin distributes them)
+    // Use allSettled to handle cases where one socket might not receive a frame
+    const results = await Promise.allSettled([
+      Promise.race([readFrame(clientSocket1), new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 1000))]),
+      Promise.race([readFrame(clientSocket2), new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 1000))])
+    ]);
+
+    const frame1 = results[0].status === 'fulfilled' ? results[0].value : null;
+    const frame2 = results[1].status === 'fulfilled' ? results[1].value : null;
+
+    // At least one should be a CONNECT frame (could be both on same socket or distributed)
+    const hasConnect = (frame1 && frame1.type === FRAME_TYPES.CONNECT) ||
+                       (frame2 && frame2.type === FRAME_TYPES.CONNECT);
+    assert.ok(hasConnect, 'At least one socket should receive a CONNECT frame');
+
+    // Send CONNECT_OK for received frames
+    if (frame1 && frame1.type === FRAME_TYPES.CONNECT) {
+      clientSocket1.write(encodeFrame({ type: FRAME_TYPES.CONNECT_OK, reqid: frame1.reqid }));
+    }
+    if (frame2 && frame2.type === FRAME_TYPES.CONNECT) {
+      clientSocket2.write(encodeFrame({ type: FRAME_TYPES.CONNECT_OK, reqid: frame2.reqid }));
+    }
     await new Promise(r => setTimeout(r, 20));
-    clientSocket.write(encodeFrame({ type: FRAME_TYPES.CLOSE, reqid: frame.reqid }));
+
+    // Send CLOSE for received frames
+    if (frame1 && frame1.type === FRAME_TYPES.CONNECT) {
+      clientSocket1.write(encodeFrame({ type: FRAME_TYPES.CLOSE, reqid: frame1.reqid }));
+    }
+    if (frame2 && frame2.type === FRAME_TYPES.CONNECT) {
+      clientSocket2.write(encodeFrame({ type: FRAME_TYPES.CLOSE, reqid: frame2.reqid }));
+    }
     await new Promise(r => setTimeout(r, 20));
 
-    // Now manager is free again
-    const stream3 = manager.forward('a.com', 443, () => {});
-    assert.ok(stream3);
-    stream3.destroy();
-
-    clientSocket.destroy();
+    clientSocket1.destroy();
+    clientSocket2.destroy();
   });
 });

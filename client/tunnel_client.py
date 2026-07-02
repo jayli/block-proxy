@@ -174,7 +174,10 @@ class TunnelClient:
         self._thread = None
         self._loop = None
         self._ssl_ctx = None
-        self._tunnel_writer = None  # Current tunnel connection writer (for stop())
+        self._tunnel_writers = []  # List of StreamWriter (up to 2 connections)
+        self._tunnel_readers = []  # List of StreamReader
+        self._rr_counter = 0  # Round-robin counter for forward connections
+        self._connection_tasks = []  # asyncio tasks for each connection's read loop
         self._main_task = None
         self._connected = False
         self._connected_event = threading.Event()
@@ -183,7 +186,7 @@ class TunnelClient:
         self._reverse_reqid_counter = 0
         # Forward direction: client-initiated connections (reqid range 0x8000-0xFFFE)
         self._forward_reqid_counter = FORWARD_REQID_START
-        self._forward_requests = {}  # reqid → {'connected': Event, 'connect_error': str|None, 'queue': Queue}
+        self._forward_requests = {}  # reqid → {'connected': Event, 'connect_error': str|None, 'queue': Queue, 'writer': StreamWriter}
         self._relay_tasks = set()  # Keep references to relay tasks to prevent GC
 
     def is_connected(self):
@@ -225,23 +228,25 @@ class TunnelClient:
         """Send a CONNECT through the tunnel, measure RTT to CONNECT_OK, then close."""
         import time
 
-        if not self._connected or not self._tunnel_writer:
+        if not self._connected or not self._tunnel_writers:
             return None
 
+        writer = self._tunnel_writers[0]  # Always use first connection for latency
         reqid = self._allocate_forward_reqid()
         fwd = {
             'connected': asyncio.Event(),
             'connect_error': None,
+            'writer': writer,
         }
         self._forward_requests[reqid] = fwd
 
         start = time.monotonic()
         try:
             # Connect to the tunnel server itself (port 80) — lightweight, just needs CONNECT_OK
-            self._tunnel_writer.write(encode_frame(
+            writer.write(encode_frame(
                 FRAME_CONNECT, reqid=reqid, atyp=ATYP_IPV4, addr='127.0.0.1', port=80
             ))
-            await self._tunnel_writer.drain()
+            await writer.drain()
 
             await asyncio.wait_for(fwd['connected'].wait(), timeout=5)
 
@@ -256,9 +261,9 @@ class TunnelClient:
             self._forward_requests.pop(reqid, None)
             # Send CLOSE to clean up the server-side connection
             try:
-                if self._tunnel_writer and not self._tunnel_writer.is_closing():
-                    self._tunnel_writer.write(encode_frame(FRAME_CLOSE, reqid=reqid))
-                    await self._tunnel_writer.drain()
+                if not writer.is_closing():
+                    writer.write(encode_frame(FRAME_CLOSE, reqid=reqid))
+                    await writer.drain()
             except Exception:
                 pass
 
@@ -275,8 +280,12 @@ class TunnelClient:
         self._connected_event.clear()
         if self._loop and self._loop.is_running():
             def _request_stop():
-                if self._tunnel_writer and not self._tunnel_writer.is_closing():
-                    self._tunnel_writer.close()
+                for writer in self._tunnel_writers:
+                    if not writer.is_closing():
+                        writer.close()
+                for task in self._connection_tasks:
+                    if not task.done():
+                        task.cancel()
                 if self._main_task and not self._main_task.done():
                     self._main_task.cancel()
             self._loop.call_soon_threadsafe(_request_stop)
@@ -355,12 +364,69 @@ class TunnelClient:
         self._on_status_change('disconnected', '')
 
     async def _connect_and_serve(self):
-        """Connect, authenticate, handle requests."""
+        """Connect, authenticate, handle requests with dual connections."""
         addr = self._tunnel_cfg.get('server_address') or self._server_cfg['address']
         port = self._tunnel_cfg.get('server_port', 8004)
+        credentials = {
+            'username': self._server_cfg.get('username', ''),
+            'password': self._server_cfg.get('password', '')
+        }
 
         logger.info(f'Connecting to tunnel {addr}:{port}')
 
+        # Establish connection 1 (required)
+        conn1 = await self._establish_connection(addr, port, credentials)
+        self._tunnel_writers.append(conn1['writer'])
+        self._tunnel_readers.append(conn1['reader'])
+
+        self._connected = True
+        self._connected_event.set()
+        self._on_status_change('connected', '')
+
+        # Establish connection 2 (non-fatal if it fails)
+        try:
+            conn2 = await self._establish_connection(addr, port, credentials)
+            self._tunnel_writers.append(conn2['writer'])
+            self._tunnel_readers.append(conn2['reader'])
+            logger.info('Dual-tunnel established (2 connections)')
+        except TunnelOccupiedError as e:
+            logger.info(f'Server does not support dual connections, running single: {e}')
+        except Exception as e:
+            logger.warning(f'Second tunnel connection failed: {e} (running single)')
+
+        try:
+            # Serve all connections concurrently
+            tasks = []
+            for i, (reader, writer) in enumerate(zip(self._tunnel_readers, self._tunnel_writers)):
+                task = asyncio.ensure_future(
+                    self._handle_requests(reader, writer, conn_index=i)
+                )
+                tasks.append(task)
+                self._connection_tasks.append(task)
+
+            # Wait for ALL connections to end
+            await asyncio.gather(*tasks, return_exceptions=True)
+        finally:
+            self._connected = False
+            self._connected_event.clear()
+            # Fail ALL remaining forward requests (both connections dead)
+            for fwd in self._forward_requests.values():
+                fwd['connect_error'] = 'tunnel disconnected'
+                fwd['connected'].set()
+            self._forward_requests.clear()
+            # Close all writers
+            for writer in self._tunnel_writers:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+            self._tunnel_writers.clear()
+            self._tunnel_readers.clear()
+            self._connection_tasks.clear()
+
+    async def _establish_connection(self, addr, port, credentials):
+        """Connect and authenticate. Returns {'reader', 'writer'}."""
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection(
                 addr, port,
@@ -372,48 +438,28 @@ class TunnelClient:
 
         self._set_tcp_options(writer)
 
-        self._tunnel_writer = writer
+        writer.write(encode_frame(
+            FRAME_AUTH,
+            username=credentials['username'],
+            password=credentials['password']
+        ))
+        await writer.drain()
 
-        try:
-            # Send AUTH
-            writer.write(encode_frame(
-                FRAME_AUTH,
-                username=self._server_cfg.get('username', ''),
-                password=self._server_cfg.get('password', '')
-            ))
-            await writer.drain()
+        response = await read_frame(reader)
 
-            # Read response
-            response = await read_frame(reader)
-
-            if response['type'] == FRAME_AUTH_OK:
-                logger.info('Tunnel authenticated')
-                self._connected = True
-                self._connected_event.set()
-                self._on_status_change('connected', '')
-                await self._handle_requests(reader, writer)
-            elif response['type'] == FRAME_ERROR:
-                raise TunnelOccupiedError(response.get('message', 'Port occupied'))
-            elif response['type'] == FRAME_AUTH_FAIL:
-                raise TunnelAuthFailedError('Authentication failed')
-            else:
-                raise Exception(f'Unexpected response: {response["type"]:#x}')
-        finally:
-            self._connected = False
-            self._connected_event.clear()
-            self._tunnel_writer = None
-            # Clean up pending forward requests
-            for fwd in self._forward_requests.values():
-                fwd['connect_error'] = 'tunnel disconnected'
-                fwd['connected'].set()
-            self._forward_requests.clear()
+        if response['type'] == FRAME_AUTH_OK:
+            return {'reader': reader, 'writer': writer}
+        elif response['type'] == FRAME_ERROR:
             writer.close()
-            try:
-                await writer.wait_closed()
-            except Exception:
-                pass
+            raise TunnelOccupiedError(response.get('message', 'Port occupied'))
+        elif response['type'] == FRAME_AUTH_FAIL:
+            writer.close()
+            raise TunnelAuthFailedError('Authentication failed')
+        else:
+            writer.close()
+            raise Exception(f'Unexpected response: {response["type"]:#x}')
 
-    async def _handle_requests(self, reader, writer):
+    async def _handle_requests(self, reader, writer, conn_index=0):
         """Main frame processing loop. Handles PING/PONG, CONNECT, DATA, CLOSE."""
         active_writers = {}  # reqid → target_writer (reverse direction)
         target_write_tasks = set()
@@ -427,79 +473,107 @@ class TunnelClient:
                 active_writers.pop(reqid, None)
                 target_writer.close()
 
-        while self._running:
+        try:
+            while self._running:
+                try:
+                    frame = await asyncio.wait_for(read_frame(reader), timeout=IDLE_TIMEOUT)
+
+                    if frame['type'] == FRAME_PING:
+                        writer.write(encode_frame(FRAME_PONG))
+                        await writer.drain()
+
+                    elif frame['type'] == FRAME_CONNECT:
+                        # Reverse direction: server asks client to connect
+                        asyncio.ensure_future(
+                            self._handle_connect(frame, writer, active_writers)
+                        )
+
+                    elif frame['type'] == FRAME_CONNECT_OK:
+                        reqid = frame['reqid']
+                        fwd = self._forward_requests.get(reqid)
+                        if fwd:
+                            fwd['connected'].set()
+                        else:
+                            logger.warning(f'Received CONNECT_OK for unknown reqid={reqid}')
+
+                    elif frame['type'] == FRAME_CONNECT_FAILED:
+                        reqid = frame['reqid']
+                        fwd = self._forward_requests.get(reqid)
+                        if fwd:
+                            fwd['connect_error'] = 'connect failed'
+                            fwd['connected'].set()
+                        else:
+                            logger.warning(f'Received CONNECT_FAILED for unknown reqid={reqid}')
+
+                    elif frame['type'] == FRAME_DATA:
+                        reqid = frame['reqid']
+                        # Forward direction: data from tunnel → queue → sock
+                        fwd = self._forward_requests.get(reqid)
+                        if fwd and 'queue' in fwd:
+                            await fwd['queue'].put(frame['data'])
+                            continue
+                        # Reverse direction: data from tunnel → target socket
+                        tw = active_writers.get(reqid)
+                        if tw and not tw.is_closing():
+                            task = asyncio.create_task(write_to_target(reqid, tw, frame['data']))
+                            target_write_tasks.add(task)
+                            task.add_done_callback(target_write_tasks.discard)
+
+                    elif frame['type'] == FRAME_CLOSE:
+                        reqid = frame['reqid']
+                        # Forward direction: EOF signal
+                        fwd = self._forward_requests.get(reqid)
+                        if fwd and 'queue' in fwd:
+                            await fwd['queue'].put(None)
+                            continue
+                        # Reverse direction: close target socket
+                        tw = active_writers.pop(reqid, None)
+                        if tw:
+                            tw.close()
+
+                except asyncio.TimeoutError:
+                    logger.warning(f'Tunnel heartbeat timeout (conn {conn_index})')
+                    break
+                except (ConnectionResetError, BrokenPipeError, OSError) as e:
+                    logger.error(f'Tunnel connection lost (conn {conn_index}): {e}')
+                    break
+                except asyncio.IncompleteReadError:
+                    logger.error(f'Tunnel connection closed by server (conn {conn_index})')
+                    break
+        finally:
+            # Clean up active target connections (reverse)
+            for task in target_write_tasks:
+                task.cancel()
+            for reqid, tw in active_writers.items():
+                tw.close()
+            active_writers.clear()
+
+            # Fail forward requests that were sent on THIS connection
+            for reqid, fwd in list(self._forward_requests.items()):
+                if fwd.get('writer') is writer:
+                    fwd['connect_error'] = 'tunnel connection lost'
+                    fwd['connected'].set()
+                    self._forward_requests.pop(reqid, None)
+
+            # Remove this connection's writer from the list
+            if writer in self._tunnel_writers:
+                self._tunnel_writers.remove(writer)
+            if reader in self._tunnel_readers:
+                self._tunnel_readers.remove(reader)
+
+            # Update connected state
+            if not self._tunnel_writers:
+                self._connected = False
+                self._connected_event.clear()
+                self._on_status_change('reconnecting', '')
+            else:
+                logger.info(f'Tunnel: 1 connection lost, {len(self._tunnel_writers)} remaining')
+
             try:
-                frame = await asyncio.wait_for(read_frame(reader), timeout=IDLE_TIMEOUT)
-
-                if frame['type'] == FRAME_PING:
-                    writer.write(encode_frame(FRAME_PONG))
-                    await writer.drain()
-
-                elif frame['type'] == FRAME_CONNECT:
-                    # Reverse direction: server asks client to connect
-                    asyncio.ensure_future(
-                        self._handle_connect(frame, writer, active_writers)
-                    )
-
-                elif frame['type'] == FRAME_CONNECT_OK:
-                    reqid = frame['reqid']
-                    fwd = self._forward_requests.get(reqid)
-                    if fwd:
-                        fwd['connected'].set()
-                    else:
-                        logger.warning(f'Received CONNECT_OK for unknown reqid={reqid}')
-
-                elif frame['type'] == FRAME_CONNECT_FAILED:
-                    reqid = frame['reqid']
-                    fwd = self._forward_requests.get(reqid)
-                    if fwd:
-                        fwd['connect_error'] = 'connect failed'
-                        fwd['connected'].set()
-                    else:
-                        logger.warning(f'Received CONNECT_FAILED for unknown reqid={reqid}')
-
-                elif frame['type'] == FRAME_DATA:
-                    reqid = frame['reqid']
-                    # Forward direction: data from tunnel → queue → sock
-                    fwd = self._forward_requests.get(reqid)
-                    if fwd and 'queue' in fwd:
-                        await fwd['queue'].put(frame['data'])
-                        continue
-                    # Reverse direction: data from tunnel → target socket
-                    tw = active_writers.get(reqid)
-                    if tw and not tw.is_closing():
-                        task = asyncio.create_task(write_to_target(reqid, tw, frame['data']))
-                        target_write_tasks.add(task)
-                        task.add_done_callback(target_write_tasks.discard)
-
-                elif frame['type'] == FRAME_CLOSE:
-                    reqid = frame['reqid']
-                    # Forward direction: EOF signal
-                    fwd = self._forward_requests.get(reqid)
-                    if fwd and 'queue' in fwd:
-                        await fwd['queue'].put(None)
-                        continue
-                    # Reverse direction: close target socket
-                    tw = active_writers.pop(reqid, None)
-                    if tw:
-                        tw.close()
-
-            except asyncio.TimeoutError:
-                logger.warning('Tunnel heartbeat timeout (60s no data)')
-                break
-            except (ConnectionResetError, BrokenPipeError, OSError) as e:
-                logger.error(f'Tunnel connection lost: {e}')
-                break
-            except asyncio.IncompleteReadError:
-                logger.error('Tunnel connection closed by server')
-                break
-
-        # Clean up active target connections (reverse)
-        for task in target_write_tasks:
-            task.cancel()
-        for reqid, tw in active_writers.items():
-            tw.close()
-        active_writers.clear()
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
 
     async def _handle_connect(self, frame, tunnel_writer, active_writers):
         """Handle a CONNECT request: connect to target directly, relay data."""
@@ -554,6 +628,12 @@ class TunnelClient:
 
     async def _forward_connect_async(self, host, port, sock):
         """Async forward connect handler. Runs on tunnel's event loop."""
+        # Round-robin select a writer
+        if not self._tunnel_writers:
+            raise Exception('No tunnel connections available')
+        self._rr_counter += 1
+        writer = self._tunnel_writers[self._rr_counter % len(self._tunnel_writers)]
+
         reqid = self._allocate_forward_reqid()
         loop = asyncio.get_event_loop()
 
@@ -562,6 +642,7 @@ class TunnelClient:
             'connected': asyncio.Event(),
             'connect_error': None,
             'queue': queue,
+            'writer': writer,
         }
         self._forward_requests[reqid] = fwd
 
@@ -573,10 +654,10 @@ class TunnelClient:
             except ValueError:
                 pass
 
-            self._tunnel_writer.write(encode_frame(
+            writer.write(encode_frame(
                 FRAME_CONNECT, reqid=reqid, atyp=atyp, addr=host, port=port
             ))
-            await self._tunnel_writer.drain()
+            await writer.drain()
 
             await asyncio.wait_for(fwd['connected'].wait(), timeout=CONNECT_TIMEOUT)
 
@@ -591,12 +672,12 @@ class TunnelClient:
                         data = await loop.sock_recv(sock, MAX_DATA_CHUNK)
                         if not data:
                             break
-                        if not self._tunnel_writer or self._tunnel_writer.is_closing():
+                        if writer.is_closing():
                             break
-                        self._tunnel_writer.write(encode_frame(
+                        writer.write(encode_frame(
                             FRAME_DATA, reqid=reqid, data=data
                         ))
-                        await self._tunnel_writer.drain()
+                        await writer.drain()
                         await asyncio.sleep(0)  # Yield to other reqids
                 except (ConnectionResetError, BrokenPipeError, OSError):
                     pass
@@ -604,9 +685,9 @@ class TunnelClient:
                     pass
                 finally:
                     try:
-                        if self._tunnel_writer and not self._tunnel_writer.is_closing():
-                            self._tunnel_writer.write(encode_frame(FRAME_CLOSE, reqid=reqid))
-                            await self._tunnel_writer.drain()
+                        if not writer.is_closing():
+                            writer.write(encode_frame(FRAME_CLOSE, reqid=reqid))
+                            await writer.drain()
                     except Exception:
                         pass
                     self._forward_requests.pop(reqid, None)

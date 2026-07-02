@@ -11,7 +11,7 @@ class TunnelServer {
     this.onDisconnect = options.onDisconnect || (() => {});
 
     this._frameHandlers = [];
-    this._clientSocket = null;
+    this._clientSockets = new Set();
     this._server = null;
 
     // Per-socket receive buffer: Map<socket, Buffer>
@@ -19,7 +19,7 @@ class TunnelServer {
 
     // Heartbeat state
     this._pingTimer = null;
-    this._lastPongTime = 0;
+    this._socketPongTimes = new Map();
   }
 
   start() {
@@ -44,10 +44,10 @@ class TunnelServer {
 
   stop() {
     this._stopHeartbeat();
-    if (this._clientSocket) {
-      this._clientSocket.destroy();
-      this._clientSocket = null;
+    for (const socket of this._clientSockets) {
+      socket.destroy();
     }
+    this._clientSockets.clear();
     // Destroy all pending sockets
     for (const [socket] of this._socketBuffers) {
       socket.destroy();
@@ -66,16 +66,6 @@ class TunnelServer {
     socket.setNoDelay(true);
     socket.setKeepAlive(true, 60000);
 
-    // Single client limit
-    if (this._clientSocket) {
-      const errorFrame = encodeFrame({
-        type: FRAME_TYPES.ERROR,
-        message: 'Tunnel port occupied'
-      });
-      socket.write(errorFrame);
-      return;
-    }
-
     // Per-socket buffer
     this._socketBuffers.set(socket, Buffer.alloc(0));
 
@@ -88,11 +78,14 @@ class TunnelServer {
 
     socket.on('close', () => {
       this._socketBuffers.delete(socket);
-      if (this._clientSocket === socket) {
-        this._clientSocket = null;
+      const wasAuthenticated = this._clientSockets.has(socket);
+      this._clientSockets.delete(socket);
+      if (wasAuthenticated) {
+        console.log(`[Tunnel] Client disconnected (${this._clientSockets.size} remaining)`);
+        this.onDisconnect(socket);
+      }
+      if (this._clientSockets.size === 0) {
         this._stopHeartbeat();
-        console.log('[Tunnel] Client disconnected');
-        this.onDisconnect();
       }
     });
 
@@ -116,15 +109,15 @@ class TunnelServer {
       try {
         const frame = decodeFrame(frameData);
 
-        if (frame.type === FRAME_TYPES.AUTH && !this._clientSocket) {
+        if (frame.type === FRAME_TYPES.AUTH && !this._clientSockets.has(socket)) {
           this._handleAuth(socket, frame);
-        } else if (this._clientSocket === socket) {
-          // Only update heartbeat on PONG frames
+        } else if (this._clientSockets.has(socket)) {
+          // Per-socket pong tracking
           if (frame.type === FRAME_TYPES.PONG) {
-            this._lastPongTime = Date.now();
+            this._socketPongTimes.set(socket, Date.now());
           }
-          // Forward to handlers
-          this._frameHandlers.forEach(handler => handler(frame));
+          // Forward to handlers with socket reference
+          this._frameHandlers.forEach(handler => handler(frame, socket));
         }
       } catch (err) {
         console.error('[Tunnel] Frame decode error:', err.message);
@@ -135,25 +128,45 @@ class TunnelServer {
   _handleAuth(socket, frame) {
     const { username, password } = frame;
 
+    if (this._clientSockets.size >= 2) {
+      socket.write(encodeFrame({ type: FRAME_TYPES.ERROR, message: 'Tunnel connection limit (2)' }));
+      socket.destroy();
+      return;
+    }
+
     if (username === this.credentials.username &&
         password === this.credentials.password) {
-      this._clientSocket = socket;
+      this._clientSockets.add(socket);
       socket.write(encodeFrame({ type: FRAME_TYPES.AUTH_OK }));
-      console.log('[Tunnel] Client authenticated:', socket.remoteAddress);
-      this._startHeartbeat();
-      this.onConnect(socket.remoteAddress, socket.remotePort);
+      console.log(`[Tunnel] Client authenticated: ${socket.remoteAddress} (${this._clientSockets.size}/2)`);
+      if (this._clientSockets.size === 1) {
+        this._startHeartbeat();
+      }
+      this.onConnect(socket, socket.remoteAddress, socket.remotePort);
     } else {
       socket.write(encodeFrame({ type: FRAME_TYPES.AUTH_FAIL }));
       socket.destroy();
     }
   }
 
-  sendFrame(frame) {
-    if (!this._clientSocket) {
+  sendFrame(frame, targetSocket) {
+    const data = encodeFrame(frame);
+
+    if (targetSocket) {
+      if (!this._clientSockets.has(targetSocket)) {
+        return Promise.resolve();
+      }
+      return this._writeToSocket(targetSocket, data);
+    }
+
+    const sockets = [...this._clientSockets];
+    if (sockets.length === 0) {
       throw new Error('No client connected');
     }
-    const socket = this._clientSocket;
-    const data = encodeFrame(frame);
+    return Promise.all(sockets.map(s => this._writeToSocket(s, data)));
+  }
+
+  _writeToSocket(socket, data) {
     return new Promise((resolve) => {
       if (socket.write(data)) {
         resolve();
@@ -174,17 +187,20 @@ class TunnelServer {
 
   _startHeartbeat() {
     this._stopHeartbeat();
-    this._lastPongTime = Date.now();
+    for (const socket of this._clientSockets) {
+      this._socketPongTimes.set(socket, Date.now());
+    }
 
-    // Send PING every 30s
     this._pingTimer = setInterval(() => {
-      if (!this._clientSocket) { this._stopHeartbeat(); return; }
+      if (this._clientSockets.size === 0) { this._stopHeartbeat(); return; }
 
-      // Check if we received PONG within 60s
-      if (Date.now() - this._lastPongTime > 60000) {
-        console.log('[Tunnel] Heartbeat timeout (60s no PONG), disconnecting');
-        this._clientSocket.destroy();
-        return;
+      const now = Date.now();
+      for (const socket of this._clientSockets) {
+        const lastPong = this._socketPongTimes.get(socket) || 0;
+        if (now - lastPong > 60000) {
+          console.log('[Tunnel] Heartbeat timeout (60s no PONG), destroying socket');
+          socket.destroy();
+        }
       }
 
       try {
@@ -200,6 +216,7 @@ class TunnelServer {
       clearInterval(this._pingTimer);
       this._pingTimer = null;
     }
+    this._socketPongTimes.clear();
   }
 }
 
