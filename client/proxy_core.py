@@ -903,7 +903,12 @@ class ProxyCore:
 
                     _log_access(host, port, method, direct)
 
-                    request_line = f"{method} {path} {parts[2]}\r\n".encode()
+                    if direct:
+                        # 直连目标服务器：用路径格式
+                        request_line = f"{method} {path} {parts[2]}\r\n".encode()
+                    else:
+                        # 下游是代理（tunnel 或 upstream proxy）：保留完整 URL
+                        request_line = f"{method} {url} {parts[2]}\r\n".encode()
                     remote_writer.write(request_line)
                     for h in headers:
                         remote_writer.write(h)
