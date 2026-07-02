@@ -494,12 +494,8 @@ class ProxyCore:
     def measure_latency(self):
         if not self._running or not self._loop or not self._loop.is_running():
             return None
-        if self._tunnel_client is not None:
-            try:
-                if self._tunnel_client.is_connected():
-                    return "tunnel"
-            except Exception:
-                pass
+        if self._server_config and self._server_config.get("protocol") == "tunnel":
+            return "tunnel"
         future = asyncio.run_coroutine_threadsafe(self._measure_latency(), self._loop)
         try:
             return future.result(timeout=6)
@@ -580,13 +576,9 @@ class ProxyCore:
                 return "direct"
             # route == "proxy" or resolve returned default → fall through
 
-        # 2. Tunnel check (if connected, replaces upstream proxy)
-        if self._tunnel_client is not None:
-            try:
-                if self._tunnel_client.is_connected():
-                    return "tunnel"
-            except Exception:
-                pass
+        # 2. Tunnel check (if protocol is tunnel, always use it)
+        if self._server_config.get("protocol") == "tunnel":
+            return "tunnel"
 
         # 3. Fallback: upstream proxy
         return "proxy"

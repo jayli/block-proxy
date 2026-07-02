@@ -22,8 +22,11 @@ class FakePopup:
     def __init__(self, value):
         self._value = value
 
-    def titleOfSelectedItem(self):
+    def indexOfSelectedItem(self):
         return self._value
+
+    def addItemWithTitle_(self, title):
+        pass
 
 
 class FakeCheckbox:
@@ -32,6 +35,9 @@ class FakeCheckbox:
 
     def state(self):
         return 1 if self._value else 0
+
+    def setEnabled_(self, enabled):
+        pass
 
 
 class FakeWindow:
@@ -66,6 +72,11 @@ def test_save_commits_active_text_editing_before_reading_controls(tmp_path, monk
             "udp": True,
             "proxy_private": False,
         },
+        "tunnel": {
+            "enabled": False,
+            "server_address": "",
+            "server_port": 8004,
+        },
         "autostart": False,
     }
     config_path.write_text(json.dumps(original))
@@ -75,7 +86,10 @@ def test_save_commits_active_text_editing_before_reading_controls(tmp_path, monk
     )
     ctrl._config_path = str(config_path)
     ctrl._config = json.loads(config_path.read_text())
-    ctrl._protocol_popup = FakePopup("http")
+    # http protocol maps to PROTOCOLS[1] (index 1)
+    ctrl._protocol_popup = FakePopup(1)
+    ctrl._server_port_value = "8002"
+    ctrl._tunnel_port_value = "8004"
     ctrl._fields = {
         "address": FakeField("old.example.com"),
         "port": FakeField("8002"),
