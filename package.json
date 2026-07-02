@@ -6,7 +6,7 @@
     "block-proxy": "bin/start.js"
   },
   "dependencies": {
-    "@bachi/anyproxy": "^0.1.8",
+    "@bachi/anyproxy": "^0.1.9",
     "axios": "^1.13.2",
     "commander": "^14.0.2",
     "express": "^5.1.0",
