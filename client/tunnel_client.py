@@ -181,6 +181,7 @@ class TunnelClient:
         self._main_task = None
         self._connected = False
         self._connected_event = threading.Event()
+        self._replenishing = False  # 防止重复触发连接补充
 
         # Reverse direction: server-initiated connections
         self._reverse_reqid_counter = 0
@@ -459,6 +460,55 @@ class TunnelClient:
             writer.close()
             raise Exception(f'Unexpected response: {response["type"]:#x}')
 
+    async def _replenish_connection(self):
+        """尝试建立新连接来补充断开的连接。"""
+        self._replenishing = True
+        try:
+            addr = self._tunnel_cfg.get('server_address') or self._server_cfg['address']
+            port = self._tunnel_cfg.get('server_port', 8004)
+            credentials = {
+                'username': self._server_cfg.get('username', ''),
+                'password': self._server_cfg.get('password', '')
+            }
+
+            logger.info(f'Replenishing tunnel connection to {addr}:{port}')
+            logger.warning('Tunnel: Connection replenishment initiated')
+
+            # 尝试建立新连接（带重试）
+            for attempt in range(1, 4):
+                try:
+                    await asyncio.sleep(1)  # 短暂等待后再重试
+
+                    logger.info(f'Replenish attempt {attempt}/3 to {addr}:{port}')
+                    conn = await self._establish_connection(addr, port, credentials)
+
+                    # 成功建立新连接
+                    self._tunnel_writers.append(conn['writer'])
+                    self._tunnel_readers.append(conn['reader'])
+
+                    # 启动新的读循环
+                    conn_idx = len(self._tunnel_writers) - 1
+                    task = asyncio.ensure_future(
+                        self._handle_requests(conn['reader'], conn['writer'], conn_index=conn_idx)
+                    )
+                    self._connection_tasks.append(task)
+
+                    logger.info(f'Tunnel replenished successfully: {len(self._tunnel_writers)}/{len(self._tunnel_readers)} connections')
+                    logger.warning('Tunnel: Connection replenished successfully')
+                    return
+
+                except Exception as e:
+                    logger.warning(f'Replenish attempt {attempt} failed: {e}')
+                    if attempt < 3:
+                        await asyncio.sleep(2 * attempt)  # 指数退避
+
+            logger.error('Tunnel: Failed to replenish connection after 3 attempts')
+
+        except Exception as e:
+            logger.error(f'Replenish connection error: {e}')
+        finally:
+            self._replenishing = False
+
     async def _handle_requests(self, reader, writer, conn_index=0):
         """Main frame processing loop. Handles PING/PONG, CONNECT, DATA, CLOSE."""
         active_writers = {}  # reqid → target_writer (reverse direction)
@@ -568,6 +618,9 @@ class TunnelClient:
                 self._on_status_change('reconnecting', '')
             else:
                 logger.info(f'Tunnel: 1 connection lost, {len(self._tunnel_writers)} remaining')
+                # 触发连接补充：当从双连接降级为单连接时
+                if len(self._tunnel_writers) == 1 and not self._replenishing:
+                    asyncio.ensure_future(self._replenish_connection())
 
             try:
                 writer.close()
