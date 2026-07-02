@@ -189,6 +189,61 @@ class TunnelClient:
     def is_connected(self):
         return self._connected
 
+    def measure_latency(self, timeout=5):
+        """Measure tunnel round-trip latency via a lightweight CONNECT.
+        Returns latency in ms on success, or None on failure.
+        Called from ProxyCore's thread via run_coroutine_threadsafe."""
+        if not self._connected or not self._loop or not self._loop.is_running():
+            return None
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                self._measure_latency_async(), self._loop
+            )
+            return future.result(timeout=timeout)
+        except Exception:
+            return None
+
+    async def _measure_latency_async(self):
+        """Send a CONNECT through the tunnel, measure RTT to CONNECT_OK, then close."""
+        import time
+
+        if not self._connected or not self._tunnel_writer:
+            return None
+
+        reqid = self._allocate_forward_reqid()
+        fwd = {
+            'connected': asyncio.Event(),
+            'connect_error': None,
+        }
+        self._forward_requests[reqid] = fwd
+
+        start = time.monotonic()
+        try:
+            # Connect to the tunnel server itself (port 80) — lightweight, just needs CONNECT_OK
+            self._tunnel_writer.write(encode_frame(
+                FRAME_CONNECT, reqid=reqid, atyp=ATYP_IPV4, addr='127.0.0.1', port=80
+            ))
+            await self._tunnel_writer.drain()
+
+            await asyncio.wait_for(fwd['connected'].wait(), timeout=5)
+
+            if fwd['connect_error']:
+                return None
+
+            elapsed = time.monotonic() - start
+            return int(elapsed * 1000)
+        except Exception:
+            return None
+        finally:
+            self._forward_requests.pop(reqid, None)
+            # Send CLOSE to clean up the server-side connection
+            try:
+                if self._tunnel_writer and not self._tunnel_writer.is_closing():
+                    self._tunnel_writer.write(encode_frame(FRAME_CLOSE, reqid=reqid))
+                    await self._tunnel_writer.drain()
+            except Exception:
+                pass
+
     def start(self):
         if self._running:
             return

@@ -435,6 +435,23 @@ class AppController(NSObject):
                     continue
                 if self.proxy.is_running():
                     restart_count = 0
+                    # 检查隧道客户端线程是否存活
+                    if self.tunnel_client:
+                        thread = self.tunnel_client._thread
+                        if thread is None or not thread.is_alive():
+                            crash_logger.warning("Tunnel client thread died, restarting")
+                            try:
+                                self.tunnel_client = TunnelClient(
+                                    self.config.data,
+                                    on_status_change=lambda status, detail="": None
+                                )
+                                self.tunnel_client.start()
+                                self.proxy.set_tunnel_client(self.tunnel_client)
+                                crash_logger.warning("Tunnel client restarted")
+                            except Exception as e:
+                                crash_logger.warning(
+                                    "Tunnel client restart failed: %s", e, exc_info=True
+                                )
                     continue
 
                 restart_count += 1
@@ -455,6 +472,14 @@ class AppController(NSObject):
                     self.proxy.stop()
                     self.proxy.start(self.config.data,
                                   config_dir=os.path.dirname(self.config.config_path))
+                    # 重启时同步重建隧道客户端
+                    if self.config.data.get('tunnel', {}).get('enabled'):
+                        self.tunnel_client = TunnelClient(
+                            self.config.data,
+                            on_status_change=lambda status, detail="": None
+                        )
+                        self.tunnel_client.start()
+                        self.proxy.set_tunnel_client(self.tunnel_client)
                     restart_count = 0
                     crash_logger.warning("Proxy restarted successfully")
                 except Exception as e:

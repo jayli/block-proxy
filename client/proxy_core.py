@@ -431,13 +431,17 @@ class ProxyCore:
         username = self._server_config.get("username", "")
         password = self._server_config.get("password", "")
 
-        # 隧道协议使用独立的地址和端口
+        # 隧道协议：复用已建立的隧道连接，通过 CONNECT 握手测量延迟
         if protocol == "tunnel":
-            addr = self._tunnel_config.get("server_address") or self._server_config["address"]
-            port = self._tunnel_config.get("server_port", 8004)
-        else:
-            addr = self._server_config["address"]
-            port = self._server_config["port"]
+            if not self._tunnel_client or not self._tunnel_client.is_connected():
+                raise NodeUnreachableError("Tunnel not connected")
+            latency = self._tunnel_client.measure_latency(timeout=5)
+            if latency is None:
+                raise NodeUnreachableError("Tunnel CONNECT failed")
+            return (latency, None)
+
+        addr = self._server_config["address"]
+        port = self._server_config["port"]
 
         start = time.monotonic()
         reader = None
@@ -452,9 +456,7 @@ class ProxyCore:
                 timeout=5,
             )
 
-            if protocol == "tunnel":
-                await self._measure_latency_tunnel(reader, writer, username, password)
-            elif protocol == "http":
+            if protocol == "http":
                 await self._measure_latency_http(reader, writer, username, password)
             else:
                 await self._measure_latency_socks5(reader, writer, username, password)
@@ -519,42 +521,6 @@ class ProxyCore:
             if status_code == "407":
                 raise AuthFailedError(f"HTTP proxy auth failed: {status_line.decode().strip()}")
             raise NodeUnreachableError(f"HTTP proxy CONNECT failed: {status_line.decode().strip()}")
-
-    async def _measure_latency_tunnel(self, reader, writer, username, password):
-        """测量隧道 TLS + AUTH 握手延迟。内联实现帧编解码，避免循环导入 tunnel_client。"""
-        FRAME_AUTH = 0x20
-        FRAME_AUTH_OK = 0x21
-        FRAME_AUTH_FAIL = 0x22
-        FRAME_ERROR = 0x23
-
-        # 编码 AUTH 帧: 2字节长度 + 1字节type + 1字节username_len + username + 1字节password_len + password
-        u = username.encode("utf-8")
-        p = password.encode("utf-8")
-        payload = bytearray([FRAME_AUTH])
-        payload.extend(struct.pack("B", len(u)))
-        payload.extend(u)
-        payload.extend(struct.pack("B", len(p)))
-        payload.extend(p)
-        frame = struct.pack("!H", len(payload)) + bytes(payload)
-        writer.write(frame)
-        await writer.drain()
-
-        # 读取响应帧: 2字节长度 + payload
-        header = await asyncio.wait_for(reader.readexactly(2), timeout=5)
-        length = struct.unpack("!H", header)[0]
-        resp_payload = await asyncio.wait_for(reader.readexactly(length), timeout=5)
-        resp_type = resp_payload[0]
-
-        if resp_type == FRAME_AUTH_OK:
-            return  # 握手成功，计时在外层完成
-        elif resp_type == FRAME_AUTH_FAIL:
-            raise AuthFailedError("Tunnel auth failed")
-        elif resp_type == FRAME_ERROR:
-            msg_len = resp_payload[1]
-            msg = resp_payload[2:2+msg_len].decode("utf-8")
-            raise NodeUnreachableError(f"Tunnel error: {msg}")
-        else:
-            raise NodeUnreachableError(f"Unexpected tunnel response: {resp_type:#x}")
 
     def measure_latency(self):
         """测量代理延迟，返回 (protocol_name, latency_ms_or_None, failure_reason_or_None)。代理未运行时返回 None。"""
