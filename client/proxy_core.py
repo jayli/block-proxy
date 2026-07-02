@@ -847,11 +847,13 @@ class ProxyCore:
                     return
 
                 _log_access(host, port, "CONNECT", direct)
+                logger.info(f'[HTTP] CONNECT tunnel established: {host}:{port}, route={route}')
 
                 client_writer.write(
                     b"HTTP/1.1 200 Connection Established\r\n\r\n"
                 )
                 await client_writer.drain()
+                logger.info(f'[HTTP] Sent 200 Connection Established to client: {host}:{port}')
 
                 await asyncio.gather(
                     relay(client_reader, remote_writer, route, "outbound"),

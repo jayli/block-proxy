@@ -365,14 +365,20 @@ class TunnelClient:
                     reqid = frame['reqid']
                     fwd = self._forward_requests.get(reqid)
                     if fwd:
+                        logger.info(f'[Tunnel] Received CONNECT_OK for reqid={reqid}, setting connected event')
                         fwd['connected'].set()
+                    else:
+                        logger.warning(f'[Tunnel] Received CONNECT_OK for unknown reqid={reqid}, active reqids: {list(self._forward_requests.keys())}')
 
                 elif frame['type'] == FRAME_CONNECT_FAILED:
                     reqid = frame['reqid']
                     fwd = self._forward_requests.get(reqid)
                     if fwd:
+                        logger.warning(f'[Tunnel] Received CONNECT_FAILED for reqid={reqid}')
                         fwd['connect_error'] = 'connect failed'
                         fwd['connected'].set()
+                    else:
+                        logger.warning(f'[Tunnel] Received CONNECT_FAILED for unknown reqid={reqid}')
 
                 elif frame['type'] == FRAME_DATA:
                     reqid = frame['reqid']
@@ -478,6 +484,7 @@ class TunnelClient:
             'queue': queue,
         }
         self._forward_requests[reqid] = fwd
+        logger.info(f'[Tunnel] Forward CONNECT: reqid={reqid}, target={host}:{port}')
 
         try:
             atyp = ATYP_DOMAIN
@@ -491,11 +498,16 @@ class TunnelClient:
                 FRAME_CONNECT, reqid=reqid, atyp=atyp, addr=host, port=port
             ))
             await self._tunnel_writer.drain()
+            logger.info(f'[Tunnel] Forward CONNECT frame sent: reqid={reqid}')
 
+            logger.info(f'[Tunnel] Waiting for CONNECT_OK: reqid={reqid}')
             await asyncio.wait_for(fwd['connected'].wait(), timeout=CONNECT_TIMEOUT)
+            logger.info(f'[Tunnel] Connected event received: reqid={reqid}, error={fwd["connect_error"]}')
 
             if fwd['connect_error']:
                 raise Exception(fwd['connect_error'])
+
+            logger.info(f'[Tunnel] Forward CONNECT successful: reqid={reqid}, starting relay tasks')
 
             # Start relay tasks
             # Task 1: sock → tunnel
