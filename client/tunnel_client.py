@@ -377,7 +377,7 @@ class TunnelClient:
     async def _connect_and_serve(self):
         """Connect, authenticate, handle requests with dual connections."""
         addr = self._tunnel_cfg.get('server_address') or self._server_cfg['address']
-        port = self._tunnel_cfg.get('server_port', 8004)
+        port = self._tunnel_cfg.get('server_port', 8003)
         credentials = {
             'username': self._server_cfg.get('username', ''),
             'password': self._server_cfg.get('password', '')
@@ -475,7 +475,7 @@ class TunnelClient:
         self._replenishing = True
         try:
             addr = self._tunnel_cfg.get('server_address') or self._server_cfg['address']
-            port = self._tunnel_cfg.get('server_port', 8004)
+            port = self._tunnel_cfg.get('server_port', 8003)
             credentials = {
                 'username': self._server_cfg.get('username', ''),
                 'password': self._server_cfg.get('password', '')

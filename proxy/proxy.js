@@ -52,7 +52,7 @@ var anyproxy_started = false;
 var blockHosts = [];
 var proxyPort = 8001; // http 代理端口
 var socks5Port = 8002; // socks5 端口
-var expressPort = 8003; // 管理面板端口
+var expressPort = 8004; // 管理面板端口
 
 var vpn_proxy = "";
 var devices = [];
@@ -223,7 +223,7 @@ async function loadConfig() {
     socks5_port: socks5Port,
     express_port: expressPort,
     enable_tunnel: "1",
-    tunnel_port: 8004,
+    tunnel_port: 8003,
     tunnel_domains: [],
     rule_modules: {},
     devices: []
@@ -283,7 +283,7 @@ async function loadConfig() {
       config.enable_mitm = enable_mitm;
 
       config.enable_tunnel = loadedConfig.enable_tunnel || "1";
-      config.tunnel_port = loadedConfig.tunnel_port || 8004;
+      config.tunnel_port = loadedConfig.tunnel_port || 8003;
       config.tunnel_domains = loadedConfig.tunnel_domains || [];
 
       config.rule_modules = loadedConfig.rule_modules || {};
@@ -326,7 +326,7 @@ async function loadConfig() {
         socks5_tls: socks5_tls,
         enable_mitm: enable_mitm,
         enable_tunnel: "1",
-        tunnel_port: 8004,
+        tunnel_port: 8003,
         tunnel_domains: [],
         rule_modules: {},
         vpn_proxy: ""
@@ -997,7 +997,7 @@ function passRequestWithHttpAgent(requestDetail, isHttps) {
 async function initTunnel(config) {
   await closeTunnel();
   const enableTunnel = config.enable_tunnel || "1";
-  const tunnelPort = config.tunnel_port || 8004;
+  const tunnelPort = config.tunnel_port || 8003;
   if (enableTunnel !== "1") return;
 
   if (!fs.existsSync(tunnelCertFile) || !fs.existsSync(tunnelKeyFile)) {

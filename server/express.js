@@ -12,7 +12,7 @@ const { exec, execSync } = require('child_process');
 const LocalProxy = require('../proxy/proxy');
 
 const app = express();
-let PORT = 8003; // 默认端口，可通过 init(port) 覆盖
+let PORT = 8004; // 默认端口，可通过 init(port) 覆盖
 const DEV = process.env.BLOCK_PROXY_DEV || 0;
 const configPath = path.join(__dirname, '../config.json');
 
@@ -269,7 +269,7 @@ app.post('/api/config/import', async (req, res) => {
 
         // 兼容老旧配置：补全新增字段的默认值
         if (!('enable_tunnel' in newConfig)) newConfig.enable_tunnel = "1";
-        if (!('tunnel_port' in newConfig)) newConfig.tunnel_port = 8004;
+        if (!('tunnel_port' in newConfig)) newConfig.tunnel_port = 8003;
         if (!('tunnel_domains' in newConfig)) newConfig.tunnel_domains = [];
 
         // 校验每个必需字段

@@ -95,7 +95,7 @@ class ConfigWindowController(NSObject):
         protocol = server_cfg.get("protocol", "socks5")
 
         self._server_port_value = str(server_cfg.get("port", 8002))
-        self._tunnel_port_value = str(tunnel_cfg.get("server_port", 8004))
+        self._tunnel_port_value = str(tunnel_cfg.get("server_port", 8003))
 
         w, h = 420, 560
         pos = _center_on_mouse_screen(w, h)
@@ -298,7 +298,7 @@ class ConfigWindowController(NSObject):
         config["server"]["address"] = self._fields["address"].stringValue()
 
         port_str = self._fields["port"].stringValue()
-        port = int(port_str) if port_str else (8004 if is_tunnel else 8002)
+        port = int(port_str) if port_str else (8003 if is_tunnel else 8002)
 
         if is_tunnel:
             config["server"]["port"] = int(self._server_port_value) if self._server_port_value else 8002

@@ -723,7 +723,7 @@ function App() {
         <div className="config-section tab-content">
           <h2>HTTP/Socks5 端口设置</h2>
           <div className="setting-row">
-            <label>Anyproxy HTTP 代理端口:</label>
+            <label>HTTP 代理端口:</label>
             <input
               type="number"
               value={config.proxy_port}
@@ -1056,8 +1056,8 @@ function App() {
             <label>隧道端口:</label>
             <input
               type="number"
-              value={config.tunnel_port || 8004}
-              onChange={(e) => setConfig({...config, tunnel_port: parseInt(e.target.value) || 8004})}
+              value={config.tunnel_port || 8003}
+              onChange={(e) => setConfig({...config, tunnel_port: parseInt(e.target.value) || 8003})}
               min="1"
               max="65535"
             />

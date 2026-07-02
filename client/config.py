@@ -27,7 +27,7 @@ DEFAULT_CONFIG = {
     "tunnel": {
         "enabled": False,
         "server_address": "",
-        "server_port": 8004,
+        "server_port": 8003,
     },
 }
 

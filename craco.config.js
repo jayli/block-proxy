@@ -5,6 +5,18 @@ const { URL } = require('url');
 const fs = require('fs');
 const path = require('path');
 
+// 从 config.json 读取 Express 端口
+const configPath = path.join(__dirname, 'config.json');
+let expressPort = 8004; // 默认值
+if (fs.existsSync(configPath)) {
+  try {
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expressPort = config.express_port || expressPort;
+  } catch (e) {
+    console.warn('[craco] Failed to read config.json, using default express_port:', expressPort);
+  }
+}
+
 module.exports = {
   devServer: (devServerConfig, { env, paths, proxy, allowedHost }) => {
 
@@ -14,7 +26,7 @@ module.exports = {
       devServer.app.use('/api', async (req, res) => {
         const proxyReq = http.request({
           hostname: 'localhost',
-          port: 8003,
+          port: expressPort,
           path: '/api' + req.url,  // 关键修改：添加缺失的 /api 前缀
           method: req.method,
           headers: req.headers
