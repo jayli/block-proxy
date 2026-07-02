@@ -144,8 +144,21 @@ class AppController(NSObject):
         self.toggle_item = self._add_menu_item(
             menu, "启动代理", "toggleProxy:"
         )
-        self._add_menu_item(menu, "Socks/HTTP 节点配置...", "openConfig:")
-        self._add_menu_item(menu, "分流规则...", "openRouting:")
+        menu.addItem_(NSMenuItem.separatorItem())
+
+        config_item = self._add_menu_item(menu, "节点配置...", "openConfig:")
+        config_image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            "gearshape", None
+        )
+        if config_image:
+            config_item.setImage_(config_image)
+
+        routing_item = self._add_menu_item(menu, "分流规则...", "openRouting:")
+        routing_image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            "arrow.triangle.branch", None
+        )
+        if routing_image:
+            routing_item.setImage_(routing_image)
         menu.addItem_(NSMenuItem.separatorItem())
 
         self.global_item = self._add_menu_item(
@@ -158,8 +171,9 @@ class AppController(NSObject):
         menu.addItem_(NSMenuItem.separatorItem())
 
         log_item = self._add_menu_item(menu, "查看日志...", "openLog:")
-        from AppKit import NSImage
-        log_image = NSImage.imageWithSystemSymbolName_accessibilityDescription_("doc.text", None)
+        log_image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            "doc.text", None
+        )
         if log_image:
             log_item.setImage_(log_image)
         self._add_menu_item(menu, "关于", "showAbout:")
