@@ -36,7 +36,8 @@ class TunnelServer {
       });
 
       this._server.listen(this.port, () => {
-        console.log(`[Tunnel] Server listening on port ${this.port}`);
+        const localIp = require('../proxy/domain').getLocalIp();
+        console.log(`✅ \x1b[32m隧道服务启动，IP ${localIp}, 端口 ${this.port}\x1b[0m`);
         resolve();
       });
     });
