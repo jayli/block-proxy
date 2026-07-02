@@ -6,6 +6,7 @@ class TunnelManager {
   constructor(tunnelServer, config) {
     this._server = tunnelServer;
     this._tunnelDomains = config.tunnel_domains || [];
+    this._proxyPort = config.proxy_port || 8001;
     this._reqidCounter = 0;
     this._activeRequests = new Map();
     this._connected = false;
@@ -157,8 +158,8 @@ class TunnelManager {
     }, 30000);
     entry.timeout = timeout;
 
-    anyproxySocket.connect(8001, '127.0.0.1', () => {
-      console.log(`[Tunnel] Forward ${reqid}: connected to AnyProxy 8001, sending CONNECT ${targetHost}:${targetPort}`);
+    anyproxySocket.connect(this._proxyPort, '127.0.0.1', () => {
+      console.log(`[Tunnel] Forward ${reqid}: connected to AnyProxy ${this._proxyPort}, sending CONNECT ${targetHost}:${targetPort}`);
       const connectReq = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n\r\n`;
       anyproxySocket.write(connectReq);
     });
