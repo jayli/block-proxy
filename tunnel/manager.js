@@ -159,7 +159,6 @@ class TunnelManager {
     entry.timeout = timeout;
 
     anyproxySocket.connect(this._proxyPort, '127.0.0.1', () => {
-      console.log(`[Tunnel] Forward ${reqid}: connected to AnyProxy ${this._proxyPort}, sending CONNECT ${targetHost}:${targetPort}`);
       const connectReq = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n\r\n`;
       anyproxySocket.write(connectReq);
     });
@@ -168,14 +167,11 @@ class TunnelManager {
     anyproxySocket.on('data', (data) => {
       if (!entry.confirmed) {
         responseBuffer += data.toString();
-        console.log(`[Tunnel] Forward ${reqid}: received from AnyProxy: ${JSON.stringify(responseBuffer.substring(0, 120))}`);
         const headerEnd = responseBuffer.indexOf('\r\n\r\n');
         if (headerEnd === -1) return;
 
         const statusLine = responseBuffer.substring(0, responseBuffer.indexOf('\r\n'));
-        console.log(`[Tunnel] Forward ${reqid}: AnyProxy status line: "${statusLine}"`);
         if (statusLine.indexOf(' 2') === -1) {
-          console.log(`[Tunnel] Forward ${reqid}: AnyProxy rejected (non-2xx), sending CONNECT_FAILED`);
           this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid });
           cleanup();
           return;
@@ -183,7 +179,6 @@ class TunnelManager {
 
         clearTimeout(timeout);
         entry.confirmed = true;
-        console.log(`[Tunnel] Forward ${reqid}: CONNECT confirmed, sending CONNECT_OK to client`);
         this._server.sendFrame({ type: FRAME_TYPES.CONNECT_OK, reqid });
 
         // Forward any remaining data after headers
@@ -200,7 +195,6 @@ class TunnelManager {
     });
 
     anyproxySocket.on('close', () => {
-      console.log(`[Tunnel] Forward ${reqid}: AnyProxy socket closed (confirmed=${entry.confirmed})`);
       if (entry.confirmed && this._activeRequests.has(reqid)) {
         this._sendCloseToClient(reqid);
       }
