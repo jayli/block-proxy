@@ -554,6 +554,49 @@ function startProxyServer() {
 
     proxyServerInstance.on('ready', () => {
       console.log(`✅ \x1b[32mHTTP 代理服务启动，IP: ${localIp}, 端口: ${proxyPort}\x1b[0m`);
+
+      // 隧道域名 CONNECT 拦截：
+      // AnyProxy 从不读取 customConnect 选项，隧道域名会走默认的 net.connect 到原始服务器（内网不可达）。
+      // 这里在 ready 之后接管 connect 事件，隧道域名走 tunnelManager.forward()，其余委托原处理器。
+      const httpServer = proxyServerInstance.httpProxyServer;
+      const originalConnectHandler = httpServer.listeners('connect')[0];
+      console.log(`[Tunnel-Debug] connect listeners before takeover: ${httpServer.listeners('connect').length}, tunnelManager=${!!tunnelManager}, domains=${tunnelManager ? JSON.stringify(tunnelManager._tunnelDomains) : 'N/A'}`);
+      httpServer.removeAllListeners('connect');
+      httpServer.on('connect', (req, cltSocket, head) => {
+        const host = req.url.split(':')[0];
+        const port = parseInt(req.url.split(':')[1], 10) || 443;
+        const isTunnel = tunnelManager && tunnelManager.matchesTunnelDomain(host);
+        console.log(`[Tunnel-Debug] CONNECT ${host}:${port} isTunnel=${isTunnel}`);
+
+        if (isTunnel) {
+          // 隧道域名：通过反向隧道转发到客户端侧处理
+          console.log(`[Tunnel] CONNECT ${host}:${port} → 走隧道转发`);
+          cltSocket.on('error', (err) => {
+            if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
+              console.log(`[Tunnel] client socket error for ${host}: ${err.message}`);
+            }
+          });
+          cltSocket.write('HTTP/' + req.httpVersion + ' 200 OK\r\n\r\n', () => {
+            const tunnelStream = tunnelManager.forward(host, port, () => {
+              console.log(`[Tunnel] CONNECT OK ${host}:${port}`);
+              if (head && head.length > 0) tunnelStream.write(head);
+              tunnelStream.pipe(cltSocket);
+              cltSocket.pipe(tunnelStream);
+            });
+            tunnelStream.on('error', (err) => {
+              console.log(`[Tunnel] 转发失败 ${host}:${port} - ${err.message}`);
+              try { cltSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n'); } catch (e) {}
+              cltSocket.destroy();
+            });
+          });
+          return;
+        }
+
+        // 非隧道域名：走 AnyProxy 原始 CONNECT 处理器
+        if (originalConnectHandler) {
+          originalConnectHandler(req, cltSocket, head);
+        }
+      });
     });
 
     proxyServerInstance.on('error', (e) => {
