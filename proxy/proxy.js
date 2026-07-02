@@ -560,15 +560,12 @@ function startProxyServer() {
       // 这里在 ready 之后接管 connect 事件，隧道域名走 tunnelManager.forward()，其余委托原处理器。
       const httpServer = proxyServerInstance.httpProxyServer;
       const originalConnectHandler = httpServer.listeners('connect')[0];
-      console.log(`[Tunnel-Debug] connect listeners before takeover: ${httpServer.listeners('connect').length}, tunnelManager=${!!tunnelManager}, domains=${tunnelManager ? JSON.stringify(tunnelManager._tunnelDomains) : 'N/A'}`);
       httpServer.removeAllListeners('connect');
       httpServer.on('connect', (req, cltSocket, head) => {
         const host = req.url.split(':')[0];
         const port = parseInt(req.url.split(':')[1], 10) || 443;
-        const isTunnel = tunnelManager && tunnelManager.matchesTunnelDomain(host);
-        console.log(`[Tunnel-Debug] CONNECT ${host}:${port} isTunnel=${isTunnel}`);
 
-        if (isTunnel) {
+        if (tunnelManager && tunnelManager.matchesTunnelDomain(host)) {
           // 隧道域名：通过反向隧道转发到客户端侧处理
           console.log(`[Tunnel] CONNECT ${host}:${port} → 走隧道转发`);
           cltSocket.on('error', (err) => {
