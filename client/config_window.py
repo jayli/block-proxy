@@ -28,6 +28,8 @@ from AppKit import (
     NSBox,
     NSScreen,
     NSApp,
+    NSOnState,
+    NSOffState,
 )
 
 
@@ -39,6 +41,8 @@ WINDOW_STYLE = (
     | NSWindowStyleMaskClosable
     | NSWindowStyleMaskMiniaturizable
 )
+
+PROTOCOLS = [("socks5", "socks5"), ("http", "http"), ("tunnel", "隧道(双向)")]
 
 
 def _center_on_mouse_screen(w, h):
@@ -86,6 +90,13 @@ class ConfigWindowController(NSObject):
 
     def _build_window(self):
         config = self._config
+        server_cfg = config.get("server", {})
+        tunnel_cfg = config.get("tunnel", {})
+        protocol = server_cfg.get("protocol", "socks5")
+
+        self._server_port_value = str(server_cfg.get("port", 8002))
+        self._tunnel_port_value = str(tunnel_cfg.get("server_port", 8003))
+
         w, h = 420, 560
         pos = _center_on_mouse_screen(w, h)
         if pos is None:
@@ -128,7 +139,7 @@ class ConfigWindowController(NSObject):
             cb = NSButton.alloc().initWithFrame_(((CX, y), (FW, 26)))
             cb.setButtonType_(NSButtonTypeSwitch)
             cb.setTitle_(title)
-            cb.setState_(1 if default else 0)
+            cb.setState_(NSOnState if default else NSOffState)
             content.addSubview_(cb)
             return cb
 
@@ -142,10 +153,16 @@ class ConfigWindowController(NSObject):
         self._protocol_popup = NSPopUpButton.alloc().initWithFrame_(
             ((CX, y_pos - 2), (100, 24))
         )
-        self._protocol_popup.addItemsWithTitles_(["socks5", "http"])
-        self._protocol_popup.selectItemWithTitle_(
-            config["server"].get("protocol", "socks5")
-        )
+        self._protocol_popup.setTarget_(self)
+        self._protocol_popup.setAction_("onProtocolChange:")
+
+        # Build items; select by config value
+        selected_idx = 0
+        for idx, (key, title) in enumerate(PROTOCOLS):
+            self._protocol_popup.addItemWithTitle_(title)
+            if key == protocol:
+                selected_idx = idx
+        self._protocol_popup.selectItemAtIndex_(selected_idx)
         content.addSubview_(self._protocol_popup)
         y_pos -= row_h + 6
 
@@ -159,7 +176,10 @@ class ConfigWindowController(NSObject):
         ]:
             label(lbl_text, y_pos)
             secure = key == "password"
-            default = str(config["server"].get(key, ""))
+            if key == "port":
+                default = self._tunnel_port_value if protocol == "tunnel" else self._server_port_value
+            else:
+                default = str(server_cfg.get(key, ""))
             self._fields[key] = text_field(y_pos, default, secure=secure)
             y_pos -= row_h + 4
 
@@ -173,7 +193,7 @@ class ConfigWindowController(NSObject):
             ("http_port", "本地HTTP端口:"),
         ]:
             label(lbl_text, y_pos)
-            default = str(config["local"].get(key, ""))
+            default = str(config.get("local", {}).get(key, ""))
             self._fields[key] = text_field(y_pos, default)
             y_pos -= row_h + 4
 
@@ -182,20 +202,25 @@ class ConfigWindowController(NSObject):
         y_pos -= 32
 
         # Checkboxes
-        self._tls_cb = checkbox(y_pos, "启用 TLS（需节点服务器支持）", config["server"].get("tls", True))
+        is_tunnel = protocol == "tunnel"
+        tls_default = True if is_tunnel else server_cfg.get("tls", True)
+        self._tls_cb = checkbox(y_pos, "启用 TLS（需节点服务器支持）", tls_default)
         y_pos -= row_h + 4
 
-        self._insecure_cb = checkbox(y_pos, "允许不安全连接（跳过证书验证）", config["server"].get("allowInsecure", True))
+        self._insecure_cb = checkbox(y_pos, "允许不安全连接（跳过证书验证）", server_cfg.get("allowInsecure", True))
         y_pos -= row_h + 4
 
-        self._udp_cb = checkbox(y_pos, "启用 UDP", config["local"].get("udp", True))
+        self._udp_cb = checkbox(y_pos, "启用 UDP", config.get("local", {}).get("udp", True))
         y_pos -= row_h + 4
 
         self._proxy_private_cb = checkbox(
             y_pos, "代理私有地址段（192.168.x / 172.16.x / 10.x）",
-            config["local"].get("proxy_private", False),
+            config.get("local", {}).get("proxy_private", False),
         )
         y_pos -= row_h + 4
+
+        if is_tunnel:
+            self._set_tunnel_mode(True)
 
         separator(y_pos)
         y_pos -= 32
@@ -213,6 +238,40 @@ class ConfigWindowController(NSObject):
 
         self._window = win
 
+    # ------------------------------------------------------------------
+    # Protocol change callback
+    # ------------------------------------------------------------------
+
+    def _set_tunnel_mode(self, enabled):
+        """Enable/disable tunnel-only UI state."""
+        if enabled:
+            self._tls_cb.setState_(NSOnState)
+            self._proxy_private_cb.setState_(NSOffState)
+        self._tls_cb.setEnabled_(not enabled)
+        self._insecure_cb.setEnabled_(not enabled)
+        self._udp_cb.setEnabled_(not enabled)
+        self._proxy_private_cb.setEnabled_(not enabled)
+
+    def onProtocolChange_(self, sender):
+        idx = self._protocol_popup.indexOfSelectedItem()
+        key = PROTOCOLS[idx][0]
+        is_tunnel = key == "tunnel"
+
+        if is_tunnel:
+            # Remember current port as server.port, switch to tunnel port
+            self._server_port_value = self._fields["port"].stringValue()
+            self._fields["port"].setStringValue_(self._tunnel_port_value)
+        else:
+            # Remember current port as tunnel port, restore server port
+            self._tunnel_port_value = self._fields["port"].stringValue()
+            self._fields["port"].setStringValue_(self._server_port_value)
+
+        self._set_tunnel_mode(is_tunnel)
+
+    # ------------------------------------------------------------------
+    # Delegate / show / save
+    # ------------------------------------------------------------------
+
     def _delegate(self):
         delegate = _ConfigWindowDelegate.alloc().init()
         self._delegate_ref = delegate  # keep alive
@@ -223,27 +282,53 @@ class ConfigWindowController(NSObject):
         self._window.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
 
+    def _commit_active_editing(self):
+        if hasattr(self, "_window"):
+            self._window.makeFirstResponder_(None)
+
     def saveAndClose_(self, sender):
+        self._commit_active_editing()
         config = self._config
 
-        config["server"]["protocol"] = self._protocol_popup.titleOfSelectedItem()
+        idx = self._protocol_popup.indexOfSelectedItem()
+        protocol = PROTOCOLS[idx][0]
+        is_tunnel = protocol == "tunnel"
+
+        config["server"]["protocol"] = protocol
         config["server"]["address"] = self._fields["address"].stringValue()
-        config["server"]["port"] = int(self._fields["port"].stringValue())
+
+        port_str = self._fields["port"].stringValue()
+        port = int(port_str) if port_str else (8003 if is_tunnel else 8002)
+
+        if is_tunnel:
+            config["server"]["port"] = int(self._server_port_value) if self._server_port_value else 8002
+            if "tunnel" not in config:
+                config["tunnel"] = {}
+            config["tunnel"]["server_port"] = port
+            config["tunnel"]["enabled"] = True
+            # Tunnel always uses TLS
+            config["server"]["tls"] = True
+            config["server"]["allowInsecure"] = bool(self._insecure_cb.state())
+        else:
+            config["server"]["port"] = port
+            if "tunnel" in config:
+                config["tunnel"]["enabled"] = False
+            config["server"]["tls"] = bool(self._tls_cb.state())
+            config["server"]["allowInsecure"] = bool(self._insecure_cb.state())
+
         config["server"]["username"] = self._fields["username"].stringValue()
         config["server"]["password"] = self._fields["password"].stringValue()
-        config["server"]["tls"] = bool(self._tls_cb.state())
-        config["server"]["allowInsecure"] = bool(self._insecure_cb.state())
-        config["local"]["socks_port"] = int(self._fields["socks_port"].stringValue())
-        config["local"]["http_port"] = int(self._fields["http_port"].stringValue())
+        config["local"]["socks_port"] = int(self._fields["socks_port"].stringValue() or "1080")
+        config["local"]["http_port"] = int(self._fields["http_port"].stringValue() or "1087")
         config["local"]["udp"] = bool(self._udp_cb.state())
         config["local"]["proxy_private"] = bool(self._proxy_private_cb.state())
         config["autostart"] = bool(self._autostart_cb.state())
 
-        from autostart import sync
-        sync(getattr(self, "_app_path", None), config["autostart"])
-
         with open(self._config_path, "w") as f:
             json.dump(config, f, indent=2)
+
+        from autostart import sync
+        sync(getattr(self, "_app_path", None), config["autostart"])
 
         self._window.close()
         NSApp.stopModal()

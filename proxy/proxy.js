@@ -25,8 +25,16 @@ const domain = require('./domain.js');
 const wanip = require('./wanip.js');
 const operator = require("./operator.js");
 const mitmRegistry = require("./mitm/registry.js");
+const TunnelServer = require('../tunnel/server');
+const TunnelManager = require('../tunnel/manager');
 let ruleRegistry = mitmRegistry.createRegistry({ config: {} });
 let cliRulePath = null;
+
+// Tunnel module-level variables
+let tunnelServer = null;
+let tunnelManager = null;
+const tunnelCertFile = path.join(__dirname, '../cert/rootCA.crt');
+const tunnelKeyFile = path.join(__dirname, '../cert/rootCA.key');
 
 // 启用全局 keep-alive，使 AnyProxy 内部转发也复用连接
 http.globalAgent.keepAlive = true;
@@ -44,6 +52,7 @@ var anyproxy_started = false;
 var blockHosts = [];
 var proxyPort = 8001; // http 代理端口
 var socks5Port = 8002; // socks5 端口
+var expressPort = 8004; // 管理面板端口
 
 var vpn_proxy = "";
 var devices = [];
@@ -212,6 +221,10 @@ async function loadConfig() {
     enable_socks5: enable_socks5,
     socks5_tls: socks5_tls,
     socks5_port: socks5Port,
+    express_port: expressPort,
+    enable_tunnel: "1",
+    tunnel_port: 8003,
+    tunnel_domains: [],
     rule_modules: {},
     devices: []
   };
@@ -269,10 +282,19 @@ async function loadConfig() {
       enable_mitm = loadedConfig.enable_mitm || "1"; // 默认开启，兼容旧配置文件缺少此字段
       config.enable_mitm = enable_mitm;
 
+      config.enable_tunnel = loadedConfig.enable_tunnel || "1";
+      config.tunnel_port = loadedConfig.tunnel_port || 8003;
+      config.tunnel_domains = loadedConfig.tunnel_domains || [];
+
       config.rule_modules = loadedConfig.rule_modules || {};
 
       socks5Port = loadedConfig.socks5_port;
       config.socks5_port = socks5Port;
+
+      if (loadedConfig.express_port) {
+        expressPort = loadedConfig.express_port;
+        config.express_port = expressPort;
+      }
 
       your_domain = loadedConfig.your_domain;
       config.your_domain = your_domain;
@@ -299,9 +321,13 @@ async function loadConfig() {
         enable_express: enable_express,
         your_domain: your_domain,
         socks5_port: socks5Port,
+        express_port: expressPort,
         enable_socks5: enable_socks5,
         socks5_tls: socks5_tls,
         enable_mitm: enable_mitm,
+        enable_tunnel: "1",
+        tunnel_port: 8003,
+        tunnel_domains: [],
         rule_modules: {},
         vpn_proxy: ""
       });
@@ -528,6 +554,46 @@ function startProxyServer() {
 
     proxyServerInstance.on('ready', () => {
       console.log(`✅ \x1b[32mHTTP 代理服务启动，IP: ${localIp}, 端口: ${proxyPort}\x1b[0m`);
+
+      // 隧道域名 CONNECT 拦截：
+      // AnyProxy 从不读取 customConnect 选项，隧道域名会走默认的 net.connect 到原始服务器（内网不可达）。
+      // 这里在 ready 之后接管 connect 事件，隧道域名走 tunnelManager.forward()，其余委托原处理器。
+      const httpServer = proxyServerInstance.httpProxyServer;
+      const originalConnectHandler = httpServer.listeners('connect')[0];
+      httpServer.removeAllListeners('connect');
+      httpServer.on('connect', (req, cltSocket, head) => {
+        const host = req.url.split(':')[0];
+        const port = parseInt(req.url.split(':')[1], 10) || 443;
+
+        if (tunnelManager && tunnelManager.matchesTunnelDomain(host)) {
+          // 隧道域名：通过反向隧道转发到客户端侧处理
+          console.log(`[Tunnel] CONNECT ${host}:${port} → 走隧道转发`);
+          cltSocket.on('error', (err) => {
+            if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
+              console.log(`[Tunnel] client socket error for ${host}: ${err.message}`);
+            }
+          });
+          cltSocket.write('HTTP/' + req.httpVersion + ' 200 OK\r\n\r\n', () => {
+            const tunnelStream = tunnelManager.forward(host, port, () => {
+              console.log(`[Tunnel] CONNECT OK ${host}:${port}`);
+              if (head && head.length > 0) tunnelStream.write(head);
+              tunnelStream.pipe(cltSocket);
+              cltSocket.pipe(tunnelStream);
+            });
+            tunnelStream.on('error', (err) => {
+              console.log(`[Tunnel] 转发失败 ${host}:${port} - ${err.message}`);
+              try { cltSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n'); } catch (e) {}
+              cltSocket.destroy();
+            });
+          });
+          return;
+        }
+
+        // 非隧道域名：走 AnyProxy 原始 CONNECT 处理器
+        if (originalConnectHandler) {
+          originalConnectHandler(req, cltSocket, head);
+        }
+      });
     });
 
     proxyServerInstance.on('error', (e) => {
@@ -928,9 +994,59 @@ function passRequestWithHttpAgent(requestDetail, isHttps) {
   };
 }
 
+async function initTunnel(config) {
+  await closeTunnel();
+  const enableTunnel = config.enable_tunnel || "1";
+  const tunnelPort = config.tunnel_port || 8003;
+  if (enableTunnel !== "1") return;
+
+  if (!fs.existsSync(tunnelCertFile) || !fs.existsSync(tunnelKeyFile)) {
+    throw new Error(`Tunnel TLS cert/key missing: cert=${tunnelCertFile}, key=${tunnelKeyFile}`);
+  }
+
+  const tunnelCert = fs.readFileSync(tunnelCertFile);
+  const tunnelKey = fs.readFileSync(tunnelKeyFile);
+
+  tunnelServer = new TunnelServer({
+    port: tunnelPort,
+    cert: tunnelCert,
+    key: tunnelKey,
+    credentials: {
+      username: config.auth_username,
+      password: config.auth_password
+    },
+    onConnect: (socket, addr, port) => {
+      tunnelManager.setConnected(socket, true, `${addr}:${port}`);
+      console.log(`[Tunnel] Client connected: ${addr}:${port}`);
+    },
+    onDisconnect: (socket) => {
+      tunnelManager.setConnected(socket, false);
+      console.log('[Tunnel] Client disconnected');
+    }
+  });
+
+  tunnelManager = new TunnelManager(tunnelServer, config);
+  await tunnelServer.start();
+  console.log(`[Tunnel] Server started on port ${tunnelPort}`);
+}
+
+async function closeTunnel() {
+  if (tunnelServer) {
+    await tunnelServer.stop();
+    tunnelServer = null;
+    tunnelManager = null;
+  }
+}
+
 function getAnyProxyOptions() {
   return {
     port: proxyPort,
+    customConnect: (host, port, callback) => {
+      if (tunnelManager && tunnelManager.matchesTunnelDomain(host)) {
+        return tunnelManager.forward(host, port, callback);
+      }
+      return null;
+    },
     rule: {
       responseRules: getResponseRules(),
       // 验证 Proxy-Authorization
@@ -1078,6 +1194,11 @@ function getAnyProxyOptions() {
             // 没有冒号，整个字符串就是 host
             host = requestDetail.host;
           }
+        }
+
+        // Tunnel domains must stay pure TCP. Never MITM/decrypt them.
+        if (tunnelManager && tunnelManager.matchesTunnelDomain(host)) {
+          return false;
         }
 
         // rewrite 规则判断（YouTube 去广告、有道词典 VIP 等）
@@ -1407,6 +1528,7 @@ var LocalProxy = {
     // 每次启动时都重新加载配置并重建规则注册表
     const config = await loadConfig();
     await rebuildRuleRegistry(config);
+    await initTunnel(config);
 
     // 如果代理服务器已在运行，先停止它
     if (proxyServerInstance && proxyServerInstance.httpProxyServer && proxyServerInstance.httpProxyServer.listening) {
@@ -1425,8 +1547,9 @@ var LocalProxy = {
       }
     }
   },
-  restart: async function(callback) { 
+  restart: async function(callback) {
     // 实现重启功能
+    await closeTunnel();
     if (proxyServerInstance) {
       console.log('Restarting proxy server...');
       proxyServerInstance.close();

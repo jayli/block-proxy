@@ -12,6 +12,16 @@ from logger import access_logger, crash_logger
 from traffic_stats import add_bytes, flush as flush_stats, init_writer
 
 
+class AuthFailedError(Exception):
+    """鉴权失败"""
+    pass
+
+
+class NodeUnreachableError(Exception):
+    """节点不可达"""
+    pass
+
+
 def _log_access(dest_addr, dest_port, method, direct, error=None):
     route = "direct" if direct else "proxy"
     if error:
@@ -329,6 +339,7 @@ class ProxyCore:
         self._http_server = None
         self._running = False
         self._server_config = None
+        self._tunnel_config = {}
         self._proxy_private = False
         self._udp_enabled = True
         self._socks_port = 1080
@@ -336,6 +347,10 @@ class ProxyCore:
         self._ssl_ctx = None
         self._semaphore = None
         self._routing = None
+        self._tunnel_client = None
+
+    def set_tunnel_client(self, tc):
+        self._tunnel_client = tc
 
     def _build_ssl_context(self):
         server = self._server_config
@@ -353,6 +368,7 @@ class ProxyCore:
             self.stop()
 
         self._server_config = user_config["server"]
+        self._tunnel_config = user_config.get("tunnel", {})
         local = user_config["local"]
         self._socks_port = local["socks_port"]
         self._http_port = local["http_port"]
@@ -411,59 +427,121 @@ class ProxyCore:
 
     async def _measure_latency(self):
         import time
+        protocol = self._server_config.get("protocol", "socks5")
+        username = self._server_config.get("username", "")
+        password = self._server_config.get("password", "")
+
+        # 隧道协议：复用已建立的隧道连接，通过 CONNECT 握手测量延迟
+        if protocol == "tunnel":
+            if not self._tunnel_client:
+                raise NodeUnreachableError("Tunnel not configured")
+            # 检查隧道当前状态
+            tunnel_status = self._tunnel_client.get_status()
+            if tunnel_status == 'reconnecting':
+                return (None, "reconnecting")
+            if not self._tunnel_client.is_connected():
+                raise NodeUnreachableError("Tunnel not connected")
+            latency = self._tunnel_client.measure_latency(timeout=5)
+            if latency is None:
+                raise NodeUnreachableError("Tunnel CONNECT failed")
+            return (latency, None)
+
+        addr = self._server_config["address"]
+        port = self._server_config["port"]
+
         start = time.monotonic()
+        reader = None
+        writer = None
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(
-                    self._server_config["address"],
-                    self._server_config["port"],
+                    addr, port,
                     ssl=self._ssl_ctx if self._server_config["tls"] else None,
-                    server_hostname=self._server_config["address"] if self._server_config["tls"] else None,
+                    server_hostname=addr if self._server_config["tls"] else None,
                 ),
                 timeout=5,
             )
-            username = self._server_config.get("username", "")
-            password = self._server_config.get("password", "")
-            if username and password:
-                writer.write(b"\x05\x01\x02")
+
+            if protocol == "http":
+                await self._measure_latency_http(reader, writer, username, password)
             else:
-                writer.write(b"\x05\x01\x00")
-            await writer.drain()
-            resp = await asyncio.wait_for(reader.readexactly(2), timeout=5)
-            if resp[0] != 0x05:
-                writer.close()
-                return None
-            if resp[1] == 0x02 and username and password:
-                uname = username.encode("utf-8")
-                passwd = password.encode("utf-8")
-                writer.write(
-                    b"\x01"
-                    + struct.pack("B", len(uname)) + uname
-                    + struct.pack("B", len(passwd)) + passwd
-                )
-                await writer.drain()
-                auth_resp = await asyncio.wait_for(reader.readexactly(2), timeout=5)
-                if auth_resp[1] != 0x00:
-                    writer.close()
-                    return None
+                await self._measure_latency_socks5(reader, writer, username, password)
+
             elapsed = time.monotonic() - start
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except OSError:
-                pass
-            return int(elapsed * 1000)
+            return (int(elapsed * 1000), None)
+        except AuthFailedError:
+            return (None, "auth_failed")
+        except (NodeUnreachableError, ConnectionRefusedError, ConnectionResetError,
+                OSError, asyncio.TimeoutError, TimeoutError):
+            return (None, "unreachable")
         except Exception:
-            return None
+            return (None, "error")
+        finally:
+            if writer:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except OSError:
+                    pass
+
+    async def _measure_latency_socks5(self, reader, writer, username, password):
+        if username and password:
+            writer.write(b"\x05\x01\x02")
+        else:
+            writer.write(b"\x05\x01\x00")
+        await writer.drain()
+        resp = await asyncio.wait_for(reader.readexactly(2), timeout=5)
+        if resp[0] != 0x05:
+            raise Exception("not a SOCKS5 server")
+        if resp[1] == 0x02 and username and password:
+            uname = username.encode("utf-8")
+            passwd = password.encode("utf-8")
+            writer.write(
+                b"\x01"
+                + struct.pack("B", len(uname)) + uname
+                + struct.pack("B", len(passwd)) + passwd
+            )
+            await writer.drain()
+            auth_resp = await asyncio.wait_for(reader.readexactly(2), timeout=5)
+            if auth_resp[1] != 0x00:
+                raise AuthFailedError("SOCKS5 auth failed")
+
+    async def _measure_latency_http(self, reader, writer, username, password):
+        import base64
+        target = "127.0.0.1:80"
+        lines = [f"CONNECT {target} HTTP/1.1", f"Host: {target}"]
+        if username and password:
+            cred = base64.b64encode(f"{username}:{password}".encode()).decode()
+            lines.append(f"Proxy-Authorization: Basic {cred}")
+        lines.append("")
+        lines.append("")
+        writer.write("\r\n".join(lines).encode())
+        await writer.drain()
+
+        status_line = await asyncio.wait_for(reader.readline(), timeout=5)
+        if not status_line:
+            raise NodeUnreachableError("HTTP proxy closed connection")
+        parts = status_line.decode().split(" ", 2)
+        if len(parts) < 2 or not parts[1].startswith("2"):
+            status_code = parts[1] if len(parts) >= 2 else "?"
+            if status_code == "407":
+                raise AuthFailedError(f"HTTP proxy auth failed: {status_line.decode().strip()}")
+            raise NodeUnreachableError(f"HTTP proxy CONNECT failed: {status_line.decode().strip()}")
 
     def measure_latency(self):
+        """测量代理延迟，返回 (protocol_name, latency_ms_or_None, failure_reason_or_None)。代理未运行时返回 None。"""
         if not self._running or not self._loop or not self._loop.is_running():
             return None
+        protocol = self._server_config.get("protocol", "socks5")
+        name_map = {"http": "http", "socks5": "socks5", "tunnel": "隧道"}
+        protocol_name = name_map.get(protocol, protocol)
+
         future = asyncio.run_coroutine_threadsafe(self._measure_latency(), self._loop)
         try:
-            return future.result(timeout=6)
+            latency, failure_reason = future.result(timeout=6)
+            return (protocol_name, latency, failure_reason)
         except Exception:
-            return None
+            return (protocol_name, None, "unreachable")
 
     def _run_loop(self, started_event):
         asyncio.set_event_loop(self._loop)
@@ -537,19 +615,34 @@ class ProxyCore:
             route = self._routing.resolve(dest_addr, is_domain)
             if route == "direct":
                 return "direct"
-            # route == "proxy" or resolve returned default → fall through to upstream
+            # route == "proxy" or resolve returned default → fall through
 
-        # 2. Fallback: upstream proxy
+        # 2. Tunnel check (if protocol is tunnel, always use it)
+        if self._server_config.get("protocol") == "tunnel":
+            return "tunnel"
+
+        # 3. Fallback: upstream proxy
         return "proxy"
 
     async def _connect_target(self, dest_addr, dest_port, is_domain=None, route=None):
         if route is None:
             route = self._select_route(dest_addr, is_domain=is_domain)
+        if route == "tunnel":
+            reader, writer = await self._connect_via_tunnel(dest_addr, dest_port)
+            return reader, writer, "tunnel"
         if route == "direct":
             reader, writer = await connect_direct(dest_addr, dest_port)
             return reader, writer, "direct"
         reader, writer = await self._connect_upstream(dest_addr, dest_port)
         return reader, writer, "proxy"
+
+    async def _connect_via_tunnel(self, dest_addr, dest_port):
+        loop = asyncio.get_event_loop()
+        sock = await loop.run_in_executor(
+            None, self._tunnel_client.forward_connect_sync, dest_addr, dest_port
+        )
+        reader, writer = await asyncio.open_connection(sock=sock)
+        return reader, writer
 
     async def _connect_upstream(self, dest_addr, dest_port):
         protocol = self._server_config.get("protocol", "socks5")
@@ -851,7 +944,12 @@ class ProxyCore:
 
                     _log_access(host, port, method, direct)
 
-                    request_line = f"{method} {path} {parts[2]}\r\n".encode()
+                    if direct:
+                        # 直连目标服务器：用路径格式
+                        request_line = f"{method} {path} {parts[2]}\r\n".encode()
+                    else:
+                        # 下游是代理（tunnel 或 upstream proxy）：保留完整 URL
+                        request_line = f"{method} {url} {parts[2]}\r\n".encode()
                     remote_writer.write(request_line)
                     for h in headers:
                         remote_writer.write(h)

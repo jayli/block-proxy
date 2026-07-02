@@ -24,6 +24,11 @@ DEFAULT_CONFIG = {
         "proxy_rules": [],
         "default": "proxy",
     },
+    "tunnel": {
+        "enabled": False,
+        "server_address": "",
+        "server_port": 8003,
+    },
 }
 
 DEFAULT_CONFIG_DIR = os.path.expanduser(

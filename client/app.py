@@ -34,6 +34,7 @@ from AppKit import (
 from config import Config
 from proxy_core import ProxyCore
 from system_proxy import SystemProxy
+from tunnel_client import TunnelClient
 
 
 def _is_tahoe_or_newer():
@@ -86,6 +87,7 @@ class AppController(NSObject):
         self.config = Config()
         self.config.load()
         self.proxy = ProxyCore()
+        self.tunnel_client = None
         self.sys_proxy = SystemProxy()
         self.connected = False
         self._config_proc = None
@@ -142,8 +144,15 @@ class AppController(NSObject):
         self.toggle_item = self._add_menu_item(
             menu, "启动代理", "toggleProxy:"
         )
-        self._add_menu_item(menu, "Socks/HTTP 节点配置...", "openConfig:")
-        self._add_menu_item(menu, "分流规则...", "openRouting:")
+        menu.addItem_(NSMenuItem.separatorItem())
+
+        config_item = self._add_menu_item(menu, "节点配置...", "openConfig:")
+        config_item.setKeyEquivalent_("p")
+        config_item.setKeyEquivalentModifierMask_(NSCommandKeyMask)
+
+        routing_item = self._add_menu_item(menu, "分流规则...", "openRouting:")
+        routing_item.setKeyEquivalent_("f")
+        routing_item.setKeyEquivalentModifierMask_(NSCommandKeyMask)
         menu.addItem_(NSMenuItem.separatorItem())
 
         self.global_item = self._add_menu_item(
@@ -156,8 +165,9 @@ class AppController(NSObject):
         menu.addItem_(NSMenuItem.separatorItem())
 
         log_item = self._add_menu_item(menu, "查看日志...", "openLog:")
-        from AppKit import NSImage
-        log_image = NSImage.imageWithSystemSymbolName_accessibilityDescription_("doc.text", None)
+        log_image = NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            "doc.text", None
+        )
         if log_image:
             log_item.setImage_(log_image)
         self._add_menu_item(menu, "关于", "showAbout:")
@@ -211,6 +221,14 @@ class AppController(NSObject):
             try:
                 self.proxy.start(self.config.data,
                                   config_dir=os.path.dirname(self.config.config_path))
+
+                if self.config.data.get('tunnel', {}).get('enabled'):
+                    self.tunnel_client = TunnelClient(
+                        self.config.data,
+                        on_status_change=lambda status, detail="": None
+                    )
+                    self.tunnel_client.start()
+                    self.proxy.set_tunnel_client(self.tunnel_client)
             except OSError as e:
                 self._run_on_main(
                     lambda: self._show_notification(
@@ -254,6 +272,10 @@ class AppController(NSObject):
     def _disconnect(self):
         self.sys_proxy.disable()
         self.proxy.stop()
+        self.proxy.set_tunnel_client(None)
+        if self.tunnel_client:
+            self.tunnel_client.stop()
+            self.tunnel_client = None
         self.connected = False
         self.toggle_item.setTitle_("启动代理")
         self._update_icon()
@@ -313,6 +335,7 @@ class AppController(NSObject):
         return "python3"
 
     def _show_config_window(self):
+        self.config.load()
         self.config.save()
         script_path = os.path.join(_bundle_resource_dir(), "config_window.py")
         python_path = self._find_python() if _is_compiled() else sys.executable
@@ -390,6 +413,9 @@ class AppController(NSObject):
             self._routing_proc.terminate()
         if self._log_proc and self._log_proc.poll() is None:
             self._log_proc.terminate()
+        if self.tunnel_client:
+            self.tunnel_client.stop()
+            self.tunnel_client = None
         if self.connected:
             self.sys_proxy.disable()
             self.proxy.stop()
@@ -417,6 +443,23 @@ class AppController(NSObject):
                     continue
                 if self.proxy.is_running():
                     restart_count = 0
+                    # 检查隧道客户端线程是否存活
+                    if self.tunnel_client:
+                        thread = self.tunnel_client._thread
+                        if thread is None or not thread.is_alive():
+                            crash_logger.warning("Tunnel client thread died, restarting")
+                            try:
+                                self.tunnel_client = TunnelClient(
+                                    self.config.data,
+                                    on_status_change=lambda status, detail="": None
+                                )
+                                self.tunnel_client.start()
+                                self.proxy.set_tunnel_client(self.tunnel_client)
+                                crash_logger.warning("Tunnel client restarted")
+                            except Exception as e:
+                                crash_logger.warning(
+                                    "Tunnel client restart failed: %s", e, exc_info=True
+                                )
                     continue
 
                 restart_count += 1
@@ -437,6 +480,14 @@ class AppController(NSObject):
                     self.proxy.stop()
                     self.proxy.start(self.config.data,
                                   config_dir=os.path.dirname(self.config.config_path))
+                    # 重启时同步重建隧道客户端
+                    if self.config.data.get('tunnel', {}).get('enabled'):
+                        self.tunnel_client = TunnelClient(
+                            self.config.data,
+                            on_status_change=lambda status, detail="": None
+                        )
+                        self.tunnel_client.start()
+                        self.proxy.set_tunnel_client(self.tunnel_client)
                     restart_count = 0
                     crash_logger.warning("Proxy restarted successfully")
                 except Exception as e:
@@ -467,16 +518,49 @@ class AppController(NSObject):
 
         def _check():
             try:
-                latency = self.proxy.measure_latency()
+                result = self.proxy.measure_latency()
 
                 def _update():
                     if not self.connected:
                         return
-                    self.toggle_item.setTitle_(
-                        f"关闭代理（{latency}ms）"
-                        if latency is not None
-                        else "关闭代理（超时）"
-                    )
+                    if result is None:
+                        # 代理未运行，不更新标题
+                        return
+                    protocol_name, latency, failure_reason = result
+                    # 中英文之间加空格，中文之间不加空格
+                    if protocol_name.isascii():
+                        proto_display = f"{protocol_name} 已连接"
+                    else:
+                        proto_display = f"{protocol_name}已连接"
+                    if latency is not None:
+                        self.toggle_item.setTitle_(
+                            f"关闭代理（{proto_display} - {latency}ms）"
+                        )
+                    else:
+                        reason_map = {
+                            "auth_failed": "鉴权失败",
+                            "unreachable": "节点不通",
+                            "reconnecting": "重试中...",
+                        }
+                        suffix = reason_map.get(failure_reason)
+                        if suffix:
+                            if protocol_name.isascii():
+                                self.toggle_item.setTitle_(
+                                    f"关闭代理（{protocol_name} 已中断 - {suffix}）"
+                                )
+                            else:
+                                self.toggle_item.setTitle_(
+                                    f"关闭代理（{protocol_name}已中断 - {suffix}）"
+                                )
+                        else:
+                            if protocol_name.isascii():
+                                self.toggle_item.setTitle_(
+                                    f"关闭代理（{protocol_name} 已中断）"
+                                )
+                            else:
+                                self.toggle_item.setTitle_(
+                                    f"关闭代理（{protocol_name}已中断）"
+                                )
 
                 self._run_on_main(_update)
             finally:

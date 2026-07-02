@@ -77,9 +77,13 @@
   "enable_socks5": "1",
   "socks5_tls": "1",
   "socks5_port": 8002,
+  "express_port": 8004,
+  "enable_tunnel": "1",
+  "tunnel_port": 8003,
+  "tunnel_domains": [
+  ],
   "rule_modules": {},
-  "devices": [],
-  "enable_mitm": "1",
-  "login_username": "",
-  "login_password": ""
+  "devices": [
+  ],
+  "enable_mitm": "1"
 }
