@@ -239,14 +239,6 @@ class AppController(NSObject):
                 )
                 return
 
-            if (
-                self.proxy.socks_port != self.config.data["local"]["socks_port"]
-                or self.proxy.http_port != self.config.data["local"]["http_port"]
-            ):
-                self.config.data["local"]["socks_port"] = self.proxy.socks_port
-                self.config.data["local"]["http_port"] = self.proxy.http_port
-                self.config.save()
-
             if self.config.data["mode"] == "global":
                 try:
                     self.sys_proxy.enable(

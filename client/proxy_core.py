@@ -398,13 +398,14 @@ class ProxyCore:
             return
         self._running = False
         if self._loop and self._loop.is_running():
-            def _shutdown():
-                if self._socks_server:
-                    self._socks_server.close()
-                if self._http_server:
-                    self._http_server.close()
+            async def _shutdown():
+                await self._stop_servers()
                 self._loop.stop()
-            self._loop.call_soon_threadsafe(_shutdown)
+            future = asyncio.run_coroutine_threadsafe(_shutdown(), self._loop)
+            try:
+                future.result(timeout=5)
+            except Exception:
+                pass
         if self._thread:
             self._thread.join(timeout=5)
             if not self._thread.is_alive() and self._loop:
