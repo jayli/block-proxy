@@ -2,22 +2,32 @@
 
 ## 概述
 
-iOS 客户端用于平替 macOS 客户端的隧道功能。通过建立与 block-proxy 服务端的反向隧道连接，使外网设备能够通过服务端访问 iOS 所在内网的资源。
+iOS 客户端用于平替 macOS 客户端的核心隧道能力。首版目标是通过建立与 block-proxy 服务端的反向隧道连接，使外网设备能够通过服务端访问 iOS 所在内网的资源。
 
-核心挑战是 iOS 会不定期杀死 App 进程，因此必须使用 iOS 系统级 VPN（Network Extension）来保活隧道进程。
+核心挑战是 iOS 会不定期挂起或终止普通 App 进程，因此使用 iOS 系统级 VPN（Network Extension）承载隧道长连接。`NEPacketTunnelProvider` 能显著提高后台存活概率，但不能把系统重启、Extension 崩溃、内存压力恢复视为确定 SLA；设计必须包含重连、状态恢复和实机保活验证。
 
 ## 设计决策
 
 | 决策项 | 选择 | 理由 |
 |-------|------|------|
-| 功能范围 | 仅隧道功能 | 平替 macOS client，不含本地代理/分流 |
-| 保活方案 | NEPacketTunnelProvider | 系统级保活，Extension 进程不会被轻易杀死 |
-| VPN 路由 | 空路由表 | VPN 仅用于保活，不拦截任何网络流量 |
+| 功能范围 | 首版仅实现服务端回程访问 iOS 内网 | 优先实现 reverse CONNECT；不含本地代理/分流/客户端主动 forward CONNECT |
+| 保活方案 | NEPacketTunnelProvider + 应用层重连 | 系统级 VPN 进程更适合长连接，但仍需处理断线、网络切换和 Extension 被终止 |
+| VPN 路由 | 空路由表（需实机验证） | VPN 仅用于保活，不拦截设备流量；是否能稳定启动和后台存活必须前置验证 |
 | 技术栈 | 纯 Swift + SwiftUI | 与 iOS 系统 API 集成最顺畅 |
-| 网络框架 | Network.framework (NWConnection) | 比 URLSession 更适合长连接场景 |
+| 网络框架 | Network.framework (NWConnection) | 比 URLSession 更适合长连接场景；需显式补齐 TCP 选项、读超时和网络切换处理 |
 | 配置管理 | 手动配置表单 | 简单可靠，支持保存多个配置 |
 | UI 风格 | 极简风格 | 状态显示 + 启停按钮 + 配置页 |
 | 部署方式 | 侧载（TestFlight / Xcode） | 个人使用，不受 App Store 审核限制 |
+
+## 首版范围
+
+首版实现协议子集，而不是完整复制 macOS client 的所有能力：
+
+- 必须支持：AUTH / AUTH_OK / AUTH_FAIL / ERROR、PING / PONG、服务端发起的 CONNECT / DATA / CLOSE / CONNECT_FAILED。
+- 必须支持：与服务端建立 1 到 2 条 TLS tunnel 连接；第二条连接失败时允许单连接运行；双连接降级后尝试补充连接。
+- 必须支持：block-proxy 服务端通过 tunnel 回程访问 iOS 所在内网的 TCP 资源。
+- 暂不支持：iOS 端本地 SOCKS5/HTTP 代理、geosite/geoip 分流、UDP over TCP。
+- 暂不支持：iOS 客户端主动通过 tunnel 发起 forward CONNECT 到服务端侧 AnyProxy。保留 `0x8000-0xFFFE` forward reqid 约定，但首版不分配和使用该区间。
 
 ## 架构
 
@@ -96,16 +106,19 @@ ios-client/
 
 | 场景 | iOS 行为 | 应对 |
 |------|---------|------|
-| App 进入后台 | Network Extension 继续运行 | 无需特殊处理 |
-| 主 App 被系统杀死 | Network Extension 继续运行 | Extension 是独立进程 |
+| App 进入后台 | Network Extension 通常继续运行 | TunnelClient 保持 TLS 长连接并响应 PING |
+| 主 App 被系统杀死 | Extension 是独立进程，通常不受影响 | Extension 内部独立维护配置、状态和重连 |
 | 隧道连接断开 | Extension 进程仍存活 | TunnelClient 内部自动重连 |
-| Extension 进程崩溃 | iOS 自动重启 Extension | `startTunnel()` 被再次调用 |
-| 设备重启 | VPN 配置保持，需用户手动启动 | 可在主 App 启动时自动尝试启动 |
-| 系统内存压力 | Extension 可能被终止 | iOS 会在资源恢复后重启 |
+| 网络切换 | 旧 NWConnection 可能失效 | 监听 connection state/path update，关闭旧连接并按指数退避重连 |
+| Extension 进程崩溃 | 不能假设一定立即自动恢复 | 主 App 下次启动时检查 VPN 状态并提示/尝试恢复 |
+| 设备重启 | VPN 配置保留，但 tunnel 不一定自动启动 | 主 App 启动时检查并允许一键重新启动 |
+| 系统内存压力 | Extension 可能被终止 | 降低内存占用，状态写入 App Group，依赖用户或系统重新拉起后恢复 |
+
+保活验收必须用真机覆盖：锁屏、后台、杀主 App、WiFi/蜂窝切换、30 分钟空闲、服务端重启、设备弱网恢复。
 
 ## 隧道协议
 
-与 macOS client 的 `tunnel_client.py` 完全兼容，使用相同的帧格式和常量。
+首版使用与 macOS client 的 `tunnel_client.py` 和服务端 `tunnel/protocol.js` 相同的帧格式和常量，但只实现服务端回程访问 iOS 内网所需的协议子集。
 
 ### 帧类型
 
@@ -151,6 +164,14 @@ Payload 第一字节为帧类型，后续字段依类型而定：
 - **ERROR**: `[type][msg_len][message]`
 - **PING / PONG / AUTH_OK / AUTH_FAIL**: `[type]`
 
+边界约束：
+
+- 帧 payload 最大为 65535 字节。
+- DATA 帧头部为 3 字节，因此单帧 data 最大为 65532 字节。
+- `uname_len`、`passwd_len`、domain 长度、`msg_len` 都是 1 字节，最大 255 字节。
+- 服务端发起的 reverse reqid 使用 `1...0x7FFF`；Python forward reqid 约定为 `0x8000...0xFFFE`，iOS 首版不使用该区间。
+- IPv4 和 domain 必须完整支持。IPv6 常量保留，但首版不作为验收目标，避免与 Python encode 侧行为不一致。
+
 ### 与 Python 版本的对应关系
 
 | Python (tunnel_client.py) | Swift (TunnelClient.swift) |
@@ -158,17 +179,63 @@ Payload 第一字节为帧类型，后续字段依类型而定：
 | `encode_frame()` / `decode_frame_from_buffer()` | `FrameCodec.encode()` / `FrameCodec.decode()` |
 | `asyncio.open_connection()` | `NWConnection` |
 | `ssl.create_default_context()` | `NWParameters.tls` |
-| `asyncio.Event()` | `CheckedContinuation` |
-| `asyncio.Queue` | `AsyncStream<Data>` |
-| `asyncio.TaskGroup` | `TaskGroup` |
+| `_set_tcp_options()` | `NWParameters` TCP options（尽力启用 noDelay/keepalive，实际间隔受 iOS 和网络类型影响） |
+| `wait_for(read_frame, timeout=60)` | `receive()` 外层包装 Task 超时竞态 |
+| `asyncio.Event()` | per-reqid 状态对象 + continuation/actor |
+| `asyncio.Queue` | per-reqid 有序缓冲 |
+| `asyncio.TaskGroup` | 连接级 task 管理，单个 reqid 的写入必须保持顺序 |
 | `_run_loop()` 指数退避 | `runLoop()` 指数退避 |
 
 ### 关键差异（vs macOS client）
 
-1. **无本地代理服务器**：macOS 在本地启动 SOCKS5/HTTP 代理（1080/1087），iOS 只做反向隧道
+1. **首版协议子集**：macOS `TunnelClient` 同时支持 reverse CONNECT 和客户端主动 forward CONNECT；iOS 首版只支持服务端回程访问 iOS 内网
 2. **NWConnection vs asyncio**：Swift Network framework API 不同，但用 async/await 包装后逻辑一致
-3. **无 UDP over TCP**：iOS 反向隧道场景主要是 TCP，暂不需要 UDP 支持
-4. **无分流引擎**：iOS 不含 geosite/geoip 分流
+3. **无本地代理服务器**：macOS 在本地启动 SOCKS5/HTTP 代理（1080/1087），iOS 首版不暴露本地代理端口
+4. **无 UDP over TCP**：iOS 回程访问场景首版只处理 TCP
+5. **无分流引擎**：iOS 不含 geosite/geoip 分流
+6. **TCP keepalive 不完全等价**：Python 会设置 `TCP_NODELAY`、`SO_KEEPALIVE`、`TCP_KEEPIDLE=60`、`TCP_KEEPINTVL=10`、`TCP_KEEPCNT=3`。iOS 端应尽量通过 `NWParameters` 配置等效能力，但蜂窝网络和系统策略可能覆盖 keepalive 间隔，所以不能只依赖 TCP keepalive，仍需应用层 PING/PONG 和读超时。
+7. **读超时需自行实现**：`NWConnection.receive()` 没有 Python `asyncio.wait_for()` 的内置超时语义。每条 tunnel 连接必须用 receive task 和 sleep task 竞态实现 60 秒 idle timeout，避免对端静默断开时永久等待。
+8. **网络切换不是无缝迁移**：WiFi/蜂窝切换按断线重连处理。可以评估 `multipathServiceType = .handover`，但 block-proxy 服务端未按 MPTCP 设计，首版不承诺连接迁移或无缝切换。
+9. **DNS 行为不同**：`NWConnection` 可能使用 Happy Eyeballs 并优先/并发尝试 IPv6 和 IPv4，和 Python `asyncio.open_connection()` 选择结果可能不同。首版验证需同时覆盖内网 IP 和域名目标，纯 IPv4 内网环境优先使用 IPv4 地址排查问题。
+
+### 帧处理语义
+
+- AUTH 阶段收到 `AUTH_OK` 后连接可用。
+- AUTH 阶段收到 `AUTH_FAIL` 时进入 `authFailed`，不自动重试。
+- AUTH 阶段收到 `ERROR` 时按 Python 行为映射为 `occupied`，停止重试。
+- AUTH 之后收到 `ERROR` 时与 Python 主循环保持兼容：记录日志并忽略，不改变连接状态。
+- 每条 tunnel 连接独立处理 `PING`，并在同一条连接上回复 `PONG`。
+
+### 双连接模型
+
+Python 客户端会优先建立 2 条 tunnel 连接，服务端最多接收 2 条连接并对请求做 round-robin。iOS 首版也应遵循这一模型：
+
+1. 第一条连接必须成功认证，否则 tunnel 不可用。
+2. 第二条连接尽力建立，失败不影响单连接运行。
+3. 任意一条连接断开时，只清理该连接承载的 reqid。
+4. 双连接降级为单连接后，后台尝试补充第二条连接。
+5. 所有连接都断开时进入 `reconnecting`，按 1s、2s、4s、...、60s 指数退避重连。
+6. 服务端 PING 会广播到所有已认证连接；iOS 每条连接必须独立回复 PONG，并分别维护 idle timeout。
+
+### 并发模型
+
+- 每条 tunnel 连接有独立 receive loop，负责帧解码、PING/PONG、连接级 idle timeout 和该连接承载的 reqid 分发。
+- 每个 reqid session 持有自己的 relay Task 引用，直到双向转发和清理结束，避免未持有 Task 导致生命周期不可控。
+- target -> tunnel 和 tunnel -> target 使用独立 Task，但同一方向内的写入必须串行化。
+- 不把所有 reqid 的数据转发放进单一 actor 的长时间同步执行块；需要在大数据转发循环中显式 `Task.yield()`，保持多 reqid 公平调度。
+- 共享状态（连接列表、reqid session 表、状态回调）可由 actor 或串行队列保护，但数据面读写不应长时间占用该 actor。
+
+### Reverse CONNECT 数据流
+
+每个服务端发起的 CONNECT 对应一个独立 reqid session：
+
+1. 收到 CONNECT 后，iOS 连接目标内网地址。
+2. 连接成功后发送 CONNECT_OK；失败或超时发送 CONNECT_FAILED。
+3. target -> tunnel：从目标读取数据，按最大 65532 字节切片成 DATA 帧，按读取顺序写入承载该 reqid 的 tunnel 连接。
+4. tunnel -> target：收到 DATA 后按帧顺序写入目标连接，不能并发乱序写同一个 target；单个逻辑写入可能被服务端拆成多个连续 DATA 帧，必须连续接收并顺序交付。
+5. 任一方向 EOF 或收到 CLOSE 时关闭对应 session，并向对端发送一次 CLOSE；CLOSE 必须幂等。
+6. 收到 CLOSE 后仍可能有 DATA 在途，或本地准备发送 CLOSE 时服务端同时发送 DATA。session 进入 closing 后允许优雅丢弃迟到 DATA，不再写入已关闭 target。
+7. 连接级断开时，只清理该连接上的 active sessions，并向状态层报告降级或重连。
 
 ## VPN 配置
 
@@ -251,7 +318,14 @@ class VPNManager: ObservableObject {
 1. 通过 `NETunnelProviderSession.sendProviderMessage()` 发送查询
 2. Extension 在 `handleAppMessage()` 中返回当前状态
 
-推荐组合使用：App 启动时用 `handleAppMessage` 拉取精确状态，之后依赖 Darwin Notification 实时更新。
+### App → Extension（配置变更）
+
+1. 主 App 将新配置写入 App Group 和 Keychain。
+2. 若 tunnel 正在运行，通过 `sendProviderMessage()` 通知 Extension 配置已变更。
+3. Extension 对比配置版本：仅 UI 状态类配置可热更新；服务器地址、端口、TLS、认证信息变化时，停止当前 tunnel 连接并按新配置重连。
+4. 如果 Extension 未运行，配置留待下次 `startTunnel()` 读取。
+
+推荐组合使用：App 启动时用 `handleAppMessage` 拉取精确状态，之后依赖 Darwin Notification 实时更新；配置变更使用 `sendProviderMessage()` 主动通知。
 
 ## UI 设计
 
