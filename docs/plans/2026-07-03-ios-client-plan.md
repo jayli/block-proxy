@@ -25,6 +25,8 @@
 ### 1.2 VPNManager 基础
 
 - [ ] 实现 `VPNManager.swift`：`setupVPN()`, `startVPN()`, `stopVPN()`
+- [ ] `VPNManager` 按 `providerBundleIdentifier` / `localizedDescription` 查找 BlockProxy manager，不使用 `loadAllFromPreferences().first`
+- [ ] `setupVPN()` 后保存并复用 BlockProxy 对应的 `NETunnelProviderManager`
 - [ ] 首次启动时调用 `setupVPN()` 创建 VPN 配置（系统弹出授权对话框）
 - [ ] 验证 VPN 可以启动/停止（此时 Extension 为空壳，立即 return）
 - [ ] 真机验证空路由表 VPN 配置可以启动，不拦截设备正常网络流量
@@ -43,8 +45,11 @@
 
 ### 2.1 FrameCodec
 
-- [ ] 实现 `FrameCodec.swift`：帧编解码
+- [ ] 实现 `FrameCodec.swift`：单帧 encode/decode + TCP 字节流组帧
 - [ ] 实现所有帧类型的 encode/decode（AUTH, CONNECT, DATA, CLOSE, PING/PONG, ERROR 等）
+- [ ] 实现 per-connection receive buffer，从 `NWConnection.receive()` 交付的任意长度 bytes 中拼接并提取完整帧
+- [ ] 覆盖 TCP 分片/粘包：半个长度前缀、半个 payload、一个 receive 含多帧、帧尾加下一帧前缀
+- [ ] 帧 length 超限或 payload 解码失败时关闭该 tunnel connection 并清理其 reqid sessions
 - [ ] 编写单元测试：验证编解码结果与 Python `tunnel_client.py` 输出一致
 - [ ] 边界测试：最大 payload 65535、最大 DATA 65532、空 DATA、255 字节用户名/密码/domain/message、IPv4/Domain 地址类型
 - [ ] 明确 IPv6 常量保留但首版不作为验收目标
@@ -52,9 +57,11 @@
 ### 2.2 TunnelClient 核心
 
 - [ ] 实现 `TunnelClient.swift`：NWConnection 建立 TCP/TLS 连接
+- [ ] 默认 `allowInsecure=true`；TLS 默认用于加密传输，不强制校验证书链
+- [ ] 实现初始 tunnel connect 10 秒超时
 - [ ] 实现认证流程（发送 AUTH 帧，处理 AUTH_OK / AUTH_FAIL / ERROR）
 - [ ] 实现帧处理主循环（PING/PONG, CONNECT, DATA, CLOSE）
-- [ ] 实现 `NWConnection.receive()` 的 60 秒 idle timeout 包装，避免对端静默断开后永久等待
+- [ ] 实现 60 秒完整帧 idle timeout：开始等待下一完整帧时计时，完整帧 decode 成功后重置；半帧 receive 不重置
 - [ ] 实现重连逻辑（指数退避 1s → 2s → 4s → ... → 60s）
 - [ ] 实现状态回调（connecting, connected, reconnecting, occupied, authFailed, disconnected）
 - [ ] 实现 1 到 2 条 tunnel 连接：第一条必须成功，第二条尽力建立
@@ -64,12 +71,16 @@
 - [ ] 配置/评估 `multipathServiceType = .handover`，但验收按断线重连而不是无缝迁移
 - [ ] 明确帧语义：AUTH 阶段 ERROR = occupied；AUTH 后 ERROR 仅记录日志并忽略
 - [ ] 每条 tunnel 连接独立响应 PING/PONG，并维护独立 idle timeout
+- [ ] 实现 `NWConnection` state 策略：`.waiting` 等待系统恢复并设置 5-10 秒超时，`.failed` 立即重建，`.cancelled` 清理本连接
+- [ ] 实现 `TunnelClient.start()` 生命周期契约：启动后台重连循环并立即返回，不阻塞 `startTunnel()`
+- [ ] 实现 `TunnelClient.stop()` 生命周期契约：停止重连、关闭连接、等待清理完成或 timeout 后强制 cancel
 
 ### 2.3 反向连接处理
 
 - [ ] 实现 `_handleReverseConnect()`：接收服务端 CONNECT 请求
-- [ ] 连接内网目标地址，发送 CONNECT_OK
+- [ ] 连接内网目标地址，30 秒超时；成功发送 CONNECT_OK，失败发送 CONNECT_FAILED
 - [ ] 实现 per-reqid session 管理：active target connection、承载 tunnel connection、关闭状态、relay Task 引用
+- [ ] 实现 per-connection send queue / send actor：所有 tunnel 帧等待上一帧 `NWConnection.send` completion 后再发送
 - [ ] 实现 target → tunnel 转发：按 65532 字节切片 DATA 帧并保持写入顺序
 - [ ] 实现 tunnel → target 转发：同一 reqid 的 DATA 必须按帧顺序写入目标连接，连续多个 DATA 可能属于同一次逻辑写入
 - [ ] 在大数据 relay 循环中显式 `Task.yield()`，避免单个 reqid 长时间占用调度
@@ -79,12 +90,13 @@
 ### 2.4 集成到 PacketTunnelProvider
 
 - [ ] 在 `startTunnel()` 中初始化 TunnelClient
-- [ ] 在 `stopTunnel()` 中停止 TunnelClient
+- [ ] `startTunnel()` 启动 TunnelClient 后即可 completion；连接成功与否通过状态回调更新
+- [ ] `stopTunnel()` 等待 TunnelClient 停止清理完成或达到 timeout 后再 completion
 - [ ] 实现 `handleAppMessage()` 返回状态
-- [ ] 处理 `NWConnection` state/path update：网络切换时关闭旧连接并触发重连
+- [ ] 处理 `NWConnection` state/path update：`.waiting` 给系统恢复窗口，`.failed` 立即重建，网络切换按断线重连
 - [ ] 在 Extension 内部独立维护状态；主 App 不运行时 tunnel 仍可重连
 
-**验收标准**：Extension 可以连接 block-proxy 服务端，建立 1 到 2 条 tunnel，每条连接独立响应 PING/PONG 和 idle timeout，接收反向 CONNECT 请求，连接到内网目标并双向转发数据；断开一条连接时只影响该连接上的请求，断开全部连接后进入自动重连。
+**验收标准**：Extension 可以连接 block-proxy 服务端，建立 1 到 2 条 tunnel，每条连接可从任意 TCP 分片/粘包中提取完整帧，独立响应 PING/PONG 和 idle timeout，接收反向 CONNECT 请求，连接到内网目标并双向转发数据；所有 tunnel send 串行保序；断开一条连接时只影响该连接上的请求，断开全部连接后进入自动重连。
 
 ## 阶段三：UI 与状态通信
 
@@ -106,6 +118,7 @@
 ### 3.3 配置页面
 
 - [ ] 实现 `ConfigView.swift`：配置表单（服务器地址/端口/TLS/认证/隧道参数）
+- [ ] 配置默认值：TLS 开启，`allowInsecure=true`
 - [ ] 保存/加载配置
 - [ ] 输入验证（地址非空、端口范围等）
 
@@ -134,7 +147,7 @@
 
 - [ ] 认证失败：显示明确错误，不自动重试
 - [ ] 端口被占用：显示错误信息
-- [ ] TLS 证书错误：根据 allowInsecure 配置处理
+- [ ] TLS 证书错误：默认 `allowInsecure=true` 不阻断连接；用户关闭 allowInsecure 后按证书错误处理
 - [ ] 内网目标不可达：发送 CONNECT_FAILED 帧
 
 ### 4.3 日志
@@ -156,12 +169,17 @@
 ### 5.1 测试
 
 - [ ] FrameCodec 单元测试：与 Python 输出交叉验证
+- [ ] FrameCodec stream extractor 测试：半个 length prefix、半个 payload、多帧粘包、坏 length、坏 payload
 - [ ] TunnelClient 集成测试：连接 mock server
 - [ ] 端到端测试：iOS client → block-proxy → 内网资源
+- [ ] VPNManager 多配置测试：系统存在多个 VPN 配置时只启停 BlockProxy manager
 - [ ] 双连接测试：服务端显示 2 条连接，reverse CONNECT 可分配到任一连接
 - [ ] 单连接降级测试：断开其中一条 tunnel 后，剩余连接继续服务并尝试补充第二条
 - [ ] PING 广播测试：两条连接都收到服务端 PING，并分别回复 PONG
-- [ ] 静默断开测试：对端不发 RST 时，iOS 端 60 秒 idle timeout 后断开并重连
+- [ ] idle timeout 测试：完整帧到达重置 60 秒 timer；半帧 receive 不重置；对端静默时断开并重连
+- [ ] send 保序测试：连续 DATA/CLOSE/PONG 通过 per-connection send queue 后 wire order 与 enqueue order 一致
+- [ ] NWConnection state 测试：`.waiting` 短暂等待恢复，超时后重连；`.failed` 立即重建
+- [ ] 连接超时测试：初始 tunnel connect 10 秒超时；reverse target connect 30 秒超时
 - [ ] 大数据分片测试：服务端连续发送多个 DATA 帧，iOS 按顺序写入 target
 - [ ] CLOSE 竞态测试：CLOSE 后迟到 DATA 被安全丢弃，不写入已关闭 target
 - [ ] DNS 目标测试：分别测试内网 IPv4 地址和内网域名，记录 IPv6/Happy Eyeballs 造成的差异
@@ -176,6 +194,8 @@
 - [ ] 通过 Xcode 直接安装到设备
 - [ ] 或通过 TestFlight 分发
 - [ ] 编写安装说明（含 VPN 授权步骤）
+- [ ] 部署说明加入 block-proxy 服务端 `tunnel_domains` 配置：在管理页面“隧道域名列表”添加需要回程到 iOS 内网的域名或可匹配目标
+- [ ] 部署说明解释 TLS 默认 `allowInsecure=true`：默认加密但不校验证书链，用户可手动关闭
 
 ## 风险与注意事项
 
@@ -193,3 +213,6 @@
 | `NWConnection.receive()` 无内置读超时 | 静默断线无法发现 | receive task 与 sleep task 竞态实现 60 秒 idle timeout |
 | WiFi/蜂窝切换无法无缝迁移 | 业务连接短暂中断 | 视为断线重连，UI 显示 reconnecting，不承诺 MPTCP 无缝切换 |
 | DNS/Happy Eyeballs 与 Python 选择不同 IP 版本 | 内网域名连接变慢或失败 | 首版验证 IP 和域名两类目标，纯 IPv4 内网优先用 IPv4 地址定位 |
+| TCP 分片/粘包未正确组帧 | 帧解码失败或协议错乱 | per-connection receive buffer 按 length-prefix 提取完整帧 |
+| `NWConnection.send` 并发导致帧乱序 | DATA/CLOSE 顺序错误、连接异常 | per-connection send queue/actor 串行发送并等待 completion |
+| 服务端未配置 `tunnel_domains` | tunnel 已连接但请求不走回程 | 部署文档明确服务端隧道域名配置和端到端验证步骤 |
