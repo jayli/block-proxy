@@ -26,6 +26,7 @@ Every task implicitly includes these requirements from [the design spec](../spec
 - Per-connection send queue: all frames serialized, wire order = enqueue order
 - `start()` must return immediately; `stop()` must complete within timeout or force-cancel
 - Every reverse reqid is bound to the exact `TunnelConnection` that received its CONNECT frame. All `CONNECT_OK`, `CONNECT_FAILED`, `DATA`, and `CLOSE` responses for that reqid MUST be sent on that same tunnel connection.
+- When a tunnel connection disconnects, close only the reverse reqid sessions owned by that exact `TunnelConnection`; do not wait for a full tunnel outage to clean target sockets.
 - The second tunnel connection is fully active, not standby: after authentication it MUST start its own receive loop and respond to PING independently.
 - Do not store tunnel passwords in App Group UserDefaults. `ServerConfig` stores non-sensitive connection settings only; credentials are loaded from Keychain at runtime.
 - Keychain access group is the entitlement value `$(AppIdentifierPrefix)com.blockproxy`, not the App Group identifier `group.com.blockproxy`.
@@ -1501,7 +1502,7 @@ git commit -m "feat(ios): add NWConnection async wrappers and SendQueue actor"
 - Produces: `TunnelConnection` class (one per TLS connection)
 - Produces: `TunnelClient` class (manages 1–2 connections, reconnection)
 
-**State isolation requirement:** `TunnelClient.connections`, replenish state, and status callbacks are touched from receive-loop tasks and reconnect tasks. Implement this state behind an actor or a private serial queue. The snippet below shows control flow; production code must not mutate the dictionary concurrently from arbitrary Tasks.
+**State isolation requirement:** `TunnelClient.connections`, replenish state, and status callbacks are touched from receive-loop tasks and reconnect tasks. Implement this state behind an actor or a private serial queue. The snippet below uses a `ConnectionRegistry` actor; production code must not mutate the dictionary concurrently from arbitrary Tasks.
 
 - [ ] **Step 1: Write failing tests for authentication flow**
 
@@ -1742,18 +1743,23 @@ class TunnelConnection {
     }
 
     /// Receive a single frame with 60-second idle timeout.
-    /// The timeout is reset only after a complete frame is decoded.
+    /// The timeout deadline starts when waiting for the next complete frame.
+    /// Partial receives do not reset it.
     private func receiveWithIdleTimeout(
         connection: NWConnection,
         timeout: TimeInterval
     ) async throws -> Frame {
+        let deadline = Date().addingTimeInterval(timeout)
         while true {
+            let remaining = deadline.timeIntervalSinceNow
+            guard remaining > 0 else { throw TunnelError.idleTimeout }
+
             let data: Data = try await withThrowingTaskGroup(of: Data.self) { group in
                 group.addTask {
                     try await connection.receiveAsync()
                 }
                 group.addTask {
-                    try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                    try await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
                     throw TunnelError.idleTimeout
                 }
                 let result = try await group.next()!
@@ -1808,10 +1814,36 @@ import Network
 
 /// Manages 1–2 tunnel connections to the block-proxy server.
 /// Handles reconnection with exponential backoff and connection replenishment.
+actor ConnectionRegistry {
+    private var connections: [UInt32: TunnelConnection] = [:]
+
+    func add(_ connection: TunnelConnection) {
+        connections[connection.id] = connection
+    }
+
+    func remove(id: UInt32) {
+        connections.removeValue(forKey: id)
+    }
+
+    func isEmpty() -> Bool {
+        connections.isEmpty
+    }
+
+    func snapshot() -> [TunnelConnection] {
+        Array(connections.values)
+    }
+
+    func removeAll() -> [TunnelConnection] {
+        let all = Array(connections.values)
+        connections.removeAll()
+        return all
+    }
+}
+
 class TunnelClient {
     private let config: ServerConfig
     private let credentials: TunnelCredentials
-    private var connections: [UInt32: TunnelConnection] = [:]
+    private let registry = ConnectionRegistry()
     private var isRunning = false
     private var runTask: Task<Void, Never>?
 
@@ -1823,6 +1855,8 @@ class TunnelClient {
     var onData: ((UInt16, Data) -> Void)?
     /// Callback for CLOSE received for a reqid.
     var onClose: ((UInt16) -> Void)?
+    /// Callback when a tunnel connection drops; used to close only sessions bound to that connection.
+    var onConnectionDisconnect: ((TunnelConnection) -> Void)?
 
     init(config: ServerConfig, credentials: TunnelCredentials) {
         self.config = config
@@ -1841,11 +1875,10 @@ class TunnelClient {
     func stop(timeout: TimeInterval = 5) async {
         isRunning = false
         runTask?.cancel()
-        let allConns = connections.values
+        let allConns = await registry.removeAll()
         for conn in allConns {
             conn.close()
         }
-        connections.removeAll()
         // Wait for cleanup with timeout
         try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
     }
@@ -1875,7 +1908,7 @@ class TunnelClient {
     private func connectAndServe() async throws {
         // Establish first connection (mandatory)
         let conn1 = try await createAndAuthConnection()
-        connections[conn1.id] = conn1
+        await registry.add(conn1)
         onStatusChange?(.connected, "")
         Task { await conn1.receiveLoop() }
 
@@ -1883,7 +1916,7 @@ class TunnelClient {
         Task {
             do {
                 let conn2 = try await createAndAuthConnection()
-                connections[conn2.id] = conn2
+                await registry.add(conn2)
                 Task { await conn2.receiveLoop() }
             } catch {
                 // Second connection failure is not fatal
@@ -1892,7 +1925,7 @@ class TunnelClient {
 
         // Stay in this serve cycle until all tunnel connections are gone.
         while isRunning && !Task.isCancelled {
-            if connections.isEmpty { throw TunnelError.connectionClosed }
+            if await registry.isEmpty() { throw TunnelError.connectionClosed }
             try await Task.sleep(nanoseconds: 250_000_000)
         }
     }
@@ -1934,16 +1967,18 @@ class TunnelClient {
     }
 
     private func handleDisconnect(_ connection: TunnelConnection) {
-        connections.removeValue(forKey: connection.id)
-        if connections.isEmpty {
-            onStatusChange?(.disconnected, "")
-        } else {
-            // Try to replenish the lost connection
-            Task {
+        Task {
+            await registry.remove(id: connection.id)
+            onConnectionDisconnect?(connection)
+
+            if await registry.isEmpty() {
+                onStatusChange?(.disconnected, "")
+            } else {
+                // Try to replenish the lost connection
                 for attempt in 1...3 {
                     do {
                         let conn = try await createAndAuthConnection()
-                        connections[conn.id] = conn
+                        await registry.add(conn)
                         Task { await conn.receiveLoop() }
                         return
                     } catch {
@@ -2088,6 +2123,11 @@ Expected: FAIL — `ReverseConnectHandler` not defined.
 
 - [ ] **Step 3: Implement ReverseConnectHandler**
 
+Implementation requirements:
+- `sendToTunnel` is async and every caller awaits it; do not wrap sends in fire-and-forget `Task { ... }`.
+- `RequestSession` stores the owning `TunnelConnection`.
+- `closeSessions(for:)` removes and force-closes only sessions whose `tunnelConnection` identity matches the disconnected connection.
+
 `ios-client/TunnelExtension/ReverseConnectHandler.swift`:
 ```swift
 import Foundation
@@ -2098,12 +2138,12 @@ import Network
 /// bidirectionally with the tunnel, and handles CLOSE idempotently.
 class ReverseConnectHandler {
     /// Callback to send a frame through the exact tunnel connection that owns a reqid.
-    private let sendToTunnel: (TunnelConnection, Frame) -> Void
+    private let sendToTunnel: (TunnelConnection, Frame) async -> Void
 
     private var sessions: [UInt16: RequestSession] = [:]
     private let lock = NSLock()
 
-    init(sendToTunnel: @escaping (TunnelConnection, Frame) -> Void) {
+    init(sendToTunnel: @escaping (TunnelConnection, Frame) async -> Void) {
         self.sendToTunnel = sendToTunnel
     }
 
@@ -2114,8 +2154,6 @@ class ReverseConnectHandler {
                 let targetConn = try await connectToTarget(
                     addr: addr, port: port, timeout: 30
                 )
-                sendToTunnel(connection, .connectOK(reqid: reqid))
-
                 let session = RequestSession(
                     tunnelConnection: connection,
                     reqid: reqid,
@@ -2126,17 +2164,21 @@ class ReverseConnectHandler {
                 sessions[reqid] = session
                 lock.unlock()
 
+                // The session is registered before CONNECT_OK so immediate DATA from
+                // the server can be accepted. Await send to preserve frame ordering.
+                await sendToTunnel(connection, .connectOK(reqid: reqid))
+
                 // Start bidirectional relay
                 await session.startRelay()
 
                 // Relay finished — send CLOSE if not already closed
-                session.sendCloseIfNeeded()
+                await session.sendCloseIfNeeded()
 
                 lock.lock()
                 sessions.removeValue(forKey: reqid)
                 lock.unlock()
             } catch {
-                sendToTunnel(connection, .connectFailed(reqid: reqid))
+                await sendToTunnel(connection, .connectFailed(reqid: reqid))
             }
         }
     }
@@ -2163,6 +2205,23 @@ class ReverseConnectHandler {
         let session = sessions.removeValue(forKey: reqid)
         lock.unlock()
         session?.forceClose()
+    }
+
+    /// Close sessions owned by a disconnected tunnel connection.
+    /// Must be called for every per-connection disconnect, not only on full tunnel stop.
+    func closeSessions(for connection: TunnelConnection) {
+        lock.lock()
+        let owned = sessions.filter { _, session in
+            session.tunnelConnection === connection
+        }
+        for reqid in owned.keys {
+            sessions.removeValue(forKey: reqid)
+        }
+        lock.unlock()
+
+        for session in owned.values {
+            session.forceClose()
+        }
     }
 
     /// Close all active sessions (e.g. on full disconnect).
@@ -2203,13 +2262,13 @@ class RequestSession {
     let tunnelConnection: TunnelConnection
     let reqid: UInt16
     private let targetConnection: NWConnection
-    private let sendToTunnel: (TunnelConnection, Frame) -> Void
+    private let sendToTunnel: (TunnelConnection, Frame) async -> Void
     private var isClosed = false
     private let closeLock = NSLock()
     private let targetWriteQueue: SendQueue
 
     init(tunnelConnection: TunnelConnection, reqid: UInt16, targetConnection: NWConnection,
-         sendToTunnel: @escaping (TunnelConnection, Frame) -> Void) {
+         sendToTunnel: @escaping (TunnelConnection, Frame) async -> Void) {
         self.tunnelConnection = tunnelConnection
         self.reqid = reqid
         self.targetConnection = targetConnection
@@ -2236,7 +2295,7 @@ class RequestSession {
                 while offset < data.count {
                     let end = min(offset + FrameCodec.maxDataChunk, data.count)
                     let chunk = data.subdata(in: offset..<end)
-                    sendToTunnel(tunnelConnection, .data(reqid: reqid, payload: chunk))
+                    await sendToTunnel(tunnelConnection, .data(reqid: reqid, payload: chunk))
                     offset = end
                     // Yield for fair scheduling across multiple reqids
                     if end < data.count { await Task.yield() }
@@ -2269,13 +2328,13 @@ class RequestSession {
         targetConnection.cancel()
     }
 
-    func sendCloseIfNeeded() {
+    func sendCloseIfNeeded() async {
         closeLock.lock()
         let wasClosed = isClosed
         isClosed = true
         closeLock.unlock()
         if !wasClosed {
-            sendToTunnel(tunnelConnection, .close(reqid: reqid))
+            await sendToTunnel(tunnelConnection, .close(reqid: reqid))
         }
         targetConnection.cancel()
     }
@@ -2360,7 +2419,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
             let client = TunnelClient(config: config, credentials: credentials)
             let handler = ReverseConnectHandler { connection, frame in
-                Task { await connection.send(frame) }
+                await connection.send(frame)
             }
 
             client.onStatusChange = { [weak self] status, detail in
@@ -2375,6 +2434,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             client.onClose = { reqid in
                 handler.handleClose(reqid: reqid)
+            }
+            client.onConnectionDisconnect = { connection in
+                handler.closeSessions(for: connection)
             }
 
             self.tunnelClient = client
@@ -2467,6 +2529,15 @@ Expected: FAIL — `StatusObserver` not defined.
 `ios-client/BlockProxy/Services/StatusObserver.swift`:
 ```swift
 import Foundation
+import NetworkExtension
+
+private final class DarwinNotificationToken {
+    weak var observer: StatusObserver?
+
+    init(observer: StatusObserver) {
+        self.observer = observer
+    }
+}
 
 @MainActor
 class StatusObserver: ObservableObject {
@@ -2474,7 +2545,7 @@ class StatusObserver: ObservableObject {
 
     @Published var status: TunnelStatus = .disconnected
 
-    private var observer: NSObjectProtocol?
+    private var observerToken: UnsafeMutableRawPointer?
 
     init() {
         refreshStatus()
@@ -2482,14 +2553,20 @@ class StatusObserver: ObservableObject {
     }
 
     deinit {
-        if let observer {
-            CFNotificationCenterRemoveObserver(
-                CFNotificationCenterGetDarwinNotifyCenter(),
-                Unmanaged.passUnretained(self as AnyObject).toOpaque(),
-                nil, nil
-            )
-            _ = observer // prevent premature dealloc
-        }
+        invalidate()
+    }
+
+    /// Remove the Darwin observer before this object is released.
+    /// Owners should call this explicitly when the observer is no longer needed.
+    func invalidate() {
+        guard let token = observerToken else { return }
+        CFNotificationCenterRemoveObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            token,
+            nil, nil
+        )
+        Unmanaged<DarwinNotificationToken>.fromOpaque(token).release()
+        observerToken = nil
     }
 
     func refreshStatus() {
@@ -2511,18 +2588,22 @@ class StatusObserver: ObservableObject {
     }
 
     private func startObserving() {
+        guard observerToken == nil else { return }
+
         let name = Self.notificationName as CFString
         let callback: CFNotificationCallback = { _, observer, _, _, _ in
             guard let observer else { return }
-            let self_ = Unmanaged<StatusObserver>
+            let token = Unmanaged<DarwinNotificationToken>
                 .fromOpaque(observer).takeUnretainedValue()
             Task { @MainActor in
-                self_.refreshStatus()
+                token.observer?.refreshStatus()
             }
         }
+        let token = Unmanaged.passRetained(DarwinNotificationToken(observer: self)).toOpaque()
+        observerToken = token
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
-            Unmanaged.passUnretained(self).toOpaque(),
+            token,
             callback, name, nil, .deliverImmediately
         )
     }
@@ -2927,7 +3008,10 @@ import Foundation
 class TunnelLogger {
     static let shared = TunnelLogger()
 
-    private let fileHandle: FileHandle?
+    private let logURL: URL?
+    private var fileHandle: FileHandle?
+    private let lock = NSLock()
+    private let maxBytes: UInt64 = 1_048_576
     private let dateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
@@ -2938,19 +3022,38 @@ class TunnelLogger {
         guard let containerURL = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: "group.com.blockproxy")
         else {
+            logURL = nil
             fileHandle = nil
             return
         }
         let logURL = containerURL.appendingPathComponent("tunnel.log")
+        self.logURL = logURL
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         fileHandle = try? FileHandle(forWritingTo: logURL)
         fileHandle?.seekToEndOfFile()
     }
 
     func log(_ message: String, level: String = "INFO") {
+        lock.lock()
+        defer { lock.unlock() }
+        rotateIfNeeded()
         let timestamp = dateFormatter.string(from: Date())
         let line = "[\(timestamp)] [\(level)] \(message)\n"
         fileHandle?.write(line.data(using: .utf8)!)
+    }
+
+    private func rotateIfNeeded() {
+        guard let logURL else { return }
+        let size = (try? FileManager.default
+            .attributesOfItem(atPath: logURL.path)[.size] as? UInt64) ?? 0
+        guard size >= maxBytes else { return }
+
+        fileHandle?.closeFile()
+        let oldURL = logURL.appendingPathExtension("old")
+        try? FileManager.default.removeItem(at: oldURL)
+        try? FileManager.default.moveItem(at: logURL, to: oldURL)
+        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        fileHandle = try? FileHandle(forWritingTo: logURL)
     }
 
     func error(_ message: String) { log(message, level: "ERROR") }
@@ -2999,7 +3102,7 @@ class TunnelLogger {
 
 **重要**: block-proxy 服务端必须配置 `tunnel_domains` 才能将请求路由到 iOS tunnel。
 
-在 block-proxy 管理页面（端口 8003）的"隧道域名列表"中，添加需要回程到 iOS 内网的域名或 IP。
+在 block-proxy 管理页面（Express 默认端口 8004）的"隧道域名列表"中，添加需要回程到 iOS 内网的域名或 IP。iOS 客户端连接的是 tunnel 端口，默认 8003。
 如果未配置，tunnel 虽然连接成功，但请求不会进入 tunnel 回程通道。
 
 ## TLS 说明
@@ -3011,7 +3114,7 @@ class TunnelLogger {
 ## 已知限制
 
 - iOS 系统强制在状态栏显示 VPN 图标（系统行为，无法关闭）
-- Network Extension 内存限制约 15MB（隧道协议轻量，通常不会触发）
+- Network Extension 内存受系统动态限制，需真机压测；实现应保持低内存占用，避免缓存大量 DATA 或无限增长日志
 - WiFi/蜂窝切换时 tunnel 会短暂断开并重连（非无缝迁移）
 - Extension 被系统终止后需用户手动重新启动
 ```
