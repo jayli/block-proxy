@@ -1,0 +1,715 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0266EABCD883C20BA1D0C614 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D8B498C83CDD702FBE6A24A /* KeychainHelper.swift */; };
+		0A21581A71DE58AE59AAEDF7 /* VPNManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9116A931A862A8821680432A /* VPNManagerTests.swift */; };
+		0D2E1D9858B7AA9A8FF9774E /* TunnelStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4504BFF51A86EF4F7ED6710A /* TunnelStatus.swift */; };
+		1141E4E3917710B86945EB2A /* FrameCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D3159DD168869E5AC9BE55 /* FrameCodec.swift */; };
+		193CD207698409EDD19BA8F9 /* VPNManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F82C7EA5CAFCF29DE00625B /* VPNManager.swift */; };
+		21FEEC3CC37E40520C08304B /* ReverseConnectHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6575658D8CFB0E12E799951 /* ReverseConnectHandler.swift */; };
+		29270192C87B57F6D5541A38 /* ConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8694E26DE5B32E804B8734E /* ConfigStore.swift */; };
+		2DEE6E24EBC14AA3AFFC7C59 /* SendQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99249B219B4D8B81D55603D7 /* SendQueueTests.swift */; };
+		2FE3F70965401F28641BEEF2 /* TunnelLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0FA9E7292B39A62FC8F7847 /* TunnelLogger.swift */; };
+		32D144FAAF1D9F93B13834CC /* BlockProxyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74F8A7DBC315FB3A8DD936F9 /* BlockProxyApp.swift */; };
+		39C1CA09975146B1974A30CC /* TunnelViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95086CAC9E5E711D05AAF188 /* TunnelViewModel.swift */; };
+		3EBFECA0DF30F6DFC3244D6D /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D8B498C83CDD702FBE6A24A /* KeychainHelper.swift */; };
+		49B5FA6CDF829B210059D28B /* IntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBB3FB235AE7084695C3D0E5 /* IntegrationTests.swift */; };
+		514C56239D160BCA10F9B8CC /* ConfigStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8694E26DE5B32E804B8734E /* ConfigStore.swift */; };
+		52E48B72F2F44566CFA63B68 /* ServerConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5014E8B86EDB6995CA382C06 /* ServerConfig.swift */; };
+		61A19381A4DCC4EDCAEBD869 /* TunnelClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBE7FC6F58DB2E38E8B8DC6C /* TunnelClient.swift */; };
+		708C08500B2E3B70808BE6CF /* TunnelConnectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F64AC74E443777E648A46402 /* TunnelConnectionTests.swift */; };
+		7863E2E128EB83AF8DFFAD4F /* ConfigStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68E3AD61281B17E1008B16CC /* ConfigStoreTests.swift */; };
+		852F310CE795FCA8A7DF18C7 /* FrameExtractorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 532FE7C8B7A903151EDF24C7 /* FrameExtractorTests.swift */; };
+		8572928FD0637A1365CDD331 /* TunnelStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4504BFF51A86EF4F7ED6710A /* TunnelStatus.swift */; };
+		8A91AF4FF6B1F0B2C44B51C4 /* SendQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37A296D4AF84C52D9FE2B93C /* SendQueue.swift */; };
+		8CE1CB6A53ACA3B38B490BF4 /* TunnelConnection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2B3C93C831F85AC7C42EBB /* TunnelConnection.swift */; };
+		93A5FBD4B8565578217721D2 /* ReverseConnectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E46824751C9E44AAB045EB3A /* ReverseConnectTests.swift */; };
+		9FFA3A7CB436B4C491CE2A92 /* NWConnectionAsync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D9C60008F934AEE967A4B87 /* NWConnectionAsync.swift */; };
+		A221B5E7F635AAA2B671D6B0 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 930BF8908596B6E624766D95 /* ContentView.swift */; };
+		B0BEAB7D3039B8A0FD21CFBA /* StatusObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A85D2191025EAFF81692386B /* StatusObserver.swift */; };
+		B1999367455CC50EA62BCD4B /* FrameCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACD0F041D10D10AA4456F3B1 /* FrameCodecTests.swift */; };
+		B9773EB9D05AA292A1738065 /* StatusObserverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B75E280357B1C2C152E49070 /* StatusObserverTests.swift */; };
+		BA451CD66DC3D80268A48BEA /* ConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 343EA95788FEFAD17C86EE12 /* ConfigView.swift */; };
+		D6C8A3679D242CE8A573663B /* ServerConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5014E8B86EDB6995CA382C06 /* ServerConfig.swift */; };
+		E57D7F02957103EC6BB2543C /* TunnelExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 8FC965242D957F1CC51E4F0D /* TunnelExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		E9AD229B948839C305DC25EC /* StatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F287B0AEE14D3585519E2D5F /* StatusView.swift */; };
+		EDB332EC77A3009E80284AB0 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3DC857AF72E333B5E6DC1F5 /* PacketTunnelProvider.swift */; };
+		F8BB3BC60939E763DD2F3D83 /* FrameExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4550CC35DBF78CDB85A4A752 /* FrameExtractor.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		1D7CE79EF9C9297300378A66 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6DBC30A264B4EE5A3B0F51ED /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 62B25B0BB84013D7DD6D5D25;
+			remoteInfo = TunnelExtension;
+		};
+		BFEE714C78E949DE4983FE25 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6DBC30A264B4EE5A3B0F51ED /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F1F6064CBC8FF26FE3E45F06;
+			remoteInfo = BlockProxy;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		6FB4A8AEA6D4AFA12C4509EC /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				E57D7F02957103EC6BB2543C /* TunnelExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		19D3159DD168869E5AC9BE55 /* FrameCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameCodec.swift; sourceTree = "<group>"; };
+		1ED47B477D52BC411CC25891 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		343EA95788FEFAD17C86EE12 /* ConfigView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigView.swift; sourceTree = "<group>"; };
+		37A296D4AF84C52D9FE2B93C /* SendQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendQueue.swift; sourceTree = "<group>"; };
+		3D8B498C83CDD702FBE6A24A /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
+		4504BFF51A86EF4F7ED6710A /* TunnelStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelStatus.swift; sourceTree = "<group>"; };
+		4550CC35DBF78CDB85A4A752 /* FrameExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameExtractor.swift; sourceTree = "<group>"; };
+		4F82C7EA5CAFCF29DE00625B /* VPNManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VPNManager.swift; sourceTree = "<group>"; };
+		5014E8B86EDB6995CA382C06 /* ServerConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerConfig.swift; sourceTree = "<group>"; };
+		532FE7C8B7A903151EDF24C7 /* FrameExtractorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameExtractorTests.swift; sourceTree = "<group>"; };
+		68E3AD61281B17E1008B16CC /* ConfigStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigStoreTests.swift; sourceTree = "<group>"; };
+		6CB12889D4978B2B5729402C /* BlockProxy.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = BlockProxy.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		74F8A7DBC315FB3A8DD936F9 /* BlockProxyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlockProxyApp.swift; sourceTree = "<group>"; };
+		7D9C60008F934AEE967A4B87 /* NWConnectionAsync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NWConnectionAsync.swift; sourceTree = "<group>"; };
+		7DDAFD05521EAC21E57C8F50 /* BlockProxy.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = BlockProxy.entitlements; sourceTree = "<group>"; };
+		8D2B3C93C831F85AC7C42EBB /* TunnelConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelConnection.swift; sourceTree = "<group>"; };
+		8FC965242D957F1CC51E4F0D /* TunnelExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = TunnelExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		9116A931A862A8821680432A /* VPNManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VPNManagerTests.swift; sourceTree = "<group>"; };
+		930BF8908596B6E624766D95 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		95086CAC9E5E711D05AAF188 /* TunnelViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelViewModel.swift; sourceTree = "<group>"; };
+		99249B219B4D8B81D55603D7 /* SendQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendQueueTests.swift; sourceTree = "<group>"; };
+		A85D2191025EAFF81692386B /* StatusObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusObserver.swift; sourceTree = "<group>"; };
+		ACD0F041D10D10AA4456F3B1 /* FrameCodecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameCodecTests.swift; sourceTree = "<group>"; };
+		B25C950E2F0FAD1467643DA9 /* TunnelExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TunnelExtension.entitlements; sourceTree = "<group>"; };
+		B75E280357B1C2C152E49070 /* StatusObserverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusObserverTests.swift; sourceTree = "<group>"; };
+		CBE7FC6F58DB2E38E8B8DC6C /* TunnelClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelClient.swift; sourceTree = "<group>"; };
+		D83E1DBD5B42197462E148B3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		E0FA9E7292B39A62FC8F7847 /* TunnelLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelLogger.swift; sourceTree = "<group>"; };
+		E46824751C9E44AAB045EB3A /* ReverseConnectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReverseConnectTests.swift; sourceTree = "<group>"; };
+		E6575658D8CFB0E12E799951 /* ReverseConnectHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReverseConnectHandler.swift; sourceTree = "<group>"; };
+		E8694E26DE5B32E804B8734E /* ConfigStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigStore.swift; sourceTree = "<group>"; };
+		EBB3FB235AE7084695C3D0E5 /* IntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntegrationTests.swift; sourceTree = "<group>"; };
+		F07CEE9B019D06B59064ECA7 /* BlockProxyTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = BlockProxyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F287B0AEE14D3585519E2D5F /* StatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusView.swift; sourceTree = "<group>"; };
+		F3DC857AF72E333B5E6DC1F5 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
+		F64AC74E443777E648A46402 /* TunnelConnectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelConnectionTests.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		1CEDF0962B0B2F11AEE11EDE /* Utils */ = {
+			isa = PBXGroup;
+			children = (
+				E8694E26DE5B32E804B8734E /* ConfigStore.swift */,
+				3D8B498C83CDD702FBE6A24A /* KeychainHelper.swift */,
+			);
+			path = Utils;
+			sourceTree = "<group>";
+		};
+		28E8908567C22E874C6D0FD2 /* BlockProxy */ = {
+			isa = PBXGroup;
+			children = (
+				5EEBA225503D891CEAF36905 /* App */,
+				6EC26CB3DE5E851E71031505 /* Models */,
+				3FFFD8F99495C8C47CD36EAD /* Services */,
+				1CEDF0962B0B2F11AEE11EDE /* Utils */,
+				2EA416A485FFAF911A73D4A4 /* ViewModels */,
+				9FC072C6A5A87E099DB27F87 /* Views */,
+				7DDAFD05521EAC21E57C8F50 /* BlockProxy.entitlements */,
+				D83E1DBD5B42197462E148B3 /* Info.plist */,
+			);
+			path = BlockProxy;
+			sourceTree = "<group>";
+		};
+		2EA416A485FFAF911A73D4A4 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				95086CAC9E5E711D05AAF188 /* TunnelViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		3FFFD8F99495C8C47CD36EAD /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A85D2191025EAFF81692386B /* StatusObserver.swift */,
+				4F82C7EA5CAFCF29DE00625B /* VPNManager.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		41D8D89718F80E63C3C16DAE /* BlockProxyTests */ = {
+			isa = PBXGroup;
+			children = (
+				68E3AD61281B17E1008B16CC /* ConfigStoreTests.swift */,
+				ACD0F041D10D10AA4456F3B1 /* FrameCodecTests.swift */,
+				532FE7C8B7A903151EDF24C7 /* FrameExtractorTests.swift */,
+				EBB3FB235AE7084695C3D0E5 /* IntegrationTests.swift */,
+				E46824751C9E44AAB045EB3A /* ReverseConnectTests.swift */,
+				99249B219B4D8B81D55603D7 /* SendQueueTests.swift */,
+				B75E280357B1C2C152E49070 /* StatusObserverTests.swift */,
+				F64AC74E443777E648A46402 /* TunnelConnectionTests.swift */,
+				9116A931A862A8821680432A /* VPNManagerTests.swift */,
+			);
+			path = BlockProxyTests;
+			sourceTree = "<group>";
+		};
+		4BBE1E0E2381F994341DB9B5 /* TunnelExtension */ = {
+			isa = PBXGroup;
+			children = (
+				19D3159DD168869E5AC9BE55 /* FrameCodec.swift */,
+				4550CC35DBF78CDB85A4A752 /* FrameExtractor.swift */,
+				1ED47B477D52BC411CC25891 /* Info.plist */,
+				7D9C60008F934AEE967A4B87 /* NWConnectionAsync.swift */,
+				F3DC857AF72E333B5E6DC1F5 /* PacketTunnelProvider.swift */,
+				E6575658D8CFB0E12E799951 /* ReverseConnectHandler.swift */,
+				37A296D4AF84C52D9FE2B93C /* SendQueue.swift */,
+				CBE7FC6F58DB2E38E8B8DC6C /* TunnelClient.swift */,
+				8D2B3C93C831F85AC7C42EBB /* TunnelConnection.swift */,
+				B25C950E2F0FAD1467643DA9 /* TunnelExtension.entitlements */,
+				E0FA9E7292B39A62FC8F7847 /* TunnelLogger.swift */,
+			);
+			path = TunnelExtension;
+			sourceTree = "<group>";
+		};
+		5EEBA225503D891CEAF36905 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				74F8A7DBC315FB3A8DD936F9 /* BlockProxyApp.swift */,
+				930BF8908596B6E624766D95 /* ContentView.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		6EC26CB3DE5E851E71031505 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				5014E8B86EDB6995CA382C06 /* ServerConfig.swift */,
+				4504BFF51A86EF4F7ED6710A /* TunnelStatus.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		94CDEEF1519D0621372F5179 = {
+			isa = PBXGroup;
+			children = (
+				28E8908567C22E874C6D0FD2 /* BlockProxy */,
+				41D8D89718F80E63C3C16DAE /* BlockProxyTests */,
+				4BBE1E0E2381F994341DB9B5 /* TunnelExtension */,
+				DBA495AE0A99623510C703C2 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		9FC072C6A5A87E099DB27F87 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				343EA95788FEFAD17C86EE12 /* ConfigView.swift */,
+				F287B0AEE14D3585519E2D5F /* StatusView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		DBA495AE0A99623510C703C2 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				6CB12889D4978B2B5729402C /* BlockProxy.app */,
+				F07CEE9B019D06B59064ECA7 /* BlockProxyTests.xctest */,
+				8FC965242D957F1CC51E4F0D /* TunnelExtension.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		62B25B0BB84013D7DD6D5D25 /* TunnelExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1C58A42D67BD5CEA4EFA9C19 /* Build configuration list for PBXNativeTarget "TunnelExtension" */;
+			buildPhases = (
+				D95DD61F63FD7E801E92893F /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TunnelExtension;
+			packageProductDependencies = (
+			);
+			productName = TunnelExtension;
+			productReference = 8FC965242D957F1CC51E4F0D /* TunnelExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		873375B6007DD79739557717 /* BlockProxyTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4DAB330B3A74D221571316CC /* Build configuration list for PBXNativeTarget "BlockProxyTests" */;
+			buildPhases = (
+				14F167D42208BDC19A818460 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				3C20CCB6D4BC0BF613E374F2 /* PBXTargetDependency */,
+			);
+			name = BlockProxyTests;
+			packageProductDependencies = (
+			);
+			productName = BlockProxyTests;
+			productReference = F07CEE9B019D06B59064ECA7 /* BlockProxyTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		F1F6064CBC8FF26FE3E45F06 /* BlockProxy */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C0AB5CB0E6346829BABFFA25 /* Build configuration list for PBXNativeTarget "BlockProxy" */;
+			buildPhases = (
+				B68D50521258C57C50A6893C /* Sources */,
+				6FB4A8AEA6D4AFA12C4509EC /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				69EC8CA1F4E6B77C1091719D /* PBXTargetDependency */,
+			);
+			name = BlockProxy;
+			packageProductDependencies = (
+			);
+			productName = BlockProxy;
+			productReference = 6CB12889D4978B2B5729402C /* BlockProxy.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		6DBC30A264B4EE5A3B0F51ED /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					62B25B0BB84013D7DD6D5D25 = {
+						DevelopmentTeam = "";
+					};
+					873375B6007DD79739557717 = {
+						DevelopmentTeam = "";
+					};
+					F1F6064CBC8FF26FE3E45F06 = {
+						DevelopmentTeam = "";
+					};
+				};
+			};
+			buildConfigurationList = 0929CE2B894E76F3F2C3F548 /* Build configuration list for PBXProject "BlockProxy" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 94CDEEF1519D0621372F5179;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = DBA495AE0A99623510C703C2 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				F1F6064CBC8FF26FE3E45F06 /* BlockProxy */,
+				873375B6007DD79739557717 /* BlockProxyTests */,
+				62B25B0BB84013D7DD6D5D25 /* TunnelExtension */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		14F167D42208BDC19A818460 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7863E2E128EB83AF8DFFAD4F /* ConfigStoreTests.swift in Sources */,
+				B1999367455CC50EA62BCD4B /* FrameCodecTests.swift in Sources */,
+				852F310CE795FCA8A7DF18C7 /* FrameExtractorTests.swift in Sources */,
+				49B5FA6CDF829B210059D28B /* IntegrationTests.swift in Sources */,
+				93A5FBD4B8565578217721D2 /* ReverseConnectTests.swift in Sources */,
+				2DEE6E24EBC14AA3AFFC7C59 /* SendQueueTests.swift in Sources */,
+				B9773EB9D05AA292A1738065 /* StatusObserverTests.swift in Sources */,
+				708C08500B2E3B70808BE6CF /* TunnelConnectionTests.swift in Sources */,
+				0A21581A71DE58AE59AAEDF7 /* VPNManagerTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B68D50521258C57C50A6893C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				32D144FAAF1D9F93B13834CC /* BlockProxyApp.swift in Sources */,
+				514C56239D160BCA10F9B8CC /* ConfigStore.swift in Sources */,
+				BA451CD66DC3D80268A48BEA /* ConfigView.swift in Sources */,
+				A221B5E7F635AAA2B671D6B0 /* ContentView.swift in Sources */,
+				0266EABCD883C20BA1D0C614 /* KeychainHelper.swift in Sources */,
+				52E48B72F2F44566CFA63B68 /* ServerConfig.swift in Sources */,
+				B0BEAB7D3039B8A0FD21CFBA /* StatusObserver.swift in Sources */,
+				E9AD229B948839C305DC25EC /* StatusView.swift in Sources */,
+				0D2E1D9858B7AA9A8FF9774E /* TunnelStatus.swift in Sources */,
+				39C1CA09975146B1974A30CC /* TunnelViewModel.swift in Sources */,
+				193CD207698409EDD19BA8F9 /* VPNManager.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D95DD61F63FD7E801E92893F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				29270192C87B57F6D5541A38 /* ConfigStore.swift in Sources */,
+				1141E4E3917710B86945EB2A /* FrameCodec.swift in Sources */,
+				F8BB3BC60939E763DD2F3D83 /* FrameExtractor.swift in Sources */,
+				3EBFECA0DF30F6DFC3244D6D /* KeychainHelper.swift in Sources */,
+				9FFA3A7CB436B4C491CE2A92 /* NWConnectionAsync.swift in Sources */,
+				EDB332EC77A3009E80284AB0 /* PacketTunnelProvider.swift in Sources */,
+				21FEEC3CC37E40520C08304B /* ReverseConnectHandler.swift in Sources */,
+				8A91AF4FF6B1F0B2C44B51C4 /* SendQueue.swift in Sources */,
+				D6C8A3679D242CE8A573663B /* ServerConfig.swift in Sources */,
+				61A19381A4DCC4EDCAEBD869 /* TunnelClient.swift in Sources */,
+				8CE1CB6A53ACA3B38B490BF4 /* TunnelConnection.swift in Sources */,
+				2FE3F70965401F28641BEEF2 /* TunnelLogger.swift in Sources */,
+				8572928FD0637A1365CDD331 /* TunnelStatus.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		3C20CCB6D4BC0BF613E374F2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F1F6064CBC8FF26FE3E45F06 /* BlockProxy */;
+			targetProxy = BFEE714C78E949DE4983FE25 /* PBXContainerItemProxy */;
+		};
+		69EC8CA1F4E6B77C1091719D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 62B25B0BB84013D7DD6D5D25 /* TunnelExtension */;
+			targetProxy = 1D7CE79EF9C9297300378A66 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0B80A631D86744263DEDD9C9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = BlockProxy/BlockProxy.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BlockProxy/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = BlockProxy;
+				INFOPLIST_KEY_KeychainAccessGroup = "$(AppIdentifierPrefix)com.blockproxy";
+				INFOPLIST_KEY_LSRequiresIPhoneOS = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.blockproxy;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		373FAA832B51097BC46B0431 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		79A2FA2384468203F8B48A8D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		9195BC4F5B4EDCAECA446D67 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = TunnelExtension/TunnelExtension.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TunnelExtension/Info.plist;
+				INFOPLIST_KEY_KeychainAccessGroup = "$(AppIdentifierPrefix)com.blockproxy";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.blockproxy.tunnel-extension";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		9F1F328A4D1570EC39AF50F1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = BlockProxy/BlockProxy.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BlockProxy/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = BlockProxy;
+				INFOPLIST_KEY_KeychainAccessGroup = "$(AppIdentifierPrefix)com.blockproxy";
+				INFOPLIST_KEY_LSRequiresIPhoneOS = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.blockproxy;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		D79100E40468C02AE41FCDF7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = TunnelExtension/TunnelExtension.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TunnelExtension/Info.plist;
+				INFOPLIST_KEY_KeychainAccessGroup = "$(AppIdentifierPrefix)com.blockproxy";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.blockproxy.tunnel-extension";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		E277A44556330016D79C0316 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.blockproxy.tests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BlockProxy.app/BlockProxy";
+			};
+			name = Release;
+		};
+		EBA172C3B56150D378827F26 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.blockproxy.tests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.9;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/BlockProxy.app/BlockProxy";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0929CE2B894E76F3F2C3F548 /* Build configuration list for PBXProject "BlockProxy" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				79A2FA2384468203F8B48A8D /* Debug */,
+				373FAA832B51097BC46B0431 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		1C58A42D67BD5CEA4EFA9C19 /* Build configuration list for PBXNativeTarget "TunnelExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9195BC4F5B4EDCAECA446D67 /* Debug */,
+				D79100E40468C02AE41FCDF7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		4DAB330B3A74D221571316CC /* Build configuration list for PBXNativeTarget "BlockProxyTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EBA172C3B56150D378827F26 /* Debug */,
+				E277A44556330016D79C0316 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C0AB5CB0E6346829BABFFA25 /* Build configuration list for PBXNativeTarget "BlockProxy" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				9F1F328A4D1570EC39AF50F1 /* Debug */,
+				0B80A631D86744263DEDD9C9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 6DBC30A264B4EE5A3B0F51ED /* Project object */;
+}
