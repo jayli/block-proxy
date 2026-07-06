@@ -396,12 +396,17 @@ class ProxyCore:
     def stop(self):
         self._running = False
         if self._loop and self._loop.is_running():
-            # Force stop the loop immediately
-            self._loop.call_soon_threadsafe(self._loop.stop)
+            # 先关闭 server sockets 释放端口，再停 loop
+            async def _shutdown():
+                await self._stop_servers()
+                self._loop.stop()
+            self._loop.call_soon_threadsafe(
+                asyncio.ensure_future, _shutdown()
+            )
 
         if self._thread:
             # Wait for thread to exit with short timeout
-            self._thread.join(timeout=0.5)
+            self._thread.join(timeout=3)
             if not self._thread.is_alive() and self._loop:
                 try:
                     self._loop.close()
@@ -568,10 +573,15 @@ class ProxyCore:
                 return
             except OSError as e:
                 if e.errno == 48 and attempt < max_attempts - 1:
+                    # 关闭本轮已创建的 server，避免 socket 泄漏
                     if self._socks_server:
                         self._socks_server.close()
                         await self._socks_server.wait_closed()
                         self._socks_server = None
+                    if self._http_server:
+                        self._http_server.close()
+                        await self._http_server.wait_closed()
+                        self._http_server = None
                     self._socks_port += 1
                     self._http_port += 1
                 else:

@@ -531,6 +531,18 @@ class AppController(NSObject):
                         )
                         self.tunnel_client.start()
                         self.proxy.set_tunnel_client(self.tunnel_client)
+                    # 重启后端口可能偏移，重新同步系统代理
+                    if self.config.data.get("mode") == "global":
+                        try:
+                            self.sys_proxy.enable(
+                                socks_port=self.proxy.socks_port,
+                                http_port=self.proxy.http_port,
+                            )
+                        except Exception as e:
+                            crash_logger.warning(
+                                "System proxy re-sync failed after restart: %s", e,
+                                exc_info=True,
+                            )
                     restart_count = 0
                     crash_logger.warning("Proxy restarted successfully")
                 except Exception as e:
