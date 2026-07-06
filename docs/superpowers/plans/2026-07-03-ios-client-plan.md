@@ -25,6 +25,11 @@ Every task implicitly includes these requirements from [the design spec](../spec
 - Reverse reqid range: `0x0001–0x7FFF` (server-allocated); forward `0x8000–0xFFFE` reserved but unused in v1
 - Per-connection send queue: all frames serialized, wire order = enqueue order
 - `start()` must return immediately; `stop()` must complete within timeout or force-cancel
+- Every reverse reqid is bound to the exact `TunnelConnection` that received its CONNECT frame. All `CONNECT_OK`, `CONNECT_FAILED`, `DATA`, and `CLOSE` responses for that reqid MUST be sent on that same tunnel connection.
+- The second tunnel connection is fully active, not standby: after authentication it MUST start its own receive loop and respond to PING independently.
+- Do not store tunnel passwords in App Group UserDefaults. `ServerConfig` stores non-sensitive connection settings only; credentials are loaded from Keychain at runtime.
+- Keychain access group is the entitlement value `$(AppIdentifierPrefix)com.blockproxy`, not the App Group identifier `group.com.blockproxy`.
+- The code snippets in this plan are implementation guides. If a snippet conflicts with these global constraints, the global constraints win.
 
 ### Frame Constants (shared across all tasks)
 
@@ -113,6 +118,17 @@ In both targets' Signing & Capabilities, add App Group: `group.com.blockproxy`.
 
 Both targets: General → Minimum Deployments → iOS 17.0.
 
+- [ ] **Step 6.1: Expose resolved Keychain access group to code**
+
+In both targets' Info.plist, add:
+
+```xml
+<key>KeychainAccessGroup</key>
+<string>$(AppIdentifierPrefix)com.blockproxy</string>
+```
+
+Runtime code reads this resolved value. Do not pass the literal string `"$(AppIdentifierPrefix)com.blockproxy"` to Security.framework.
+
 - [ ] **Step 7: Embed extension**
 
 Main app target → General → Frameworks, Libraries, and Embedded Content → Add `TunnelExtension.appex` → Embed Without Signing.
@@ -150,6 +166,8 @@ git commit -m "feat(ios): add Xcode project skeleton with Network Extension targ
 - Produces: `KeychainHelper.save(username:password:)` and `KeychainHelper.load() -> (String, String)?`
 - Consumes: (nothing — foundational layer)
 
+**Security requirement:** `ServerConfig` MUST NOT include password. Store username/password in Keychain only. Extension startup loads `ServerConfig` from App Group UserDefaults and credentials from Keychain, then builds an in-memory runtime configuration.
+
 - [ ] **Step 1: Write failing tests**
 
 `ios-client/BlockProxyTests/ConfigStoreTests.swift`:
@@ -170,8 +188,6 @@ final class ConfigStoreTests: XCTestCase {
         let config = ServerConfig(
             serverHost: "192.168.1.100",
             serverPort: 8003,
-            username: "admin",
-            password: "secret",
             useTLS: true,
             allowInsecure: true,
             tunnelHost: nil,
@@ -263,8 +279,6 @@ import Foundation
 struct ServerConfig: Codable, Equatable {
     var serverHost: String
     var serverPort: UInt16
-    var username: String
-    var password: String
     var useTLS: Bool
     var allowInsecure: Bool
     var tunnelHost: String?
@@ -272,6 +286,11 @@ struct ServerConfig: Codable, Equatable {
 
     var effectiveHost: String { tunnelHost ?? serverHost }
     var effectivePort: UInt16 { tunnelPort ?? serverPort }
+}
+
+struct TunnelCredentials: Equatable {
+    var username: String
+    var password: String
 }
 ```
 
@@ -324,22 +343,24 @@ import Security
 
 class KeychainHelper {
     private let service = "com.blockproxy.credentials"
+    private let accessGroup = Bundle.main.object(forInfoDictionaryKey: "KeychainAccessGroup") as? String
 
     func save(username: String, password: String) throws {
         let passwordData = password.data(using: .utf8)!
-        let query: [String: Any] = [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: username,
         ]
+        if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
         SecItemDelete(query as CFDictionary)
-        let addQuery: [String: Any] = [
+        var addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: username,
             kSecValueData as String: passwordData,
-            kSecAttrAccessGroup as String: "group.com.blockproxy",
         ]
+        if let accessGroup { addQuery[kSecAttrAccessGroup as String] = accessGroup }
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         guard status == errSecSuccess else {
             throw NSError(domain: "KeychainHelper", code: Int(status))
@@ -347,13 +368,14 @@ class KeychainHelper {
     }
 
     func load() -> (username: String, password: String)? {
-        let query: [String: Any] = [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecReturnAttributes as String: true,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
+        if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess,
@@ -519,6 +541,12 @@ git commit -m "feat(ios): add VPNManager with setup/start/stop and bundleId matc
 - Produces: `FrameCodec.encode(_:) -> Data`, `FrameCodec.decode(from:) -> Frame`
 - Produces: `Frame` enum with all associated values
 
+**Validation requirements:**
+- `encodeChecked(_:)` validates every length-limited field, not only DATA: username/password/domain/error message must be <= 255 UTF-8 bytes; payload must be <= 65535 bytes.
+- `encode(_:)` may be a convenience wrapper only for known-safe frames; production send paths should call `encodeChecked(_:)` and surface/drop invalid frames explicitly.
+- IPv4 encode must require exactly 4 octets, each 0...255. Invalid IP strings throw instead of silently producing a malformed CONNECT frame.
+- Decode must reject frames with trailing garbage inside fixed-size payloads (`PING` length other than 1, `CLOSE` length other than 3, etc.) unless compatibility testing proves the server sends such frames.
+
 - [ ] **Step 1: Write failing tests with Python cross-validation vectors**
 
 `ios-client/BlockProxyTests/FrameCodecTests.swift`:
@@ -617,6 +645,18 @@ final class FrameCodecTests: XCTestCase {
     func testEncodeDataExceedingMaxThrows() {
         let payload = Data(repeating: 0xAA, count: 65533)
         XCTAssertThrowsError(try FrameCodec.encodeChecked(.data(reqid: 1, payload: payload)))
+    }
+
+    func testEncodeRejectsTooLongAuthFields() {
+        let username = String(repeating: "a", count: 256)
+        XCTAssertThrowsError(try FrameCodec.encodeChecked(.auth(username: username, password: "p")))
+    }
+
+    func testEncodeRejectsInvalidIPv4() {
+        XCTAssertThrowsError(try FrameCodec.encodeChecked(.connect(
+            reqid: 1, addr: .ipv4("192.168.1"), port: 80)))
+        XCTAssertThrowsError(try FrameCodec.encodeChecked(.connect(
+            reqid: 1, addr: .ipv4("192.168.1.999"), port: 80)))
     }
 
     // MARK: - Decode tests
@@ -784,7 +824,9 @@ enum FrameCodec {
     // MARK: - Encode
 
     static func encode(_ frame: Frame) -> Data {
-        let payload = encodePayload(frame)
+        // Convenience wrapper for tests and known-safe frames.
+        // Production send paths call encodeChecked(_:) and handle errors.
+        let payload = try! encodePayloadChecked(frame)
         var result = Data(capacity: 2 + payload.count)
         let length = UInt16(payload.count)
         result.append(UInt8(length >> 8))
@@ -795,13 +837,19 @@ enum FrameCodec {
 
     /// Encode with size validation — throws if DATA payload exceeds maxDataChunk.
     static func encodeChecked(_ frame: Frame) throws -> Data {
-        if case .data(_, let payload) = frame, payload.count > maxDataChunk {
+        let payload = try encodePayloadChecked(frame)
+        guard payload.count <= maxPayloadSize else {
             throw TunnelError.frameTooLarge
         }
-        return encode(frame)
+        var result = Data(capacity: 2 + payload.count)
+        let length = UInt16(payload.count)
+        result.append(UInt8(length >> 8))
+        result.append(UInt8(length & 0xFF))
+        result.append(payload)
+        return result
     }
 
-    private static func encodePayload(_ frame: Frame) -> Data {
+    private static func encodePayloadChecked(_ frame: Frame) throws -> Data {
         switch frame {
         case .connect(let reqid, let addr, let port):
             var d = Data([FrameType.connect.rawValue])
@@ -810,10 +858,12 @@ enum FrameCodec {
             case .ipv4(let ip):
                 d.append(AddressType.ipv4.rawValue)
                 let parts = ip.split(separator: ".").compactMap { UInt8($0) }
+                guard parts.count == 4 else { throw TunnelError.invalidAddressType }
                 d.append(contentsOf: parts)
             case .domain(let host):
                 d.append(AddressType.domain.rawValue)
                 let hostBytes = Array(host.utf8)
+                guard hostBytes.count <= 255 else { throw TunnelError.frameTooLarge }
                 d.append(UInt8(hostBytes.count))
                 d.append(contentsOf: hostBytes)
             case .ipv6(let ip):
@@ -824,6 +874,7 @@ enum FrameCodec {
             return d
 
         case .data(let reqid, let payload):
+            guard payload.count <= maxDataChunk else { throw TunnelError.frameTooLarge }
             var d = Data(capacity: 3 + payload.count)
             d.append(FrameType.data.rawValue)
             d.append(UInt8(reqid >> 8)); d.append(UInt8(reqid & 0xFF))
@@ -851,6 +902,9 @@ enum FrameCodec {
         case .auth(let username, let password):
             let uBytes = Array(username.utf8)
             let pBytes = Array(password.utf8)
+            guard uBytes.count <= 255, pBytes.count <= 255 else {
+                throw TunnelError.frameTooLarge
+            }
             var d = Data(capacity: 1 + 1 + uBytes.count + 1 + pBytes.count)
             d.append(FrameType.auth.rawValue)
             d.append(UInt8(uBytes.count))
@@ -867,6 +921,7 @@ enum FrameCodec {
 
         case .error(let message):
             let mBytes = Array(message.utf8)
+            guard mBytes.count <= 255 else { throw TunnelError.frameTooLarge }
             var d = Data(capacity: 2 + mBytes.count)
             d.append(FrameType.error.rawValue)
             d.append(UInt8(mBytes.count))
@@ -1287,26 +1342,49 @@ import Network
 extension NWConnection {
     /// Connect with a timeout. Throws connectTimeout if not ready within the given duration.
     func connectAsync(timeout: TimeInterval) async throws {
+        final class ResumeBox: @unchecked Sendable {
+            private let lock = NSLock()
+            private var didResume = false
+            func resumeOnce(_ body: () -> Void) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !didResume else { return }
+                didResume = true
+                body()
+            }
+        }
+
+        let box = ResumeBox()
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
                 try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-                    self.start(queue: .global())
                     self.stateUpdateHandler = { state in
                         switch state {
                         case .ready:
-                            cont.resume()
+                            box.resumeOnce {
+                                self.stateUpdateHandler = nil
+                                cont.resume()
+                            }
                         case .failed(let error):
-                            cont.resume(throwing: error)
+                            box.resumeOnce {
+                                self.stateUpdateHandler = nil
+                                cont.resume(throwing: error)
+                            }
                         case .cancelled:
-                            cont.resume(throwing: TunnelError.connectionClosed)
+                            box.resumeOnce {
+                                self.stateUpdateHandler = nil
+                                cont.resume(throwing: TunnelError.connectionClosed)
+                            }
                         default:
                             break
                         }
                     }
+                    self.start(queue: .global())
                 }
             }
             group.addTask {
                 try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                self.cancel()
                 throw TunnelError.connectTimeout
             }
             try await group.next()
@@ -1422,6 +1500,8 @@ git commit -m "feat(ios): add NWConnection async wrappers and SendQueue actor"
 - Consumes: `ServerConfig` (Task 2)
 - Produces: `TunnelConnection` class (one per TLS connection)
 - Produces: `TunnelClient` class (manages 1–2 connections, reconnection)
+
+**State isolation requirement:** `TunnelClient.connections`, replenish state, and status callbacks are touched from receive-loop tasks and reconnect tasks. Implement this state behind an actor or a private serial queue. The snippet below shows control flow; production code must not mutate the dictionary concurrently from arbitrary Tasks.
 
 - [ ] **Step 1: Write failing tests for authentication flow**
 
@@ -1584,9 +1664,13 @@ class TunnelConnection {
     func connect(timeout: TimeInterval) async throws {
         let nwHost = NWEndpoint.Host(host)
         let nwPort = NWEndpoint.Port(rawValue: port)!
-        let params: NWParameters = useTLS ? .tls : .tcp
+        let params: NWParameters
         if useTLS {
             let tlsOptions = NWProtocolTLS.Options()
+            sec_protocol_options_set_min_tls_protocol_version(
+                tlsOptions.securityProtocolOptions,
+                .TLSv12
+            )
             if allowInsecure {
                 sec_protocol_options_set_verify_block(
                     tlsOptions.securityProtocolOptions,
@@ -1594,9 +1678,13 @@ class TunnelConnection {
                     .global()
                 )
             }
-            params.defaultProtocolStack.applicationProtocols.insert(
-                NWProtocolTLS.Options(), at: 0
-            )
+            params = NWParameters(tls: tlsOptions, tcp: NWProtocolTCP.Options())
+        } else {
+            params = .tcp
+        }
+        if let tcp = params.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+            tcp.noDelay = true
+            tcp.enableKeepalive = true
         }
         params.requiredInterfaceType = nil
         params.prohibitExpensivePaths = false
@@ -1693,8 +1781,12 @@ class TunnelConnection {
 
     /// Enqueue a frame for sending via the send queue (preserves wire order).
     func send(_ frame: Frame) async {
-        let data = FrameCodec.encode(frame)
-        await sendQueue?.enqueue(data)
+        do {
+            let data = try FrameCodec.encodeChecked(frame)
+            await sendQueue?.enqueue(data)
+        } catch {
+            // Logging is wired in Task 13. Until then, invalid outbound frames are dropped.
+        }
     }
 
     func close() {
@@ -1718,6 +1810,7 @@ import Network
 /// Handles reconnection with exponential backoff and connection replenishment.
 class TunnelClient {
     private let config: ServerConfig
+    private let credentials: TunnelCredentials
     private var connections: [UInt32: TunnelConnection] = [:]
     private var isRunning = false
     private var runTask: Task<Void, Never>?
@@ -1731,8 +1824,9 @@ class TunnelClient {
     /// Callback for CLOSE received for a reqid.
     var onClose: ((UInt16) -> Void)?
 
-    init(config: ServerConfig) {
+    init(config: ServerConfig, credentials: TunnelCredentials) {
         self.config = config
+        self.credentials = credentials
     }
 
     /// Start the background reconnection loop. Returns immediately.
@@ -1783,27 +1877,32 @@ class TunnelClient {
         let conn1 = try await createAndAuthConnection()
         connections[conn1.id] = conn1
         onStatusChange?(.connected, "")
+        Task { await conn1.receiveLoop() }
 
         // Try second connection (best-effort)
         Task {
             do {
                 let conn2 = try await createAndAuthConnection()
                 connections[conn2.id] = conn2
+                Task { await conn2.receiveLoop() }
             } catch {
                 // Second connection failure is not fatal
             }
         }
 
-        // Run receive loop for first connection (blocks until disconnect)
-        await conn1.receiveLoop()
+        // Stay in this serve cycle until all tunnel connections are gone.
+        while isRunning && !Task.isCancelled {
+            if connections.isEmpty { throw TunnelError.connectionClosed }
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
     }
 
     private func createAndAuthConnection() async throws -> TunnelConnection {
         let conn = TunnelConnection(
             host: config.effectiveHost,
             port: config.effectivePort,
-            username: config.username,
-            password: config.password,
+            username: credentials.username,
+            password: credentials.password,
             useTLS: config.useTLS,
             allowInsecure: config.allowInsecure
         )
@@ -1905,11 +2004,16 @@ final class ReverseConnectTests: XCTestCase {
         }
 
         var sentFrames: [Frame] = []
-        let handler = ReverseConnectHandler { frame in
+        let mockConnection = TunnelConnection(
+            host: "127.0.0.1", port: 1,
+            username: "u", password: "p",
+            useTLS: false, allowInsecure: true
+        )
+        let handler = ReverseConnectHandler { _, frame in
             sentFrames.append(frame)
         }
 
-        handler.handleConnect(reqid: 1, addr: .ipv4("127.0.0.1"), port: port)
+        handler.handleConnect(connection: mockConnection, reqid: 1, addr: .ipv4("127.0.0.1"), port: port)
 
         // Wait for connection + CONNECT_OK
         try await Task.sleep(nanoseconds: 500_000_000)
@@ -1926,12 +2030,17 @@ final class ReverseConnectTests: XCTestCase {
 
     func testConnectFailedOnUnreachable() async throws {
         var sentFrames: [Frame] = []
-        let handler = ReverseConnectHandler { frame in
+        let mockConnection = TunnelConnection(
+            host: "127.0.0.1", port: 1,
+            username: "u", password: "p",
+            useTLS: false, allowInsecure: true
+        )
+        let handler = ReverseConnectHandler { _, frame in
             sentFrames.append(frame)
         }
 
         // Port 1 is almost certainly unreachable
-        handler.handleConnect(reqid: 2, addr: .ipv4("127.0.0.1"), port: 1)
+        handler.handleConnect(connection: mockConnection, reqid: 2, addr: .ipv4("127.0.0.1"), port: 1)
 
         try await Task.sleep(nanoseconds: 2_000_000_000)
 
@@ -1943,7 +2052,7 @@ final class ReverseConnectTests: XCTestCase {
 
     func testCloseIdempotent() async throws {
         var closeCount = 0
-        let handler = ReverseConnectHandler { frame in
+        let handler = ReverseConnectHandler { _, frame in
             if case .close = frame { closeCount += 1 }
         }
         handler.closeSession(reqid: 99)
@@ -1988,26 +2097,27 @@ import Network
 /// Each session opens a TCP connection to a local target, relays data
 /// bidirectionally with the tunnel, and handles CLOSE idempotently.
 class ReverseConnectHandler {
-    /// Callback to send a frame through the tunnel.
-    private let sendToTunnel: (Frame) -> Void
+    /// Callback to send a frame through the exact tunnel connection that owns a reqid.
+    private let sendToTunnel: (TunnelConnection, Frame) -> Void
 
     private var sessions: [UInt16: RequestSession] = [:]
     private let lock = NSLock()
 
-    init(sendToTunnel: @escaping (Frame) -> Void) {
+    init(sendToTunnel: @escaping (TunnelConnection, Frame) -> Void) {
         self.sendToTunnel = sendToTunnel
     }
 
     /// Handle a CONNECT request from the server.
-    func handleConnect(reqid: UInt16, addr: FrameAddress, port: UInt16) {
+    func handleConnect(connection: TunnelConnection, reqid: UInt16, addr: FrameAddress, port: UInt16) {
         Task {
             do {
                 let targetConn = try await connectToTarget(
                     addr: addr, port: port, timeout: 30
                 )
-                sendToTunnel(.connectOK(reqid: reqid))
+                sendToTunnel(connection, .connectOK(reqid: reqid))
 
                 let session = RequestSession(
+                    tunnelConnection: connection,
                     reqid: reqid,
                     targetConnection: targetConn,
                     sendToTunnel: sendToTunnel
@@ -2026,7 +2136,7 @@ class ReverseConnectHandler {
                 sessions.removeValue(forKey: reqid)
                 lock.unlock()
             } catch {
-                sendToTunnel(.connectFailed(reqid: reqid))
+                sendToTunnel(connection, .connectFailed(reqid: reqid))
             }
         }
     }
@@ -2071,8 +2181,12 @@ class ReverseConnectHandler {
     ) async throws -> NWConnection {
         let host: NWEndpoint.Host
         switch addr {
-        case .ipv4(let ip), .ipv6(let ip):
-            host = .ipv4(IPv4Address(ip)!)  // simplified; ipv6 needs separate handling
+        case .ipv4(let ip):
+            guard let ipv4 = IPv4Address(ip) else { throw TunnelError.invalidAddressType }
+            host = .ipv4(ipv4)
+        case .ipv6(let ip):
+            guard let ipv6 = IPv6Address(ip) else { throw TunnelError.invalidAddressType }
+            host = .ipv6(ipv6)
         case .domain(let name):
             host = .name(name, nil)
         }
@@ -2086,32 +2200,29 @@ class ReverseConnectHandler {
 
 /// Per-reqid session holding the target connection and relay tasks.
 class RequestSession {
+    let tunnelConnection: TunnelConnection
     let reqid: UInt16
     private let targetConnection: NWConnection
-    private let sendToTunnel: (Frame) -> Void
+    private let sendToTunnel: (TunnelConnection, Frame) -> Void
     private var isClosed = false
     private let closeLock = NSLock()
-    private var relayTaskTargetToTunnel: Task<Void, Never>?
-    private var relayTaskTunnelToTarget: Task<Void, Never>?
-    private let targetWriteQueue = SendQueue { _ in } // placeholder, replaced in init
+    private let targetWriteQueue: SendQueue
 
-    init(reqid: UInt16, targetConnection: NWConnection,
-         sendToTunnel: @escaping (Frame) -> Void) {
+    init(tunnelConnection: TunnelConnection, reqid: UInt16, targetConnection: NWConnection,
+         sendToTunnel: @escaping (TunnelConnection, Frame) -> Void) {
+        self.tunnelConnection = tunnelConnection
         self.reqid = reqid
         self.targetConnection = targetConnection
         self.sendToTunnel = sendToTunnel
+        self.targetWriteQueue = SendQueue { data in
+            try await targetConnection.sendAsync(data)
+        }
     }
 
     func startRelay() async {
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { [weak self] in
-                await self?.relayTargetToTunnel()
-            }
-            group.addTask { [weak self] in
-                await self?.relayTunnelToTarget()
-            }
-            // Wait for either direction to finish
-        }
+        // Tunnel -> target is driven by handleData()/handleClose().
+        // This method waits for target -> tunnel to end, then caller sends CLOSE if needed.
+        await relayTargetToTunnel()
     }
 
     /// Read from target TCP connection, send as DATA frames through tunnel.
@@ -2125,7 +2236,7 @@ class RequestSession {
                 while offset < data.count {
                     let end = min(offset + FrameCodec.maxDataChunk, data.count)
                     let chunk = data.subdata(in: offset..<end)
-                    sendToTunnel(.data(reqid: reqid, payload: chunk))
+                    sendToTunnel(tunnelConnection, .data(reqid: reqid, payload: chunk))
                     offset = end
                     // Yield for fair scheduling across multiple reqids
                     if end < data.count { await Task.yield() }
@@ -2136,24 +2247,6 @@ class RequestSession {
         }
     }
 
-    /// Placeholder for tunnel-to-target direction.
-    /// Actual DATA frames arrive via handleData() → writeToTarget().
-    private func relayTunnelToTarget() async {
-        // This task just waits until the session is closed.
-        // Data flows through writeToTarget() called from the receive loop.
-        while true {
-            do {
-                try await Task.sleep(nanoseconds: 1_000_000_000)
-                closeLock.lock()
-                let closed = isClosed
-                closeLock.unlock()
-                if closed { return }
-            } catch {
-                return
-            }
-        }
-    }
-
     /// Write DATA from tunnel to target (called by ReverseConnectHandler.handleData).
     func writeToTarget(_ data: Data) {
         closeLock.lock()
@@ -2161,9 +2254,7 @@ class RequestSession {
         closeLock.unlock()
         if closed { return }  // Gracefully discard late DATA after CLOSE
 
-        Task {
-            try? await targetConnection.sendAsync(data)
-        }
+        Task { await targetWriteQueue.enqueue(data) }
     }
 
     /// Handle CLOSE from tunnel side.
@@ -2184,7 +2275,7 @@ class RequestSession {
         isClosed = true
         closeLock.unlock()
         if !wasClosed {
-            sendToTunnel(.close(reqid: reqid))
+            sendToTunnel(tunnelConnection, .close(reqid: reqid))
         }
         targetConnection.cancel()
     }
@@ -2194,8 +2285,6 @@ class RequestSession {
         isClosed = true
         closeLock.unlock()
         targetConnection.cancel()
-        relayTaskTargetToTunnel?.cancel()
-        relayTaskTunnelToTarget?.cancel()
     }
 }
 ```
@@ -2258,11 +2347,20 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     userInfo: [NSLocalizedDescriptionKey: "No configuration found"]
                 ))
             }
+            guard let loadedCredentials = KeychainHelper().load() else {
+                return completionHandler(NSError(
+                    domain: "PacketTunnelProvider", code: -2,
+                    userInfo: [NSLocalizedDescriptionKey: "No credentials found"]
+                ))
+            }
+            let credentials = TunnelCredentials(
+                username: loadedCredentials.username,
+                password: loadedCredentials.password
+            )
 
-            let client = TunnelClient(config: config)
-            let handler = ReverseConnectHandler { frame in
-                // Send frame via the first available tunnel connection
-                Task { await self.sendFrame(frame) }
+            let client = TunnelClient(config: config, credentials: credentials)
+            let handler = ReverseConnectHandler { connection, frame in
+                Task { await connection.send(frame) }
             }
 
             client.onStatusChange = { [weak self] status, detail in
@@ -2270,7 +2368,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 self?.notifyStatusChange()
             }
             client.onReverseConnect = { connection, reqid, addr, port in
-                handler.handleConnect(reqid: reqid, addr: addr, port: port)
+                handler.handleConnect(connection: connection, reqid: reqid, addr: addr, port: port)
             }
             client.onData = { reqid, data in
                 handler.handleData(reqid: reqid, data: data)
@@ -2301,11 +2399,6 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let status = ConfigStore.shared.loadStatus()
         let data = try? JSONEncoder().encode(status)
         completionHandler?(data)
-    }
-
-    private func sendFrame(_ frame: Frame) async {
-        // Route through tunnel client's first available connection
-        // This is simplified; production code should pick a specific connection
     }
 
     private func notifyStatusChange() {
@@ -2592,13 +2685,24 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var vpnManager: VPNManager
     @EnvironmentObject var statusObserver: StatusObserver
+
+    var body: some View {
+        ContentBody(vpnManager: vpnManager, statusObserver: statusObserver)
+    }
+}
+
+private struct ContentBody: View {
+    @ObservedObject var vpnManager: VPNManager
+    @ObservedObject var statusObserver: StatusObserver
     @State private var showConfig = false
     @StateObject private var viewModel: TunnelViewModel
 
-    init() {
-        // Placeholder — actual init uses environment objects
+    init(vpnManager: VPNManager, statusObserver: StatusObserver) {
+        self.vpnManager = vpnManager
+        self.statusObserver = statusObserver
         _viewModel = StateObject(wrappedValue: TunnelViewModel(
-            vpnManager: VPNManager(), statusObserver: StatusObserver()
+            vpnManager: vpnManager,
+            statusObserver: statusObserver
         ))
     }
 
@@ -2752,12 +2856,14 @@ struct ConfigView: View {
         if let config = ConfigStore.shared.load() {
             serverHost = config.serverHost
             serverPort = "\(config.serverPort)"
-            username = config.username
-            password = config.password
             useTLS = config.useTLS
             allowInsecure = config.allowInsecure
             tunnelHost = config.tunnelHost ?? ""
             tunnelPort = config.tunnelPort.map { "\($0)" } ?? ""
+        }
+        if let credentials = KeychainHelper().load() {
+            username = credentials.username
+            password = credentials.password
         }
     }
 
@@ -2769,8 +2875,6 @@ struct ConfigView: View {
         let config = ServerConfig(
             serverHost: serverHost,
             serverPort: port,
-            username: username,
-            password: password,
             useTLS: useTLS,
             allowInsecure: allowInsecure,
             tunnelHost: tunnelHost.isEmpty ? nil : tunnelHost,
@@ -2955,12 +3059,17 @@ final class IntegrationTests: XCTestCase {
 
         // 2. Create ReverseConnectHandler
         var tunnelFrames: [Frame] = []
-        let handler = ReverseConnectHandler { frame in
+        let mockConnection = TunnelConnection(
+            host: "127.0.0.1", port: 1,
+            username: "u", password: "p",
+            useTLS: false, allowInsecure: true
+        )
+        let handler = ReverseConnectHandler { _, frame in
             tunnelFrames.append(frame)
         }
 
         // 3. Simulate CONNECT from server
-        handler.handleConnect(reqid: 42, addr: .ipv4("127.0.0.1"), port: targetPort)
+        handler.handleConnect(connection: mockConnection, reqid: 42, addr: .ipv4("127.0.0.1"), port: targetPort)
 
         // 4. Wait for CONNECT_OK
         try await Task.sleep(nanoseconds: 1_000_000_000)
