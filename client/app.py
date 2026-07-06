@@ -3,6 +3,7 @@ SocksClient — macOS status bar proxy client.
 Pure PyObjC implementation (no rumps dependency).
 """
 
+import logging
 import objc
 import os
 import sys
@@ -10,10 +11,13 @@ import platform
 import subprocess
 import threading
 
+logger = logging.getLogger("app")
+
 from Foundation import (
     NSObject,
     NSUserNotification,
     NSUserNotificationCenter,
+    NSNotificationCenter,
     NSURL,
 )
 from AppKit import (
@@ -94,6 +98,10 @@ class AppController(NSObject):
         self._routing_proc = None
         self._log_proc = None
         self._measuring = False
+        self._reconnecting = False
+        self._was_connected = False  # state before sleep
+        self._sleep_obs = None
+        self._wake_obs = None
 
         self._build_status_item()
         self._build_menu()
@@ -187,6 +195,17 @@ class AppController(NSObject):
         self._status_item.setValue_forKey_(menu, "menu")
         self._menu = menu
 
+        # Observe system sleep/wake for tunnel reconnection
+        nc = NSWorkspace.sharedWorkspace().notificationCenter()
+        self._sleep_obs = nc.addObserver_selector_name_object_(
+            self, "onSystemWillSleep:",
+            "NSWorkspaceWillSleepNotification", None
+        )
+        self._wake_obs = nc.addObserver_selector_name_object_(
+            self, "onSystemDidWake:",
+            "NSWorkspaceDidWakeNotification", None
+        )
+
     def _add_menu_item(self, menu, title, action):
         item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, action, "")
         item.setTarget_(self)
@@ -262,12 +281,28 @@ class AppController(NSObject):
         self._update_icon()
 
     def _disconnect(self):
-        self.sys_proxy.disable()
-        self.proxy.stop()
-        self.proxy.set_tunnel_client(None)
+        try:
+            self.sys_proxy.disable()
+        except Exception as e:
+            logger.warning(f"Failed to disable system proxy: {e}")
+
+        try:
+            self.proxy.stop()
+        except Exception as e:
+            logger.warning(f"Failed to stop proxy: {e}")
+
+        try:
+            self.proxy.set_tunnel_client(None)
+        except Exception as e:
+            logger.warning(f"Failed to clear tunnel client reference: {e}")
+
         if self.tunnel_client:
-            self.tunnel_client.stop()
+            try:
+                self.tunnel_client.stop()
+            except Exception as e:
+                logger.warning(f"Failed to stop tunnel client: {e}")
             self.tunnel_client = None
+
         self.connected = False
         self.toggle_item.setTitle_("启动代理")
         self._update_icon()
@@ -399,6 +434,13 @@ class AppController(NSObject):
         NSApp.terminate_(self)
 
     def applicationWillTerminate_(self, notification):
+        # Remove sleep/wake observers
+        nc = NSWorkspace.sharedWorkspace().notificationCenter()
+        if self._sleep_obs:
+            nc.removeObserver_(self._sleep_obs)
+        if self._wake_obs:
+            nc.removeObserver_(self._wake_obs)
+
         if self._config_proc and self._config_proc.poll() is None:
             self._config_proc.terminate()
         if self._routing_proc and self._routing_proc.poll() is None:
@@ -406,11 +448,20 @@ class AppController(NSObject):
         if self._log_proc and self._log_proc.poll() is None:
             self._log_proc.terminate()
         if self.tunnel_client:
-            self.tunnel_client.stop()
+            try:
+                self.tunnel_client.stop()
+            except Exception as e:
+                logger.warning(f"Failed to stop tunnel client on quit: {e}")
             self.tunnel_client = None
         if self.connected:
-            self.sys_proxy.disable()
-            self.proxy.stop()
+            try:
+                self.sys_proxy.disable()
+            except Exception as e:
+                logger.warning(f"Failed to disable system proxy on quit: {e}")
+            try:
+                self.proxy.stop()
+            except Exception as e:
+                logger.warning(f"Failed to stop proxy on quit: {e}")
         if not self.config.data.get("autostart", False):
             from autostart import disable
             disable()
@@ -559,6 +610,59 @@ class AppController(NSObject):
                 self._measuring = False
 
         threading.Thread(target=_check, daemon=True).start()
+
+    # ------------------------------------------------------------------
+    # System sleep/wake handling
+    # ------------------------------------------------------------------
+
+    def onSystemWillSleep_(self, notification):
+        """System is about to sleep. Save connection state for later reconnection."""
+        if not self.connected:
+            return
+        self._was_connected = True
+        # Check if tunnel mode is enabled
+        tunnel_enabled = self.config.data.get('tunnel', {}).get('enabled', False)
+        protocol = self.config.data.get('server', {}).get('protocol', 'socks5')
+        if tunnel_enabled or protocol == 'tunnel':
+            logger.info("System will sleep, marking for reconnection on wake")
+
+    def onSystemDidWake_(self, notification):
+        """System just woke up. Reconnect if we were connected before sleep."""
+        if not self._was_connected:
+            return
+        self._was_connected = False
+
+        if self._reconnecting:
+            logger.info("Already reconnecting, skipping duplicate wake handler")
+            return
+
+        def _do_reconnect():
+            try:
+                self._reconnecting = True
+                logger.info("System woke up, reconnecting proxy...")
+
+                # Stop current connections (may be dead/stale after sleep)
+                if self.connected:
+                    self._disconnect()
+
+                # Wait a moment for network to stabilize
+                import time
+                time.sleep(1)
+
+                # Reconnect if config is still valid
+                if self.config.is_configured():
+                    self._connect()
+                    logger.info("Proxy reconnected after system wake")
+                else:
+                    logger.warning("Cannot reconnect: config is invalid")
+
+            except Exception as e:
+                logger.error(f"Failed to reconnect after wake: {e}", exc_info=True)
+            finally:
+                self._reconnecting = False
+
+        # Run reconnection in background thread
+        threading.Thread(target=_do_reconnect, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Helpers

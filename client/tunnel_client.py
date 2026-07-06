@@ -183,6 +183,7 @@ class TunnelClient:
         self._connected = False
         self._connected_event = threading.Event()
         self._replenishing = False  # 防止重复触发连接补充
+        self._replenish_task = None  # Track replenish task for clean shutdown
 
         # Reverse direction: server-initiated connections
         self._reverse_reqid_counter = 0
@@ -289,19 +290,11 @@ class TunnelClient:
         self._running = False
         self._connected = False
         self._connected_event.clear()
+        # Force-stop the event loop — all pending tasks will be abandoned
         if self._loop and self._loop.is_running():
-            def _request_stop():
-                for writer in self._tunnel_writers:
-                    if not writer.is_closing():
-                        writer.close()
-                for task in self._connection_tasks:
-                    if not task.done():
-                        task.cancel()
-                if self._main_task and not self._main_task.done():
-                    self._main_task.cancel()
-            self._loop.call_soon_threadsafe(_request_stop)
+            self._loop.call_soon_threadsafe(self._loop.stop)
         if self._thread:
-            self._thread.join(timeout=5)
+            self._thread.join(timeout=1)
             self._thread = None
 
     def forward_connect_sync(self, host, port, timeout=30):
@@ -338,13 +331,17 @@ class TunnelClient:
         try:
             self._main_task = self._loop.create_task(self._run_loop())
             self._loop.run_until_complete(self._main_task)
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, RuntimeError):
+            # RuntimeError: "Event loop stopped before Future completed" — expected on shutdown
             pass
         except Exception as e:
             logger.error(f'Tunnel loop error: {e}')
         finally:
             self._main_task = None
-            self._loop.close()
+            try:
+                self._loop.close()
+            except Exception:
+                pass
 
     async def _run_loop(self):
         """Main reconnection loop with exponential backoff."""
@@ -507,6 +504,9 @@ class TunnelClient:
                     logger.warning('Tunnel: Connection replenished successfully')
                     return
 
+                except asyncio.CancelledError:
+                    logger.info('Tunnel replenishment cancelled')
+                    raise
                 except Exception as e:
                     logger.warning(f'Replenish attempt {attempt} failed: {e}')
                     if attempt < 3:
@@ -514,6 +514,9 @@ class TunnelClient:
 
             logger.error('Tunnel: Failed to replenish connection after 3 attempts')
 
+        except asyncio.CancelledError:
+            logger.info('Tunnel replenishment cancelled')
+            raise
         except Exception as e:
             logger.error(f'Replenish connection error: {e}')
         finally:
@@ -630,7 +633,7 @@ class TunnelClient:
                 logger.info(f'Tunnel: 1 connection lost, {len(self._tunnel_writers)} remaining')
                 # 触发连接补充：当从双连接降级为单连接时
                 if len(self._tunnel_writers) == 1 and not self._replenishing:
-                    asyncio.ensure_future(self._replenish_connection())
+                    self._replenish_task = asyncio.ensure_future(self._replenish_connection())
 
             try:
                 writer.close()
@@ -745,6 +748,8 @@ class TunnelClient:
                         ))
                         await writer.drain()
                         await asyncio.sleep(0)  # Yield to other reqids
+                except asyncio.CancelledError:
+                    logger.debug(f'sock_to_tunnel cancelled for reqid {reqid}')
                 except (ConnectionResetError, BrokenPipeError, OSError):
                     pass
                 except Exception:
@@ -766,6 +771,8 @@ class TunnelClient:
                         if data is None:  # EOF from CLOSE frame
                             break
                         await loop.sock_sendall(sock, data)
+                except asyncio.CancelledError:
+                    logger.debug(f'tunnel_to_sock cancelled for reqid {reqid}')
                 except Exception:
                     pass
                 finally:

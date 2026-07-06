@@ -394,22 +394,19 @@ class ProxyCore:
         self._running = True
 
     def stop(self):
-        if not self._running:
-            return
         self._running = False
         if self._loop and self._loop.is_running():
-            async def _shutdown():
-                await self._stop_servers()
-                self._loop.stop()
-            future = asyncio.run_coroutine_threadsafe(_shutdown(), self._loop)
-            try:
-                future.result(timeout=5)
-            except Exception:
-                pass
+            # Force stop the loop immediately
+            self._loop.call_soon_threadsafe(self._loop.stop)
+
         if self._thread:
-            self._thread.join(timeout=5)
+            # Wait for thread to exit with short timeout
+            self._thread.join(timeout=0.5)
             if not self._thread.is_alive() and self._loop:
-                self._loop.close()
+                try:
+                    self._loop.close()
+                except Exception:
+                    pass
             elif self._loop:
                 logger.warning("proxy thread did not exit in time, skipping loop.close()")
         self._loop = None
