@@ -12,10 +12,17 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.blockproxy.android.config.DataStoreRoutingConfigDataSource
+import com.blockproxy.android.config.RoutingConfigRepository
 import com.blockproxy.android.service.TunnelServiceController
 import com.blockproxy.android.ui.ConfigScreen
 import com.blockproxy.android.ui.MainScreen
+import com.blockproxy.android.ui.RoutingScreen
+import com.blockproxy.android.ui.RoutingViewModel
 import com.blockproxy.android.ui.TunnelViewModel
 import kotlinx.coroutines.launch
 
@@ -30,8 +37,9 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: TunnelViewModel by viewModels()
     private lateinit var controller: TunnelServiceController
+    private lateinit var routingViewModel: RoutingViewModel
 
-    /** Simple navigation state: "main" or "config" */
+    /** Simple navigation state: "main", "config", or "routing" */
     private var currentScreen by mutableStateOf("main")
 
     private val vpnPrepareLauncher = registerForActivityResult(
@@ -58,11 +66,20 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         controller = TunnelServiceController(this)
 
+        val routingRepo = RoutingConfigRepository(
+            DataStoreRoutingConfigDataSource(applicationContext)
+        )
+        val factory = viewModelFactory {
+            initializer { RoutingViewModel(routingRepo) }
+        }
+        routingViewModel = ViewModelProvider(this, factory)[RoutingViewModel::class.java]
+
         setContent {
             MaterialTheme {
                 val status by viewModel.tunnelStatus.collectAsState()
                 val config by viewModel.configUiState.collectAsState()
                 val batteryState by viewModel.batteryExemptionState.collectAsState()
+                val routingState by routingViewModel.uiState.collectAsState()
 
                 when (currentScreen) {
                     "main" -> MainScreen(
@@ -91,6 +108,13 @@ class MainActivity : ComponentActivity() {
                         onBatterySettingsClick = {
                             startActivity(viewModel.createBatterySettingsIntent())
                         },
+                        routingEnabled = routingState.enabled,
+                        onNavigateToRouting = { currentScreen = "routing" },
+                    )
+
+                    "routing" -> RoutingScreen(
+                        viewModel = routingViewModel,
+                        onNavigateBack = { currentScreen = "config" },
                     )
                 }
             }

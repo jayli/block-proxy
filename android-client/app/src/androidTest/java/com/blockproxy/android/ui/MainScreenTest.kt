@@ -253,6 +253,8 @@ class MainScreenTest {
                 onUpdatePassword = {},
                 onSave = {},
                 onBatterySettingsClick = {},
+                routingEnabled = false,
+                onNavigateToRouting = {},
             )
         }
 
@@ -284,6 +286,8 @@ class MainScreenTest {
                 onUpdatePassword = {},
                 onSave = {},
                 onBatterySettingsClick = {},
+                routingEnabled = false,
+                onNavigateToRouting = {},
             )
         }
 
@@ -311,6 +315,8 @@ class MainScreenTest {
                 onUpdatePassword = {},
                 onSave = {},
                 onBatterySettingsClick = {},
+                routingEnabled = false,
+                onNavigateToRouting = {},
             )
         }
 

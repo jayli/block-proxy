@@ -10,3 +10,7 @@
 local.properties
 app/build
 .kotlin/
+
+# NDK build artifacts (intermediate outputs)
+native/libs/
+native/obj/

@@ -46,13 +46,13 @@ class ForwardSessionRegistry(
         /** Last reqid in the forward range. */
         const val FORWARD_REQID_MAX = 0xFFFE
         /** Default bounded capacity for inbound DATA per session. */
-        const val DEFAULT_INBOUND_CAPACITY = 64
+        const val DEFAULT_INBOUND_CAPACITY = 256
     }
 
     private val sessions = ConcurrentHashMap<Int, ForwardSession>()
     private val allocMutex = Mutex()
     private var nextReqid = reqidMin
-    private var rrIndex = 0
+    private val rrIndex = java.util.concurrent.atomic.AtomicInteger(0)
 
     // ── Public query API ─────────────────────────────────────────────
 
@@ -74,6 +74,14 @@ class ForwardSessionRegistry(
      * 4. Waits for CONNECT_OK / CONNECT_FAILED (with timeout).
      * 5. Returns the [ForwardSession] on success, throws [IOException] on
      *    failure or timeout.
+     *
+     * Threading model: The session is registered in [sessions] BEFORE the
+     * CONNECT frame is sent. This creates a brief window where a ConnectOk
+     * could arrive before send() completes. This is safe because:
+     * - TunnelConnection's receive loop only processes frames after send() returns
+     * - The session's openResult is a CompletableDeferred that can be completed
+     *   from any thread
+     * - If send() throws, we clean up the registration before propagating the exception
      *
      * @throws IOException if no connections are available, CONNECT fails,
      *                     or the timeout fires.
@@ -189,6 +197,10 @@ class ForwardSessionRegistry(
     /**
      * Closes all forward sessions and fails any pending opens.
      * Called when the TunnelClient stops.
+     *
+     * Contract: This is a best-effort shutdown. Consumers reading from
+     * [ForwardSession.inboundData] must handle channel closure (ClosedReceiveChannelException
+     * or null returns). In-flight sendData() calls may fail silently.
      */
     fun stop() {
         val all = sessions.entries.toList()
@@ -234,8 +246,7 @@ class ForwardSessionRegistry(
      * Caller must ensure [connections] is non-empty.
      */
     private fun selectConnection(connections: List<TunnelConnection>): TunnelConnection {
-        val idx = rrIndex % connections.size
-        rrIndex = idx + 1
+        val idx = (rrIndex.getAndIncrement() and Int.MAX_VALUE) % connections.size
         return connections[idx]
     }
 

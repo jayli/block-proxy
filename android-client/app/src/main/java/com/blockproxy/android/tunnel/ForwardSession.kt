@@ -1,9 +1,12 @@
 package com.blockproxy.android.tunnel
 
+import android.util.Log
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
+
+private const val TAG = "ForwardSession"
 
 /**
  * A single forward CONNECT session binding a remote target (host:port) to a
@@ -84,6 +87,9 @@ class ForwardSession internal constructor(
      */
     internal fun deliverData(data: ByteArray) {
         if (closed.get()) return
-        inboundData.trySend(data) // bounded channel — drops on overflow
+        val result = inboundData.trySend(data)
+        if (result.isFailure) {
+            Log.w(TAG, "Inbound channel full for reqid $reqid, dropping ${data.size} bytes")
+        }
     }
 }

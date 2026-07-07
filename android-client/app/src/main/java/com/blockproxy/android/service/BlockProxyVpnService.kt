@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
+import android.util.Log
 import java.net.Socket
 import java.util.concurrent.TimeUnit
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -16,10 +17,21 @@ import com.blockproxy.android.config.ConfigRepository
 import com.blockproxy.android.config.DataStoreConfigDataSource
 import com.blockproxy.android.config.DataStoreCredentialDataSource
 import com.blockproxy.android.config.CredentialStore
+import com.blockproxy.android.config.RoutingConfig
+import com.blockproxy.android.config.RoutingConfigRepository
+import com.blockproxy.android.config.DataStoreRoutingConfigDataSource
 import com.blockproxy.android.config.ServerConfig
 import com.blockproxy.android.config.TunnelCredentials
+import com.blockproxy.android.routing.GeositeLoader
+import com.blockproxy.android.routing.GeositeMatcher
+import com.blockproxy.android.routing.RoutingEngine
+import com.blockproxy.android.socks.DomainMappingStore
+import com.blockproxy.android.socks.LocalSocksServer
+import com.blockproxy.android.socks.ProtectedDirectConnector
+import com.blockproxy.android.socks.TunnelForwardConnector
 import com.blockproxy.android.status.StatusStore
 import com.blockproxy.android.status.TunnelStatus
+import com.blockproxy.android.tun.Tun2Socks
 import com.blockproxy.android.tunnel.RealTargetSocketFactory
 import com.blockproxy.android.tunnel.RealTunnelSocket
 import com.blockproxy.android.tunnel.TunnelClient
@@ -37,23 +49,38 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * Android VpnService that maintains the tunnel connection lifecycle.
  *
- * The VPN interface is established only to signal to the system that a VPN
- * is active — it does **not** route traffic through the TUN interface.
- * All actual proxy traffic flows through the [TunnelClient]'s TLS connections.
+ * This service captures all device traffic via a TUN interface, bridges it
+ * through tun2socks (native C library) to a local SOCKS5 server, which then
+ * routes each connection either directly or through the remote tunnel server.
+ *
+ * Traffic flow:
+ * ```
+ * Device traffic → VpnService TUN fd → tun2socks (native) → LocalSocksServer
+ *                                                                  ↓
+ *                                                        RoutingEngine
+ *                                                       ↓ DIRECT   ↓ PROXY
+ *                                                  protected Socket  ForwardSession
+ *                                                       ↓              ↓
+ *                                                   target host   tunnel server
+ * ```
  *
  * Key design decisions:
  * - `START_STICKY` so the system restarts the service after OOM kills.
  * - `PARTIAL_WAKE_LOCK` prevents the CPU from entering deep sleep.
  * - The notification is shown immediately via `startForeground` to satisfy
  *   foreground-service requirements.
+ * - `addDisallowedApplication(packageName)` prevents our own sockets from
+ *   being captured by the VPN (routing loop prevention).
+ * - `VpnService.protect()` is used as defense-in-depth for per-socket bypass.
+ * - The TUN fd is transferred to the native tun2socks library via `detachFd()`.
  * - If configuration or credentials are missing the service enters
  *   [TunnelStatus.Error], releases resources, and calls `stopSelf()`.
- * - If `VpnService.Builder.establish()` returns null (user denied VPN
- *   permission), the service enters [TunnelStatus.Disconnected] and stops.
  */
 class BlockProxyVpnService : VpnService() {
 
     companion object {
+        private const val TAG = "BlockProxyVpnService"
+
         /** Shared [StatusStore] singleton accessible from UI and service. */
         val statusStore = StatusStore()
 
@@ -73,9 +100,14 @@ class BlockProxyVpnService : VpnService() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tunnelClient: TunnelClient? = null
+    private var localSocksServer: LocalSocksServer? = null
+
+    /** True when the TUN fd was detached and handed to tun2socks. */
+    private var vpnFdDetached = false
 
     private lateinit var configRepository: ConfigRepository
     private lateinit var credentialStore: CredentialStore
+    private lateinit var routingConfigRepository: RoutingConfigRepository
 
     // ── Lifecycle ─────────────────────────────────────────────────────
 
@@ -85,6 +117,7 @@ class BlockProxyVpnService : VpnService() {
         TunnelNotification.createChannel(this)
         configRepository = ConfigRepository(DataStoreConfigDataSource(this))
         credentialStore = CredentialStore(DataStoreCredentialDataSource(this))
+        routingConfigRepository = RoutingConfigRepository(DataStoreRoutingConfigDataSource(this))
 
         // Register periodic watchdog
         val request = PeriodicWorkRequestBuilder<TunnelWatchdogWorker>(
@@ -143,6 +176,15 @@ class BlockProxyVpnService : VpnService() {
         serviceScope?.cancel()
         serviceScope = null
 
+        // Stop tun2socks first — signals the native library to quit and
+        // closes the TUN fd that was transferred via detachFd().
+        Tun2Socks.stop()
+        Tun2Socks.setProtectCallback(null)
+
+        // Stop local SOCKS server
+        localSocksServer?.stop()
+        localSocksServer = null
+
         // Stop tunnel client with timeout
         val client = tunnelClient
         if (client != null) {
@@ -162,11 +204,16 @@ class BlockProxyVpnService : VpnService() {
         } catch (_: Exception) { /* best effort */ }
         wakeLock = null
 
-        // Close VPN interface
-        try {
-            vpnInterface?.close()
-        } catch (_: Exception) { /* best effort */ }
+        // Close VPN interface (only if fd was NOT detached to tun2socks).
+        // When vpnFdDetached is true, the native library owns the fd and
+        // closes it during tun2socks shutdown.
+        if (!vpnFdDetached) {
+            try {
+                vpnInterface?.close()
+            } catch (_: Exception) { /* best effort */ }
+        }
         vpnInterface = null
+        vpnFdDetached = false
 
         // Update status
         statusStore.update(TunnelStatus.Disconnected)
@@ -205,7 +252,23 @@ class BlockProxyVpnService : VpnService() {
             return
         }
 
-        // Establish minimal VPN interface
+        // Load routing config and create routing components
+        val routingConfig: RoutingConfig = try {
+            routingConfigRepository.observe().first()
+        } catch (_: Exception) {
+            RoutingConfig()
+        }
+        val geositeData = GeositeLoader().load(applicationContext)
+        val geositeMatcher = GeositeMatcher(geositeData)
+        val routingEngine = RoutingEngine(routingConfig, geositeMatcher)
+        val domainMappingStore = DomainMappingStore()
+
+        // Create protect callback for direct connections and tunnel sockets.
+        // Primary loop prevention is addDisallowedApplication() in the VPN builder;
+        // protect() is defense-in-depth for per-socket bypass.
+        val protectCallback: (Socket) -> Unit = { socket -> protect(socket) }
+
+        // Establish VPN interface with routes and DNS
         val pfd = establishVpnInterface()
         if (pfd == null) {
             // User denied VPN permission or establish() failed
@@ -217,9 +280,7 @@ class BlockProxyVpnService : VpnService() {
         }
         vpnInterface = pfd
 
-        // Create socket factories with VPN protect
-        val protectCallback: (Socket) -> Unit = { socket -> protect(socket) }
-
+        // Create socket factories for tunnel connections
         val tunnelSocketFactory = object : TunnelSocketFactory {
             override fun create(): TunnelSocket {
                 return RealTunnelSocket(
@@ -232,7 +293,7 @@ class BlockProxyVpnService : VpnService() {
 
         val targetSocketFactory = RealTargetSocketFactory(protect = protectCallback)
 
-        // Create and start TunnelClient
+        // Create TunnelClient (needed by TunnelForwardConnector for LocalSocksServer)
         val scope = serviceScope ?: return
         val client = TunnelClient(
             config = config,
@@ -243,6 +304,40 @@ class BlockProxyVpnService : VpnService() {
         )
         tunnelClient = client
 
+        // Start local SOCKS5 server on loopback.
+        // tun2socks will forward TUN traffic to this server, which applies
+        // routing rules to decide DIRECT vs PROXY for each connection.
+        val socksServer = LocalSocksServer(
+            domainMappingStore = domainMappingStore,
+            routingEngine = routingEngine,
+            directConnector = ProtectedDirectConnector(protect = protectCallback),
+            forwardConnector = TunnelForwardConnector(client),
+            scope = scope,
+        )
+        val socksPort = try {
+            socksServer.start()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start local SOCKS server", e)
+            enterErrorAndStop("SOCKS 服务器启动失败")
+            return
+        }
+        localSocksServer = socksServer
+        Log.i(TAG, "Local SOCKS server listening on 127.0.0.1:$socksPort")
+
+        // Start tun2socks — bridges TUN fd to local SOCKS5 server.
+        // The TUN fd ownership is transferred to the native library via detachFd().
+        Tun2Socks.setProtectCallback(this)
+        val tunStarted = Tun2Socks.start(pfd, "127.0.0.1", socksPort)
+        if (!tunStarted) {
+            Log.e(TAG, "Failed to start tun2socks")
+            socksServer.stop()
+            localSocksServer = null
+            enterErrorAndStop("tun2socks 启动失败")
+            return
+        }
+        vpnFdDetached = true  // fd ownership transferred to native code
+        Log.i(TAG, "tun2socks bridging TUN → 127.0.0.1:$socksPort")
+
         // Observe client status and update notification
         scope.launch {
             client.status.collect { status ->
@@ -251,23 +346,52 @@ class BlockProxyVpnService : VpnService() {
             }
         }
 
-        // Start the tunnel
+        // Start the tunnel client (establishes TLS connections to remote server)
         statusStore.update(TunnelStatus.Connecting)
         updateNotification(TunnelStatus.Connecting)
         client.start()
     }
 
     /**
-     * Establishes a minimal VPN interface.
-     * Returns null if the user denied VPN permission or the system refused.
+     * Establishes the VPN interface with routes and DNS configuration.
+     *
+     * The TUN interface captures all IPv4 (and optionally IPv6) traffic from
+     * the device. tun2socks will process these raw IP packets and convert
+     * them into SOCKS5 connections to the local server.
+     *
+     * `addDisallowedApplication` prevents our own app's traffic from being
+     * captured by the VPN, avoiding routing loops (tunnel TLS connections
+     * and local SOCKS connections bypass the TUN at the kernel level).
+     *
+     * Returns null if the user denied VPN permission or establish() failed.
      */
     private fun establishVpnInterface(): ParcelFileDescriptor? {
         return try {
-            Builder()
+            val builder = Builder()
                 .addAddress("10.255.0.2", 32)
+                .addRoute("0.0.0.0", 0)           // Capture all IPv4 traffic
+                .addDnsServer("8.8.8.8")            // DNS queries via VPN
                 .setSession("BlockProxy")
                 .setMtu(1500)
-                .establish()
+
+            // IPv6 support — tun2socks handles IPv6 packets via lwip
+            try {
+                builder.addAddress("fd00::1", 128)
+                builder.addRoute("::", 0)
+            } catch (e: Exception) {
+                Log.w(TAG, "IPv6 routes not supported on this device", e)
+            }
+
+            // Exclude our app from VPN to prevent routing loops.
+            // This ensures tunnel TLS connections and SOCKS server connections
+            // bypass the TUN interface at the kernel level.
+            try {
+                builder.addDisallowedApplication(packageName)
+            } catch (e: Exception) {
+                Log.w(TAG, "addDisallowedApplication failed", e)
+            }
+
+            builder.establish()
         } catch (_: Exception) {
             null
         }

@@ -16,9 +16,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -58,6 +61,8 @@ import androidx.compose.ui.unit.dp
  * @param onUpdatePassword Called when the password field changes
  * @param onSave Called when the user taps the save button
  * @param onBatterySettingsClick Called when the user taps the battery settings link
+ * @param routingEnabled Whether the routing feature is currently enabled
+ * @param onNavigateToRouting Called when the user taps the routing "Configure" button
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,6 +78,8 @@ fun ConfigScreen(
     onUpdatePassword: (String) -> Unit,
     onSave: () -> Unit,
     onBatterySettingsClick: () -> Unit,
+    routingEnabled: Boolean,
+    onNavigateToRouting: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -203,6 +210,54 @@ fun ConfigScreen(
                     }
                 },
             )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // ── Routing rules section ───────────────────────────────────────
+            Text(
+                text = "路由规则",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Default.Route,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "分流规则",
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        Text(
+                            text = if (routingEnabled) "已启用" else "未启用（全部走代理）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (routingEnabled) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                    OutlinedButton(onClick = onNavigateToRouting) {
+                        Text("配置")
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 

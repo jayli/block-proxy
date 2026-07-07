@@ -343,6 +343,169 @@ curl -x http://<block-proxy-ip>:8001 http://android-lan.example.com/
 adb logcat | grep -i "CONNECT\|session\|relay"
 ```
 
+### TC-16: Forward Proxy - Routing Disabled / 正向代理 - 分流关闭
+
+> When routing is disabled, all device traffic should go through the proxy tunnel.
+> This is the default behavior after enabling VPN.
+
+| # | Check Item | Pass/Fail | Notes |
+|---|-----------|-----------|-------|
+| 16.1 | Open Routing Rules screen (路由规则), confirm routing switch is OFF | | |
+| 16.2 | Hint text shows "所有流量通过代理" (all traffic via proxy) | | |
+| 16.3 | Start VPN tunnel, confirm Connected status | | |
+| 16.4 | Open browser on device, visit `http://httpbin.org/ip` | | |
+| 16.5 | Response shows server's public IP (not device's IP) | | |
+| 16.6 | Visit `https://www.google.com`, page loads successfully | | |
+| 16.7 | Check `adb logcat \| grep "Tun2Socks"`, confirm traffic flowing through tun2socks | | |
+| 16.8 | Check `adb logcat \| grep "ForwardSession"`, confirm forward sessions created | | |
+
+```bash
+# Monitor forward proxy traffic:
+adb logcat | grep -E "Tun2Socks|ForwardSession|LocalSocksServer"
+
+# Expected flow:
+# Device app → TUN fd → tun2socks → LocalSocksServer (127.0.0.1:port)
+#   → RoutingEngine (disabled) → PROXY → ForwardSession → tunnel server → target
+```
+
+### TC-17: Forward Proxy - Direct Rules / 正向代理 - 直连规则
+
+> When routing is enabled with direct rules, matching traffic should bypass the proxy
+> and connect directly to the target.
+
+| # | Check Item | Pass/Fail | Notes |
+|---|-----------|-----------|-------|
+| 17.1 | Open Routing Rules screen, enable routing switch | | |
+| 17.2 | Switch to "Direct Rules" tab (直连规则) | | |
+| 17.3 | Add rule: `domain:example.com` | | |
+| 17.4 | Add rule: `geosite:cn` (if geosite database is loaded) | | |
+| 17.5 | Tap Save (保存), confirm "已保存" feedback | | |
+| 17.6 | Start VPN tunnel, confirm Connected | | |
+| 17.7 | Visit `http://example.com` in browser | | |
+| 17.8 | Check `adb logcat \| grep "RoutingEngine"`, confirm DIRECT decision for example.com | | |
+| 17.9 | Check `adb logcat \| grep "DirectConnector"`, confirm direct socket created | | |
+| 17.10 | Visit `https://www.google.com` (not in direct rules) | | |
+| 17.11 | Check logcat, confirm PROXY decision for google.com | | |
+| 17.12 | Check `adb logcat \| grep "ForwardSession"`, confirm forward session created for google.com | | |
+
+```bash
+# Monitor routing decisions:
+adb logcat | grep -E "RoutingEngine|DirectConnector|ForwardSession"
+
+# Expected behavior:
+# example.com → RoutingEngine → DIRECT → DirectConnector → target (no tunnel)
+# google.com → RoutingEngine → PROXY → ForwardSession → tunnel server → target
+```
+
+### TC-18: Forward Proxy - Proxy Rules / 正向代理 - 代理规则
+
+> When routing is enabled with proxy rules, matching traffic should go through the tunnel.
+> Non-matching traffic should connect directly (fallback).
+
+| # | Check Item | Pass/Fail | Notes |
+|---|-----------|-----------|-------|
+| 18.1 | Open Routing Rules screen, enable routing switch | | |
+| 18.2 | Clear direct rules (if any) | | |
+| 18.3 | Switch to "Proxy Rules" tab (代理规则) | | |
+| 18.4 | Add rule: `domain:google.com` | | |
+| 18.5 | Add rule: `geosite:youtube` (if available) | | |
+| 18.6 | Tap Save (保存) | | |
+| 18.7 | Start VPN tunnel, confirm Connected | | |
+| 18.8 | Visit `https://www.google.com` in browser | | |
+| 18.9 | Check logcat, confirm PROXY decision for google.com | | |
+| 18.10 | Visit `http://example.com` (not in proxy rules) | | |
+| 18.11 | Check logcat, confirm DIRECT decision (fallback) for example.com | | |
+| 18.12 | Confirm page loads successfully via direct connection | | |
+
+```bash
+# Verify fallback behavior:
+adb logcat | grep -E "RoutingEngine|DirectConnector|ForwardSession"
+
+# Expected:
+# google.com → RoutingEngine → PROXY → ForwardSession → tunnel → target
+# example.com → RoutingEngine → DIRECT (fallback) → DirectConnector → target
+```
+
+### TC-19: Forward Proxy - IP-Only Fallback / 正向代理 - IP 兜底
+
+> When the SOCKS5 request contains only an IP address (no domain), the routing engine
+> should apply the fallback behavior based on routing state.
+
+| # | Check Item | Pass/Fail | Notes |
+|---|-----------|-----------|-------|
+| 19.1 | Disable routing switch (all traffic via proxy) | | |
+| 19.2 | Start VPN tunnel | | |
+| 19.3 | Use an app that connects directly to IP (e.g., ping tool) | | |
+| 19.4 | Check logcat, confirm IP-only request handled | | |
+| 19.5 | Verify traffic goes through proxy (ForwardSession created) | | |
+| 19.6 | Enable routing switch, add direct rule `domain:example.com` | | |
+| 19.7 | Connect to IP address (not resolvable to domain) | | |
+| 19.8 | Check logcat, confirm IP-only fallback to DIRECT | | |
+| 19.9 | Verify connection succeeds via DirectConnector | | |
+
+```bash
+# Monitor IP-only handling:
+adb logcat | grep -E "DomainMappingStore|RoutingEngine|IP-only"
+
+# Expected:
+# Routing disabled + IP-only → PROXY (all traffic)
+# Routing enabled + IP-only → DIRECT (fallback)
+```
+
+### TC-20: Forward Proxy - tun2socks Bridge / 正向代理 - tun2socks 桥接
+
+> Verify that tun2socks correctly bridges TUN interface to local SOCKS5 server.
+
+| # | Check Item | Pass/Fail | Notes |
+|---|-----------|-----------|-------|
+| 20.1 | Start VPN tunnel, check `adb logcat \| grep "Tun2Socks"` | | |
+| 20.2 | Confirm "tun2socks started successfully" message | | |
+| 20.3 | Confirm "bridging TUN → 127.0.0.1:<port>" message | | |
+| 20.4 | Generate traffic (browse website) | | |
+| 20.5 | Check tun2socks stats: `adb logcat \| grep "tun2socks.*stats"` | | |
+| 20.6 | Confirm TX/RX packet counts are increasing | | |
+| 20.7 | Stop VPN tunnel | | |
+| 20.8 | Confirm "tun2socks stopped" message | | |
+| 20.9 | Restart tunnel, confirm tun2socks starts again cleanly | | |
+
+```bash
+# Monitor tun2socks lifecycle:
+adb logcat | grep "Tun2Socks"
+
+# Expected log sequence:
+# Starting tun2socks: fd=X, socks=127.0.0.1:Y
+# tun2socks started successfully
+# tun2socks bridging TUN → 127.0.0.1:Y
+# ... (traffic flows) ...
+# Stopping tun2socks
+# tun2socks stopped
+```
+
+### TC-21: Forward Proxy - QUIC/UDP Limitation / 正向代理 - QUIC/UDP 限制
+
+> First version only supports TCP via SOCKS5 CONNECT. UDP ASSOCIATE and QUIC are not supported.
+
+| # | Check Item | Pass/Fail | Notes |
+|---|-----------|-----------|-------|
+| 21.1 | Start VPN tunnel | | |
+| 21.2 | Open YouTube app (uses QUIC/HTTP3 by default) | | |
+| 21.3 | Check logcat for QUIC connection attempts | | |
+| 21.4 | Confirm QUIC connections fail or fall back to TCP | | |
+| 21.5 | Verify YouTube still works via TCP fallback | | |
+| 21.6 | Check `adb logcat \| grep "UDP ASSOCIATE"` | | |
+| 21.7 | Confirm "unsupported" or "not implemented" message | | |
+| 21.8 | Use a UDP-based app (e.g., DNS query tool) | | |
+| 21.9 | Confirm UDP traffic is not proxied (or handled by tun2socks) | | |
+
+```bash
+# Monitor QUIC/UDP handling:
+adb logcat | grep -E "QUIC|UDP|SOCKS5.*unsupported"
+
+# Expected:
+# QUIC connections → fail → app falls back to TCP → proxied successfully
+# UDP ASSOCIATE requests → rejected with "command not supported"
+```
+
 ---
 
 ## Vendor-Specific Notes / 厂商适配备注
