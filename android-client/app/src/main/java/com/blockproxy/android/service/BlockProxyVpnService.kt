@@ -131,10 +131,48 @@ class BlockProxyVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d(TAG, "onStartCommand: action=${intent?.action}, flags=$flags, startId=$startId")
+
         // Handle stop action
         if (intent?.action == ACTION_STOP) {
+            Log.i(TAG, "Received ACTION_STOP, stopping service")
             WorkManager.getInstance(applicationContext)
                 .cancelUniqueWork(TunnelWatchdogWorker.WORK_NAME)
+
+            // Immediately update status so UI reflects disconnected state
+            statusStore.update(TunnelStatus.Disconnected)
+
+            // Cancel the service scope to abort setupTunnel() coroutine
+            serviceScope?.cancel()
+            serviceScope = null
+
+            // Stop tun2socks and SOCKS server
+            Tun2Socks.stop()
+            Tun2Socks.setProtectCallback(null)
+            localSocksServer?.stop()
+            localSocksServer = null
+
+            // Stop tunnel client
+            val client = tunnelClient
+            if (client != null) {
+                runBlocking {
+                    withTimeoutOrNull(STOP_TIMEOUT_MS) {
+                        client.stop()
+                    }
+                }
+                tunnelClient = null
+            }
+
+            // Release WakeLock
+            try {
+                wakeLock?.let {
+                    if (it.isHeld) it.release()
+                }
+            } catch (_: Exception) { /* best effort */ }
+            wakeLock = null
+
+            // Remove foreground and stop service
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
