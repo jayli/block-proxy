@@ -20,6 +20,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -38,7 +39,10 @@ import com.blockproxy.android.ui.ConfigScreen
 import com.blockproxy.android.ui.MainScreen
 import com.blockproxy.android.ui.RoutingScreen
 import com.blockproxy.android.ui.RoutingViewModel
+import com.blockproxy.android.ui.SliderAction
+import com.blockproxy.android.ui.SliderStateMachine
 import com.blockproxy.android.ui.TunnelViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -95,6 +99,37 @@ class MainActivity : ComponentActivity() {
 
                 var selectedTab by remember { mutableIntStateOf(0) }
 
+                val sliderMachine = remember { SliderStateMachine() }
+                var sliderRender by remember {
+                    mutableStateOf(sliderMachine.render(status))
+                }
+
+                fun runSliderAction(action: SliderAction) {
+                    when (action) {
+                        SliderAction.None -> Unit
+                        SliderAction.StartFresh,
+                        SliderAction.RetryStart -> restartTunnelFromLatestConfig()
+                        SliderAction.Stop -> controller.stop()
+                    }
+                }
+
+                LaunchedEffect(status) {
+                    sliderMachine.onStatusChanged(status)
+                    sliderRender = sliderMachine.render(status)
+                    runSliderAction(sliderMachine.consumePendingAction())
+                }
+
+                LaunchedEffect(sliderRender.isActive, status) {
+                    while (sliderRender.isActive) {
+                        delay(SLIDER_RETRY_INTERVAL_MS)
+                        val action = sliderMachine.onRetryTick(status)
+                        if (action != SliderAction.None) {
+                            runSliderAction(action)
+                        }
+                        sliderRender = sliderMachine.render(status)
+                    }
+                }
+
                 Scaffold(
                     bottomBar = {
                         NavigationBar {
@@ -135,6 +170,19 @@ class MainActivity : ComponentActivity() {
                             status = status,
                             isConfigValid = viewModel.isConfigValid(),
                             batteryExempted = batteryState.isExempt,
+                            host = config.host,
+                            port = config.port,
+                            isSlideActive = sliderRender.isActive,
+                            sliderTrackTone = sliderRender.trackTone,
+                            onSlideActiveChange = { active ->
+                                if (active) {
+                                    sliderMachine.onUserSlideRight()
+                                } else {
+                                    sliderMachine.onUserSlideLeft()
+                                }
+                                sliderRender = sliderMachine.render(status)
+                                runSliderAction(sliderMachine.consumePendingAction())
+                            },
                             onStart = { onConnectClicked() },
                             onStop = { controller.stop() },
                             onBatterySettingsClick = {
@@ -220,5 +268,18 @@ class MainActivity : ComponentActivity() {
         if (prepareIntent != null) {
             vpnPrepareLauncher.launch(prepareIntent)
         }
+    }
+
+    private fun restartTunnelFromLatestConfig() {
+        lifecycleScope.launch {
+            controller.stop()
+            delay(SLIDER_RESTART_DELAY_MS)
+            onConnectClicked()
+        }
+    }
+
+    private companion object {
+        const val SLIDER_RETRY_INTERVAL_MS = 3_000L
+        const val SLIDER_RESTART_DELAY_MS = 300L
     }
 }

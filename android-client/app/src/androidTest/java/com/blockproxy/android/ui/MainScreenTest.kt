@@ -2,13 +2,9 @@ package com.blockproxy.android.ui
 
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.blockproxy.android.status.TunnelStatus
 import org.junit.Rule
@@ -36,17 +32,10 @@ class MainScreenTest {
                 batteryExempted = true,
                 onStart = {},
                 onStop = {},
-                onNavigateToConfig = {},
                 onBatterySettingsClick = {},
             )
         }
 
-        // The connect button should be disabled when config is not valid
-        composeTestRule.onNodeWithText("连接")
-            .assertIsDisplayed()
-            .assertIsNotEnabled()
-
-        // Should show a hint about completing config
         composeTestRule.onNodeWithText("请先完成配置")
             .assertIsDisplayed()
     }
@@ -60,55 +49,50 @@ class MainScreenTest {
                 batteryExempted = true,
                 onStart = {},
                 onStop = {},
-                onNavigateToConfig = {},
                 onBatterySettingsClick = {},
             )
         }
 
-        // The connect button should be enabled when config is valid
-        composeTestRule.onNodeWithText("连接")
+        composeTestRule.onNodeWithText("滑动以连接")
             .assertIsDisplayed()
-            .assertIsEnabled()
     }
 
     @Test
-    fun mainScreen_connectedStatus_showsDisconnectButton() {
+    fun mainScreen_connectedStatus_showsActiveSlider() {
         composeTestRule.setContent {
             MainScreen(
                 status = TunnelStatus.Connected,
                 isConfigValid = true,
                 batteryExempted = true,
+                isSlideActive = true,
+                sliderTrackTone = SliderTrackTone.Connected,
                 onStart = {},
                 onStop = {},
-                onNavigateToConfig = {},
                 onBatterySettingsClick = {},
             )
         }
 
-        // Should show disconnect button instead of connect
-        composeTestRule.onNodeWithText("断开")
+        composeTestRule.onNodeWithText("已连接 · 左滑断开")
             .assertIsDisplayed()
-            .assertIsEnabled()
     }
 
     @Test
-    fun mainScreen_connectingStatus_showsDisconnectButton() {
+    fun mainScreen_connectingStatus_showsConnectingSlider() {
         composeTestRule.setContent {
             MainScreen(
                 status = TunnelStatus.Connecting,
                 isConfigValid = true,
                 batteryExempted = true,
+                isSlideActive = true,
+                sliderTrackTone = SliderTrackTone.Connecting,
                 onStart = {},
                 onStop = {},
-                onNavigateToConfig = {},
                 onBatterySettingsClick = {},
             )
         }
 
-        // Should show disconnect button when connecting
-        composeTestRule.onNodeWithText("断开")
+        composeTestRule.onNodeWithText("连接中...")
             .assertIsDisplayed()
-            .assertIsEnabled()
     }
 
     @Test
@@ -124,7 +108,6 @@ class MainScreenTest {
                 batteryExempted = true,
                 onStart = {},
                 onStop = {},
-                onNavigateToConfig = {},
                 onBatterySettingsClick = {},
             )
         }
@@ -142,7 +125,6 @@ class MainScreenTest {
                 batteryExempted = false,
                 onStart = {},
                 onStop = {},
-                onNavigateToConfig = {},
                 onBatterySettingsClick = {},
             )
         }
@@ -161,7 +143,6 @@ class MainScreenTest {
                 batteryExempted = true,
                 onStart = {},
                 onStop = {},
-                onNavigateToConfig = {},
                 onBatterySettingsClick = {},
             )
         }
@@ -172,83 +153,14 @@ class MainScreenTest {
     }
 
     @Test
-    fun mainScreen_startClick_callsOnStart() {
-        var startCalled = false
-
-        composeTestRule.setContent {
-            MainScreen(
-                status = TunnelStatus.Disconnected,
-                isConfigValid = true,
-                batteryExempted = true,
-                onStart = { startCalled = true },
-                onStop = {},
-                onNavigateToConfig = {},
-                onBatterySettingsClick = {},
-            )
-        }
-
-        composeTestRule.onNodeWithText("连接")
-            .performClick()
-
-        assert(startCalled) { "onStart should have been called" }
-    }
-
-    @Test
-    fun mainScreen_stopClick_callsOnStop() {
-        var stopCalled = false
-
-        composeTestRule.setContent {
-            MainScreen(
-                status = TunnelStatus.Connected,
-                isConfigValid = true,
-                batteryExempted = true,
-                onStart = {},
-                onStop = { stopCalled = true },
-                onNavigateToConfig = {},
-                onBatterySettingsClick = {},
-            )
-        }
-
-        composeTestRule.onNodeWithText("断开")
-            .performClick()
-
-        assert(stopCalled) { "onStop should have been called" }
-    }
-
-    @Test
-    fun mainScreen_navigateConfigClick_callsOnNavigate() {
-        var navigateCalled = false
-
-        composeTestRule.setContent {
-            MainScreen(
-                status = TunnelStatus.Disconnected,
-                isConfigValid = true,
-                batteryExempted = true,
-                onStart = {},
-                onStop = {},
-                onNavigateToConfig = { navigateCalled = true },
-                onBatterySettingsClick = {},
-            )
-        }
-
-        // The settings icon has content description "配置" in MainScreen.kt
-        composeTestRule.onNodeWithContentDescription("配置")
-            .performClick()
-
-        assert(navigateCalled) { "onNavigateToConfig should have been called" }
-    }
-
-    @Test
     fun configScreen_allFieldsDisplayed() {
         composeTestRule.setContent {
             ConfigScreen(
                 config = ConfigUiState(),
                 batteryExempted = false,
-                onNavigateBack = {},
+                onNavigateToHome = {},
                 onUpdateHost = {},
                 onUpdatePort = {},
-                onUpdateUseTls = {},
-                onUpdateAllowInsecure = {},
                 onUpdateUsername = {},
                 onUpdatePassword = {},
                 onSave = {},
@@ -277,11 +189,9 @@ class MainScreenTest {
                     password = "",
                 ),
                 batteryExempted = true,
-                onNavigateBack = {},
+                onNavigateToHome = {},
                 onUpdateHost = {},
                 onUpdatePort = {},
-                onUpdateUseTls = {},
-                onUpdateAllowInsecure = {},
                 onUpdateUsername = {},
                 onUpdatePassword = {},
                 onSave = {},
@@ -306,11 +216,9 @@ class MainScreenTest {
                     password = "pass",
                 ),
                 batteryExempted = true,
-                onNavigateBack = {},
+                onNavigateToHome = {},
                 onUpdateHost = {},
                 onUpdatePort = {},
-                onUpdateUseTls = {},
-                onUpdateAllowInsecure = {},
                 onUpdateUsername = {},
                 onUpdatePassword = {},
                 onSave = {},

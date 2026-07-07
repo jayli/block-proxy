@@ -13,11 +13,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -26,15 +24,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.blockproxy.android.status.TunnelStatus
 
@@ -54,13 +49,16 @@ fun MainScreen(
     status: TunnelStatus,
     isConfigValid: Boolean,
     batteryExempted: Boolean,
+    host: String = "",
+    port: String = "",
+    isSlideActive: Boolean = false,
+    sliderTrackTone: SliderTrackTone = SliderTrackTone.Neutral,
+    onSlideActiveChange: (Boolean) -> Unit = {},
     onStart: () -> Unit,
     onStop: () -> Unit,
     onBatterySettingsClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var showBatteryDialog by remember { mutableStateOf(false) }
-
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -81,7 +79,7 @@ fun MainScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             // Status card
-            StatusCard(status = status)
+            StatusCard(status = status, host = host, port = port)
 
             // Battery warning
             if (!batteryExempted) {
@@ -90,77 +88,15 @@ fun MainScreen(
 
             Spacer(modifier = Modifier.weight(1f))
 
-            // Connect / Disconnect button
-            val isConnected = status == TunnelStatus.Connected ||
-                status == TunnelStatus.Connecting ||
-                status == TunnelStatus.Reconnecting ||
-                status == TunnelStatus.Preparing
-
-            if (isConnected) {
-                Button(
-                    onClick = onStop,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                    ),
-                ) {
-                    Text("断开")
-                }
-            } else {
-                Button(
-                    onClick = {
-                        if (!batteryExempted) {
-                            showBatteryDialog = true
-                        } else {
-                            onStart()
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = isConfigValid,
-                ) {
-                    Text("连接")
-                }
-                if (!isConfigValid) {
-                    Text(
-                        text = "请先完成配置",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                    )
-                }
-            }
+            // Slide-to-connect button
+            SlideButton(
+                enabled = isConfigValid,
+                isActive = isSlideActive,
+                trackTone = sliderTrackTone,
+                onActiveChange = onSlideActiveChange,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
-    }
-
-    // Battery warning dialog
-    if (showBatteryDialog) {
-        AlertDialog(
-            onDismissRequest = { showBatteryDialog = false },
-            title = { Text("电池优化警告") },
-            text = {
-                Text(
-                    "BlockProxy 未获得电池优化豁免权限。" +
-                        "系统可能会在后台暂停隧道服务，导致连接中断。" +
-                        "建议在系统设置中手动关闭 BlockProxy 的电池优化。"
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showBatteryDialog = false
-                    onBatterySettingsClick()
-                }) {
-                    Text("前往设置")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    showBatteryDialog = false
-                    onStart()
-                }) {
-                    Text("继续连接")
-                }
-            },
-        )
     }
 }
 
@@ -168,7 +104,7 @@ fun MainScreen(
  * Card displaying the current tunnel status with a colored indicator.
  */
 @Composable
-private fun StatusCard(status: TunnelStatus) {
+private fun StatusCard(status: TunnelStatus, host: String = "", port: String = "") {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -189,8 +125,15 @@ private fun StatusCard(status: TunnelStatus) {
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                val display = if (status == TunnelStatus.Connected) {
+                    "已连接 · $host:$port"
+                } else {
+                    status.displayText
+                }
                 Text(
-                    text = status.displayText,
+                    text = display,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Medium,
                 )
