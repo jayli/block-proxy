@@ -8,6 +8,10 @@ import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import java.net.Socket
+import java.util.concurrent.TimeUnit
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.blockproxy.android.config.ConfigRepository
 import com.blockproxy.android.config.DataStoreConfigDataSource
 import com.blockproxy.android.config.DataStoreCredentialDataSource
@@ -58,6 +62,11 @@ class BlockProxyVpnService : VpnService() {
 
         private const val WAKELOCK_TAG = "block-proxy:tunnel"
         private const val STOP_TIMEOUT_MS = 5_000L
+
+        /** Whether the service instance is currently alive. */
+        @Volatile
+        var isRunning: Boolean = false
+            private set
     }
 
     private var serviceScope: CoroutineScope? = null
@@ -72,14 +81,27 @@ class BlockProxyVpnService : VpnService() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
         TunnelNotification.createChannel(this)
         configRepository = ConfigRepository(DataStoreConfigDataSource(this))
         credentialStore = CredentialStore(DataStoreCredentialDataSource(this))
+
+        // Register periodic watchdog
+        val request = PeriodicWorkRequestBuilder<TunnelWatchdogWorker>(
+            15, TimeUnit.MINUTES
+        ).build()
+        WorkManager.getInstance(applicationContext).enqueueUniquePeriodicWork(
+            TunnelWatchdogWorker.WORK_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            request
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Handle stop action
         if (intent?.action == ACTION_STOP) {
+            WorkManager.getInstance(applicationContext)
+                .cancelUniqueWork(TunnelWatchdogWorker.WORK_NAME)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -115,6 +137,8 @@ class BlockProxyVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        isRunning = false
+
         // Cancel the service scope
         serviceScope?.cancel()
         serviceScope = null

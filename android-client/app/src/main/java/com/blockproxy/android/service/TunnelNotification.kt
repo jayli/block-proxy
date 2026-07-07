@@ -29,6 +29,7 @@ object TunnelNotification {
      * Safe to call multiple times — the system ignores duplicate creation.
      */
     fun createChannel(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             CHANNEL_ID,

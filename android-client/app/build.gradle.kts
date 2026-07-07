@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "com.blockproxy.android"
-        minSdk = 26
+        minSdk = 23
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
@@ -65,6 +65,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     testImplementation("app.cash.turbine:turbine:1.1.0")
+    testImplementation("androidx.work:work-testing:2.9.1")
 
     androidTestImplementation(composeBom)
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
