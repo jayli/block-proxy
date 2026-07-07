@@ -40,6 +40,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <pthread.h>
 
 #include <hev-socks5-tunnel.h>
@@ -281,9 +282,12 @@ Java_com_blockproxy_android_tun_Tun2Socks_nativeStart(
 /* ── Java_com_blockproxy_android_tun_Tun2Socks_nativeStop ─────────────────── */
 
 /*
- * Signals the tunnel to stop. The hev_socks5_tunnel_quit() function sets a
- * quit flag that causes hev_socks5_tunnel_main_from_str() to return in the
- * native thread. The thread then exits asynchronously.
+ * Signals the tunnel to stop and closes the TUN fd.
+ *
+ * hev_socks5_tunnel_quit() sets a quit flag that causes the native thread's
+ * event loop to exit. We then explicitly close the TUN fd to immediately
+ * tear down the VPN interface (otherwise the system may keep the VPN active
+ * until the fd is garbage-collected).
  *
  * Safe to call even if the tunnel is not running.
  */
@@ -301,6 +305,16 @@ Java_com_blockproxy_android_tun_Tun2Socks_nativeStop(
 
     LOGI("Stopping tun2socks");
     hev_socks5_tunnel_quit();
+
+    /* Close TUN fd to immediately tear down the VPN interface.
+     * The native thread will exit asynchronously; closing the fd
+     * unblocks any pending read and ensures the VPN is removed. */
+    if (g_tun_fd >= 0) {
+        LOGI("Closing TUN fd=%d", g_tun_fd);
+        close(g_tun_fd);
+        g_tun_fd = -1;
+    }
+
     /* The native thread will exit asynchronously and set g_tunnel_running = 0 */
 }
 

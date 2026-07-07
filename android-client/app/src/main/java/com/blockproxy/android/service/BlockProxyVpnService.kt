@@ -133,6 +133,12 @@ class BlockProxyVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand: action=${intent?.action}, flags=$flags, startId=$startId")
 
+        // Guard against double-start while tunnel is already running
+        if (intent?.action != ACTION_STOP && tunnelClient != null) {
+            Log.w(TAG, "Tunnel already running, ignoring start command")
+            return START_STICKY
+        }
+
         // Handle stop action
         if (intent?.action == ACTION_STOP) {
             Log.i(TAG, "Received ACTION_STOP, stopping service")
