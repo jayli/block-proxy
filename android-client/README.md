@@ -1,12 +1,15 @@
-# Android Client
+# BlockProxy Android Client
 
-Android client implementation lives in this directory.
+Android tunnel client for block-proxy. Establishes 1-2 TLS tunnels to a block-proxy server and allows the server to reverse-connect into the Android device's local network.
 
-Current state: design and implementation plan only. Do not treat this directory
-as a buildable Android project until the implementation plan has been executed.
+## Build
 
-References:
+```bash
+./gradlew :app:assembleDebug
+```
 
-- `docs/superpowers/specs/2026-07-06-android-client-design.md`
-- `docs/superpowers/plans/2026-07-06-android-client-plan.md`
+## Install
 
+```bash
+adb install app/build/outputs/apk/debug/app-debug.apk
+```
