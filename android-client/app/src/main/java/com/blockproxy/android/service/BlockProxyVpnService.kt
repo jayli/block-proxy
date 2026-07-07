@@ -171,6 +171,18 @@ class BlockProxyVpnService : VpnService() {
             } catch (_: Exception) { /* best effort */ }
             wakeLock = null
 
+            // Explicitly close VPN interface to tear down VPN immediately
+            // (onDestroy may not be called synchronously by the system)
+            if (vpnFdDetached) {
+                // fd was handed to tun2socks, already closed by Tun2Socks.stop()
+                vpnFdDetached = false
+            } else {
+                try {
+                    vpnInterface?.close()
+                } catch (_: Exception) { /* best effort */ }
+            }
+            vpnInterface = null
+
             // Remove foreground and stop service
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -408,7 +420,8 @@ class BlockProxyVpnService : VpnService() {
             val builder = Builder()
                 .addAddress("10.255.0.2", 32)
                 .addRoute("0.0.0.0", 0)           // Capture all IPv4 traffic
-                .addDnsServer("8.8.8.8")            // DNS queries via VPN
+                // DNS queries use system default (not via VPN) since tun2socks
+                // only handles TCP and UDP DNS would be dropped
                 .setSession("BlockProxy")
                 .setMtu(1500)
 

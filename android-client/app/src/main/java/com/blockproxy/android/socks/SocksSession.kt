@@ -192,11 +192,13 @@ class SocksSession(
         clientIn: InputStream,
         clientOut: OutputStream,
     ) {
+        android.util.Log.i("SocksSession", "PROXY → ${endpoint.connectHost}:${endpoint.port} (domain=${endpoint.domain})")
         val session = try {
             forwardConnector.openForwardSession(endpoint.connectHost, endpoint.port)
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.e("SocksSession", "Forward CONNECT failed: ${endpoint.connectHost}:${endpoint.port}", e)
             clientOut.write(SocksProtocol.buildResponse(SocksReply.GENERAL_FAILURE))
             clientOut.flush()
             return

@@ -111,9 +111,11 @@ class ForwardSessionRegistry(
         sessions[reqid] = session
 
         // Send CONNECT frame
+        android.util.Log.i("ForwardSession", "Sending CONNECT reqid=$reqid host=$host port=$port")
         try {
             conn.send(Frame.Connect(reqid, hostToAddress(host), port))
         } catch (e: Exception) {
+            android.util.Log.e("ForwardSession", "Failed to send CONNECT frame", e)
             sessions.remove(reqid, session)
             throw e
         }
@@ -150,10 +152,12 @@ class ForwardSessionRegistry(
     fun handleFrame(frame: Frame) {
         when (frame) {
             is Frame.ConnectOk -> {
+                android.util.Log.i("ForwardSession", "CONNECT_OK reqid=${frame.reqid}")
                 val session = sessions[frame.reqid] ?: return
                 session.openResult.complete(Unit)
             }
             is Frame.ConnectFailed -> {
+                android.util.Log.e("ForwardSession", "CONNECT_FAILED reqid=${frame.reqid} host=${sessions[frame.reqid]?.host}:${sessions[frame.reqid]?.port}")
                 val session = sessions.remove(frame.reqid) ?: return
                 session.openResult.completeExceptionally(
                     IOException("Forward CONNECT failed for reqid ${frame.reqid}")
