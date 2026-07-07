@@ -90,9 +90,10 @@ class ProtectedDirectConnector(
 
     override suspend fun connect(host: String, port: Int): Socket {
         val socket = Socket()
-        if (!protect(socket)) {
-            try { socket.close() } catch (_: Exception) {}
-            throw java.io.IOException("VpnService.protect failed for $host:$port")
+        // Primary loop prevention is addDisallowedApplication(); protect() is defense-in-depth.
+        val protected = protect(socket)
+        if (!protected) {
+            android.util.Log.w("ProtectedDirectConnector", "VpnService.protect() returned false for $host:$port; continuing with kernel-level exclusion only")
         }
         socket.tcpNoDelay = true
         withContext(Dispatchers.IO) {

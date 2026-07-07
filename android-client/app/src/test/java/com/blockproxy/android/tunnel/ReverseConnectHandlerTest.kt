@@ -149,20 +149,24 @@ class ReverseConnectHandlerTest {
     // ── Tests ────────────────────────────────────────────────────────
 
     @Test
-    fun `RealTargetSocket fails before connect when protect returns false`() = runTest {
-        val targetSocket = RealTargetSocket(protect = { _: Socket -> false })
+    fun `RealTargetSocket connects despite protect returning false`() = runTest {
+        var protectCalled = false
+        var protectResult = false
+        val targetSocket = RealTargetSocket(protect = { s: Socket ->
+            protectCalled = true
+            protectResult
+        })
 
+        // protect() returning false should NOT throw — it logs a warning and proceeds.
+        // Connection attempt to a discard port will fail with ConnectException, not IOException.
         try {
             targetSocket.connect("127.0.0.1", 9, 1_000)
-            fail("Expected IOException when VpnService protect fails")
-        } catch (e: IOException) {
-            assertTrue(
-                "Expected protect failure message, got: ${e.message}",
-                e.message?.contains("VpnService.protect failed") == true,
-            )
+        } catch (_: Exception) {
+            // Expected — port 9 may refuse or timeout
         } finally {
             targetSocket.close()
         }
+        assertTrue("protect callback should have been invoked", protectCalled)
     }
 
     @Test

@@ -293,9 +293,11 @@ class RealTunnelSocket(
         val sock = if (useTls) createSslSocket() else Socket()
 
         // Protect before connect to avoid routing through our own VPN
-        if (!protect(sock)) {
-            try { sock.close() } catch (_: Exception) {}
-            throw IOException("VpnService.protect failed for $host:$port")
+        // Primary loop prevention is addDisallowedApplication(); protect() is defense-in-depth.
+        // On some emulators protect() always returns false — log warning but continue.
+        val protected = protect(sock)
+        if (!protected) {
+            android.util.Log.w("RealTunnelSocket", "VpnService.protect() returned false for $host:$port; continuing with kernel-level exclusion only")
         }
 
         sock.tcpNoDelay = true

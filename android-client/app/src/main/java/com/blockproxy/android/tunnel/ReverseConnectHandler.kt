@@ -62,9 +62,10 @@ class RealTargetSocket(
         sock.tcpNoDelay = true
         sock.keepAlive = true
         // Protect socket from VPN routing to prevent routing loops
-        if (protect?.invoke(sock) == false) {
-            try { sock.close() } catch (_: Exception) {}
-            throw IOException("VpnService.protect failed for $host:$port")
+        // Primary loop prevention is addDisallowedApplication(); protect() is defense-in-depth.
+        val protected = protect?.invoke(sock) ?: true
+        if (!protected) {
+            android.util.Log.w("RealTargetSocket", "VpnService.protect() returned false for $host:$port; continuing with kernel-level exclusion only")
         }
         withContext(Dispatchers.IO) {
             sock.connect(InetSocketAddress(host, port), timeoutMs.toInt())
