@@ -13,18 +13,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -51,7 +46,6 @@ import com.blockproxy.android.status.TunnelStatus
  * @param batteryExempted Whether battery optimization exemption is granted
  * @param onStart Called when the user taps the connect button
  * @param onStop Called when the user taps the disconnect button
- * @param onNavigateToConfig Called when the user taps the config button
  * @param onBatterySettingsClick Called when the user taps the battery settings link
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -62,7 +56,6 @@ fun MainScreen(
     batteryExempted: Boolean,
     onStart: () -> Unit,
     onStop: () -> Unit,
-    onNavigateToConfig: () -> Unit,
     onBatterySettingsClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -73,11 +66,6 @@ fun MainScreen(
         topBar = {
             TopAppBar(
                 title = { Text("BlockProxy") },
-                actions = {
-                    IconButton(onClick = onNavigateToConfig) {
-                        Icon(Icons.Default.Settings, contentDescription = "配置")
-                    }
-                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,

@@ -52,7 +52,7 @@ import androidx.compose.ui.unit.dp
  *
  * @param config Current config UI state
  * @param batteryExempted Whether battery optimization exemption is granted
- * @param onNavigateBack Called when the user taps the back button or saves
+ * @param onNavigateToHome Called when the user taps the back arrow
  * @param onUpdateHost Called when the host field changes
  * @param onUpdatePort Called when the port field changes
  * @param onUpdateUsername Called when the username field changes
@@ -67,7 +67,7 @@ import androidx.compose.ui.unit.dp
 fun ConfigScreen(
     config: ConfigUiState,
     batteryExempted: Boolean,
-    onNavigateBack: () -> Unit,
+    onNavigateToHome: () -> Unit,
     onUpdateHost: (String) -> Unit,
     onUpdatePort: (String) -> Unit,
     onUpdateUsername: (String) -> Unit,
@@ -87,8 +87,8 @@ fun ConfigScreen(
             TopAppBar(
                 title = { Text("配置") },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    IconButton(onClick = onNavigateToHome) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回首页")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -283,29 +283,15 @@ fun ConfigScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Save button
-            Row(
+            Button(
+                onClick = onSave,
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                enabled = config.host.isNotBlank() &&
+                    config.port.toIntOrNull() in 1..65535 &&
+                    config.username.isNotBlank() &&
+                    config.password.isNotBlank(),
             ) {
-                OutlinedButton(
-                    onClick = onNavigateBack,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("取消")
-                }
-                Button(
-                    onClick = {
-                        onSave()
-                        onNavigateBack()
-                    },
-                    modifier = Modifier.weight(1f),
-                    enabled = config.host.isNotBlank() &&
-                        config.port.toIntOrNull() in 1..65535 &&
-                        config.username.isNotBlank() &&
-                        config.password.isNotBlank(),
-                ) {
-                    Text("保存")
-                }
+                Text("保存")
             }
 
             Spacer(modifier = Modifier.height(16.dp))
