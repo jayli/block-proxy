@@ -36,8 +36,6 @@ data class ConfigUiState(
     val allowInsecure: Boolean = true,
     val username: String = "",
     val password: String = "",
-    val tunnelHost: String = "",
-    val tunnelPort: String = "",
     val isSaved: Boolean = false,
 )
 
@@ -94,8 +92,6 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
                         port = cfg.serverPort.toString(),
                         useTls = cfg.useTls,
                         allowInsecure = cfg.allowInsecure,
-                        tunnelHost = cfg.tunnelHost ?: "",
-                        tunnelPort = cfg.tunnelPort?.toString() ?: "",
                         isSaved = true,
                     )
                 }
@@ -234,14 +230,6 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
         _configUiState.value = _configUiState.value.copy(password = password, isSaved = false)
     }
 
-    fun updateTunnelHost(tunnelHost: String) {
-        _configUiState.value = _configUiState.value.copy(tunnelHost = tunnelHost, isSaved = false)
-    }
-
-    fun updateTunnelPort(tunnelPort: String) {
-        _configUiState.value = _configUiState.value.copy(tunnelPort = tunnelPort, isSaved = false)
-    }
-
     /**
      * Saves the current config and credentials to persistent storage.
      */
@@ -254,8 +242,6 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
                 serverPort = state.port.toIntOrNull() ?: ServerConfig.DEFAULT_PORT,
                 useTls = state.useTls,
                 allowInsecure = state.allowInsecure,
-                tunnelHost = state.tunnelHost.takeIf { it.isNotBlank() },
-                tunnelPort = state.tunnelPort.toIntOrNull(),
             )
             configRepository.save(config)
 

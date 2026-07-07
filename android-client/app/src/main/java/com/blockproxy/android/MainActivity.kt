@@ -87,8 +87,6 @@ class MainActivity : ComponentActivity() {
                         onUpdateAllowInsecure = viewModel::updateAllowInsecure,
                         onUpdateUsername = viewModel::updateUsername,
                         onUpdatePassword = viewModel::updatePassword,
-                        onUpdateTunnelHost = viewModel::updateTunnelHost,
-                        onUpdateTunnelPort = viewModel::updateTunnelPort,
                         onSave = viewModel::saveConfig,
                         onBatterySettingsClick = {
                             startActivity(viewModel.createBatterySettingsIntent())

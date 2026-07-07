@@ -29,6 +29,8 @@ class TunnelClientTest {
         var closed = false
         var connectShouldFail = false
         var enqueueAuthOkOnConnect = false
+        var connectedHost: String? = null
+        var connectedPort: Int? = null
         val writtenBytes = CopyOnWriteArrayList<ByteArray>()
 
         private val incomingData = Channel<ByteArray>(Channel.UNLIMITED)
@@ -36,6 +38,8 @@ class TunnelClientTest {
         override suspend fun connect(host: String, port: Int, timeoutMs: Long) {
             if (connectShouldFail) throw IOException("Connect failed")
             connected = true
+            connectedHost = host
+            connectedPort = port
             if (enqueueAuthOkOnConnect) {
                 incomingData.trySend(FrameCodec.encode(Frame.AuthOk))
             }
@@ -560,5 +564,35 @@ class TunnelClientTest {
         // Both sockets should be closed
         assertTrue("Socket1 should be closed", socket1.closed)
         assertTrue("Socket2 should be closed", socket2.closed)
+    }
+
+    // 13. TunnelClient connects to serverHost and serverPort
+    @Test
+    fun `tunnel client connects to serverHost and serverPort`() = runTest {
+        val factory = FakeTunnelSocketFactory()
+        val socket = ControllableTunnelSocket().apply { enqueueAuthOkOnConnect = true }
+        factory.enqueue(socket)
+        // Second socket for replenishment
+        val socket2 = ControllableTunnelSocket().apply { enqueueAuthOkOnConnect = true }
+        factory.enqueue(socket2)
+
+        val config = ServerConfig(serverHost = "my.server.com", serverPort = 9999)
+        val client = TunnelClient(
+            config = config,
+            credentials = testCredentials,
+            socketFactory = factory,
+            targetSocketFactory = FakeTargetSocketFactory(),
+            clientScope = backgroundScope,
+            idleTimeoutMs = Long.MAX_VALUE,
+        )
+
+        client.start()
+        runCurrent()
+
+        assertEquals(TunnelStatus.Connected, client.status.value)
+        assertEquals("my.server.com", socket.connectedHost)
+        assertEquals(9999, socket.connectedPort)
+
+        client.stop()
     }
 }

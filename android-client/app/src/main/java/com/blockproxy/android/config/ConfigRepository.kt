@@ -40,9 +40,6 @@ class ConfigRepository(private val source: ConfigDataSource) {
     suspend fun save(config: ServerConfig) {
         require(config.serverHost.isNotBlank()) { "serverHost must not be blank" }
         require(config.serverPort in 1..65535) { "serverPort must be in 1..65535" }
-        config.tunnelPort?.let {
-            require(it in 1..65535) { "tunnelPort must be in 1..65535" }
-        }
         source.save(config)
     }
 
@@ -78,8 +75,6 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             serverPort = prefs[KEY_PORT] ?: ServerConfig.DEFAULT_PORT,
             useTls = prefs[KEY_USE_TLS] ?: true,
             allowInsecure = prefs[KEY_ALLOW_INSECURE] ?: true,
-            tunnelHost = prefs[KEY_TUNNEL_HOST],
-            tunnelPort = prefs[KEY_TUNNEL_PORT],
         )
     }
 
@@ -89,10 +84,6 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             prefs[KEY_PORT] = config.serverPort
             prefs[KEY_USE_TLS] = config.useTls
             prefs[KEY_ALLOW_INSECURE] = config.allowInsecure
-            if (config.tunnelHost != null) prefs[KEY_TUNNEL_HOST] = config.tunnelHost
-            else prefs.remove(KEY_TUNNEL_HOST)
-            if (config.tunnelPort != null) prefs[KEY_TUNNEL_PORT] = config.tunnelPort
-            else prefs.remove(KEY_TUNNEL_PORT)
         }
     }
 
@@ -105,7 +96,5 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
         val KEY_PORT = intPreferencesKey("server_port")
         val KEY_USE_TLS = booleanPreferencesKey("use_tls")
         val KEY_ALLOW_INSECURE = booleanPreferencesKey("allow_insecure")
-        val KEY_TUNNEL_HOST = stringPreferencesKey("tunnel_host")
-        val KEY_TUNNEL_PORT = intPreferencesKey("tunnel_port")
     }
 }

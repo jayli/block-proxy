@@ -56,8 +56,6 @@ import androidx.compose.ui.unit.dp
  * @param onUpdateAllowInsecure Called when the allow insecure toggle changes
  * @param onUpdateUsername Called when the username field changes
  * @param onUpdatePassword Called when the password field changes
- * @param onUpdateTunnelHost Called when the tunnel host field changes
- * @param onUpdateTunnelPort Called when the tunnel port field changes
  * @param onSave Called when the user taps the save button
  * @param onBatterySettingsClick Called when the user taps the battery settings link
  */
@@ -73,8 +71,6 @@ fun ConfigScreen(
     onUpdateAllowInsecure: (Boolean) -> Unit,
     onUpdateUsername: (String) -> Unit,
     onUpdatePassword: (String) -> Unit,
-    onUpdateTunnelHost: (String) -> Unit,
-    onUpdateTunnelPort: (String) -> Unit,
     onSave: () -> Unit,
     onBatterySettingsClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -206,40 +202,6 @@ fun ConfigScreen(
                         )
                     }
                 },
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Optional tunnel override section
-            Text(
-                text = "隧道覆盖（可选）",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
-
-            Text(
-                text = "如果隧道地址与服务器地址不同，请在此填写。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            OutlinedTextField(
-                value = config.tunnelHost,
-                onValueChange = onUpdateTunnelHost,
-                label = { Text("隧道地址") },
-                placeholder = { Text("留空则使用服务器地址") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-            )
-
-            OutlinedTextField(
-                value = config.tunnelPort,
-                onValueChange = onUpdateTunnelPort,
-                label = { Text("隧道端口") },
-                placeholder = { Text("留空则使用服务器端口") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             )
 
             Spacer(modifier = Modifier.height(8.dp))

@@ -119,32 +119,4 @@ class ConfigRepositoryTest {
         repository.save(ServerConfig(serverHost = "host.example.com", serverPort = 0))
     }
 
-    @Test
-    fun `effectiveHost falls back to serverHost when tunnelHost is null`() {
-        val config = ServerConfig(serverHost = "main.example.com", serverPort = 8003)
-        assertEquals("main.example.com", config.effectiveHost)
-        assertEquals(8003, config.effectivePort)
-    }
-
-    @Test
-    fun `effectiveHost uses tunnelHost when provided`() {
-        val config = ServerConfig(
-            serverHost = "main.example.com",
-            serverPort = 8003,
-            tunnelHost = "tunnel.example.com",
-            tunnelPort = 9999,
-        )
-        assertEquals("tunnel.example.com", config.effectiveHost)
-        assertEquals(9999, config.effectivePort)
-    }
-
-    @Test
-    fun `effectiveHost falls back when tunnelHost is blank`() {
-        val config = ServerConfig(
-            serverHost = "main.example.com",
-            serverPort = 8003,
-            tunnelHost = "   ",
-        )
-        assertEquals("main.example.com", config.effectiveHost)
-    }
 }

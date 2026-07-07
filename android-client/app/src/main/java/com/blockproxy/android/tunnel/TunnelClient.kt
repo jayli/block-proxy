@@ -249,7 +249,7 @@ class TunnelClient(
         connRef = conn
 
         try {
-            conn.connect(config.effectiveHost, config.effectivePort)
+            conn.connect(config.serverHost, config.serverPort)
             authCompleted.await()
             return conn
         } catch (e: CancellationException) {

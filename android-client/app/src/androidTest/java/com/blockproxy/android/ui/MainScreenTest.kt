@@ -251,8 +251,6 @@ class MainScreenTest {
                 onUpdateAllowInsecure = {},
                 onUpdateUsername = {},
                 onUpdatePassword = {},
-                onUpdateTunnelHost = {},
-                onUpdateTunnelPort = {},
                 onSave = {},
                 onBatterySettingsClick = {},
             )
@@ -284,8 +282,6 @@ class MainScreenTest {
                 onUpdateAllowInsecure = {},
                 onUpdateUsername = {},
                 onUpdatePassword = {},
-                onUpdateTunnelHost = {},
-                onUpdateTunnelPort = {},
                 onSave = {},
                 onBatterySettingsClick = {},
             )
@@ -313,8 +309,6 @@ class MainScreenTest {
                 onUpdateAllowInsecure = {},
                 onUpdateUsername = {},
                 onUpdatePassword = {},
-                onUpdateTunnelHost = {},
-                onUpdateTunnelPort = {},
                 onSave = {},
                 onBatterySettingsClick = {},
             )
