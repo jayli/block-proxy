@@ -16,11 +16,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 ### Testing
 - `npm run test:proxy` – 一键代理连通性/性能/吞吐量测试（需先启动代理服务）
 - `npm test` – Run React tests (currently limited, based on CRA defaults)
+- `npm run test:android` – Android 单元测试（cd android-client && gradlew :app:testDebugUnitTest）
+- `npm run test:android:emulator` – Android 仪器化测试（需模拟器运行，自动清除代理环境变量）
 
 ### Utilities
 - `npm run rm_bkconfig` – Remove backup config file
 - `npm run gen-icons` – Generate client app icons from `icons/app_icon.png`
 - `npm run watch:icons` – Watch icon changes and auto-regenerate
+
+### Android
+- `npm run android:build` – 构建 debug APK（cd android-client && gradlew :app:assembleDebug）
+- `npm run android:install` – 通过 adb 安装 APK 到连接的设备/模拟器
+- `npm run android:start` – 启动 Android 应用 MainActivity
+- `npm run android:logcat` – 过滤 logcat 日志（BlockProxy|Tunnel|AndroidRuntime）
+- `npm run android:devices` – 列出已连接的 adb 设备
+- `npm run android:native:build` – 构建 tun2socks 原生 .so 库（需要 ANDROID_NDK_HOME 环境变量）
 
 ### Build & Deployment
 - `npm run build` – Build React frontend
@@ -174,6 +184,57 @@ main.py (入口, 文件锁单实例, 崩溃自动重启) → app.py (纯 PyObjC 
 - **窗口作为独立进程**：配置/分流/日志窗口通过 `subprocess.Popen` 用系统 Python 启动（Nuitka 编译后 `sys.executable` 不是 Python 解释器），关闭后自动检测配置变化并重启代理
 - **Nuitka 构建后处理**：`build.sh` 自动重命名可执行文件、修正 Info.plist（CFBundleExecutable、LSUIElement 等）
 
+## Android Client (`/android-client/`)
+
+Android VPN 代理客户端，Kotlin + Jetpack Compose UI，通过 VpnService + tun2socks 原生库捕获全局流量，经本地 SOCKS5 服务器分流后走隧道或直接连接。
+
+### Commands
+- `npm run android:build` – 构建 debug APK
+- `npm run android:install` – adb 安装 APK
+- `npm run android:start` – 启动应用
+- `npm run android:logcat` – 查看日志
+- `npm run android:devices` – 列出 adb 设备
+- `npm run test:android` – 运行单元测试
+- `npm run test:android:emulator` – 运行仪器化测试（需模拟器）
+- `npm run android:native:build` – 构建原生 .so 库（NDK）
+
+### Build Prerequisites
+- Android Studio + SDK (API 35, minSdk 26)
+- NDK（通过 `ANDROID_NDK_HOME` 环境变量配置），`build-native.sh` 编译 tun2socks 原生库
+- 首次构建需先 `npm run android:native:build` 生成 `jniLibs/` 下的 .so 文件
+- ABI: `arm64-v8a`, `armeabi-v7a`, `x86_64`
+
+### Architecture
+```
+VpnService TUN fd → tun2socks (native C, JNI) → 127.0.0.1:socksPort
+                                                        ↓
+                                                  LocalSocksServer
+                                                        ↓
+                                                  RoutingEngine
+                                                   ↓ DIRECT    ↓ PROXY
+                                             protected Socket  ForwardSession
+                                                   ↓              ↓
+                                               target host   tunnel server
+```
+
+**核心组件：**
+- **BlockProxyVpnService** (`service/`) — VpnService 生命周期管理，START_STICKY + WakeLock + Foreground 通知。`setupTunnel()` 串联：加载配置/凭据 → 创建 RoutingEngine → establishVpnInterface → 启动 LocalSocksServer → Tun2Socks.start → 启动 TunnelClient
+- **Tun2Socks** (`tun/`) — JNI 桥接层，Kotlin `object` 包装 native 调用。`start()` 通过 `ParcelFileDescriptor.detachFd()` 转移 fd 所有权给原生库。`setProtectCallback()` 注册 VpnService.protect() 回调（defense-in-depth）
+- **tun2socks_jni.c** (`native/jni/`) — C JNI 桥接，spawns detached pthread 运行 `hev_socks5_tunnel_main_from_str()`。构建 YAML 配置字符串（tunnel MTU + socks5 address/port），JNI_OnLoad 缓存 JavaVM + VpnService.protect method ID
+- **LocalSocksServer** (`socks/`) — 本地 SOCKS5 服务器，接受 tun2socks 转发的连接。每个 CONNECT 请求经 RoutingEngine 判断：DIRECT 走 ProtectedDirectConnector（VpnService.protect 绕过 VPN），PROXY 走 TunnelForwardConnector（通过 ForwardSessionRegistry 创建 ForwardSession）
+- **RoutingEngine** (`routing/`) — 基于 geosite 数据库的域名分流。GeositeLoader 解析 geosite.dat（Xray/V2Ray 兼容格式），GeositeMatcher 支持 full/domain/plain/regex 四种匹配模式。RoutingConfig 从 DataStore 读取
+- **TunnelClient** (`tunnel/`) — 管理 TLS 隧道连接池。ForwardSessionRegistry 管理 reqid（0x8000-0xFFFE），ReverseConnectHandler 处理远端反向连接请求
+- **UI** (`ui/`) — Jetpack Compose 界面，ConfigScreen（服务器配置）、RoutingScreen（分流规则）、StatusCard（连接状态）。Navigation 通过 AppNavigation
+- **StatusStore** (`status/`) — 全局 StateFlow 状态管理，TunnelStatus 枚举（Preparing/Connecting/Connected/Disconnected/Error）
+
+### Key Design Decisions
+- **VPN 路由循环防护**：主机制是 `addDisallowedApplication(packageName)`（内核级排除本应用所有 socket），defense-in-depth 是 `VpnService.protect()` 逐 socket 绕过
+- **TUN fd 所有权转移**：`ParcelFileDescriptor.detachFd()` 将 fd 交给 native 库管理，onDestroy 中只在 fd 未 detach 时才 close
+- **hev-socks5-tunnel 作为 git submodule**（`native/hev-socks5-tunnel/`，v2.15.0）：内含 lwip 用户态 TCP/IP 栈 + hev-task-system 协作式多任务，整个原生层仅一个 pthread
+- **DataStore 持久化**：配置/凭据/分流规则均通过 Jetpack DataStore 存储，ConfigRepository/CredentialStore/RoutingConfigRepository 封装读写
+- **WorkManager 看门狗**：TunnelWatchdogWorker 每 15 分钟检查隧道健康状态
+- **SOCKS5 协议**：CONNECT 命令支持 ATYP_DOMAIN/IPv4/IPv6，用户名密码认证
+
 ## Important Notes
 - **Testing 陷阱**: 通过代理请求 `127.0.0.1` 会被 AnyProxy 拦截返回管理页面。Mock Server 需绑定 `0.0.0.0` 并通过 LAN IP 访问
 - SOCKS5 不支持 MAC 地址定向拦截（仅 HTTP 代理支持）
@@ -182,6 +243,8 @@ main.py (入口, 文件锁单实例, 崩溃自动重启) → app.py (纯 PyObjC 
 - iOS Safari 安全限制：带认证的代理不能和网关 IP 相同
 - 路由表每 2 小时刷新；新设备可能需要手动刷新
 - ACR 推送前需先 `docker login --username=hi50078584@aliyun.com crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com`
+- **Android 构建顺序**：修改 native C 代码后需先 `npm run android:native:build` 重新编译 .so，再 `npm run android:build` 打包 APK
+- **Android logcat 调试**：`npm run android:logcat` 过滤 BlockProxy/Tunnel/AndroidRuntime 标签，崩溃堆栈在 AndroidRuntime 中
 
 # Project Rules & Skills
 
