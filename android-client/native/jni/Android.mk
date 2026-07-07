@@ -41,6 +41,7 @@ LOCAL_PATH := $(NATIVE_DIR)/jni
 include $(CLEAR_VARS)
 LOCAL_MODULE := tun2socks
 LOCAL_SRC_FILES := tun2socks_jni.c
+LOCAL_C_INCLUDES := $(HEV_TUNNEL_DIR)/include
 LOCAL_SHARED_LIBRARIES := hev-socks5-tunnel
 LOCAL_LDLIBS := -llog
 include $(BUILD_SHARED_LIBRARY)
