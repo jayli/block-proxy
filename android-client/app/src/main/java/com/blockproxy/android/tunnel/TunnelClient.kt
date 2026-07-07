@@ -64,6 +64,7 @@ class TunnelClient(
     val status: StateFlow<TunnelStatus> = _status.asStateFlow()
 
     private val handler = ReverseConnectHandler(clientScope, targetSocketFactory)
+    private val forwardRegistry = ForwardSessionRegistry(clientScope)
 
     private val connectionsMutex = Mutex()
     private val connections = mutableListOf<TunnelConnection>()
@@ -88,6 +89,26 @@ class TunnelClient(
         reconnectJob = clientScope.launch { mainLoop() }
     }
 
+    /**
+     * Opens a forward CONNECT session to the specified host and port.
+     *
+     * This method is called by LocalSocksServer to establish a tunnel for
+     * client-initiated connections. The session will use one of the active
+     * tunnel connections (round-robin selection).
+     *
+     * @param host Target hostname or IP address
+     * @param port Target port number
+     * @return ForwardSession representing the tunnel connection
+     * @throws IOException if no connections are available or connection fails
+     */
+    suspend fun openForwardSession(host: String, port: Int): ForwardSession {
+        val conns = connectionsMutex.withLock { connections.toList() }
+        if (conns.isEmpty()) {
+            throw IOException("No tunnel connections available")
+        }
+        return forwardRegistry.open(host, port, conns)
+    }
+
     suspend fun stop(timeoutMs: Long = 5_000L) {
         stopped = true
 
@@ -101,6 +122,9 @@ class TunnelClient(
         try { replenishJob?.join() } catch (_: CancellationException) {}
         replenishJob = null
         isReplenishing = false
+
+        // Stop forward sessions before closing connections
+        forwardRegistry.stop()
 
         // Close all connections (with timeout to avoid hanging on stuck I/O)
         kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
@@ -210,11 +234,31 @@ class TunnelClient(
                     frame is Frame.AuthOk -> {
                         authCompleted.complete(Unit)
                     }
-                    frame is Frame.Connect || frame is Frame.Data || frame is Frame.Close -> {
+                    // Server-initiated reverse CONNECT
+                    frame is Frame.Connect -> {
                         val c = connRef
                         if (c != null) {
-                            // handler.handleFrame is suspend — launch in clientScope
                             clientScope.launch { handler.handleFrame(c, frame) }
+                        }
+                    }
+                    // Forward session responses (client-initiated)
+                    frame is Frame.ConnectOk || frame is Frame.ConnectFailed -> {
+                        forwardRegistry.handleFrame(frame)
+                    }
+                    // Data/Close: route based on reqid range
+                    frame is Frame.Data || frame is Frame.Close -> {
+                        val reqid = when (frame) {
+                            is Frame.Data -> frame.reqid
+                            is Frame.Close -> frame.reqid
+                            else -> -1
+                        }
+                        if (forwardRegistry.isForwardReqid(reqid)) {
+                            forwardRegistry.handleFrame(frame)
+                        } else {
+                            val c = connRef
+                            if (c != null) {
+                                clientScope.launch { handler.handleFrame(c, frame) }
+                            }
                         }
                     }
                     // Ping, Pong, Unknown, etc. — ignore (TunnelConnection
@@ -294,6 +338,7 @@ class TunnelClient(
                 TunnelStatus.AuthFailed else TunnelStatus.Occupied
             clientScope.launch {
                 handler.closeSessionsFor(conn)
+                forwardRegistry.closeSessionsFor(conn)
                 removeConnection(conn)
             }
             return
@@ -302,6 +347,7 @@ class TunnelClient(
         clientScope.launch {
             // Close sessions owned by this connection
             handler.closeSessionsFor(conn)
+            forwardRegistry.closeSessionsFor(conn)
 
             // Remove from registry and check if it was actually registered.
             // Connections that failed during authentication are never added
