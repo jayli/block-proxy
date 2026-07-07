@@ -23,6 +23,10 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name="androidx.activity.ComponentActivity"
+            android:exported="true" />
+
         <service
             android:name=".service.BlockProxyVpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"
