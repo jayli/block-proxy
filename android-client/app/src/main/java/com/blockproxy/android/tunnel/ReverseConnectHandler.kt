@@ -35,7 +35,7 @@ interface TargetSocketFactory {
  *                Should be called before connecting the socket to prevent routing loops.
  */
 class RealTargetSocketFactory(
-    private val protect: ((Socket) -> Unit)? = null,
+    private val protect: ((Socket) -> Boolean)? = null,
 ) : TargetSocketFactory {
     override fun create(): TunnelSocket = RealTargetSocket(protect)
 }
@@ -50,7 +50,7 @@ class RealTargetSocketFactory(
  *                Called before connecting to prevent routing loops.
  */
 class RealTargetSocket(
-    private val protect: ((Socket) -> Unit)? = null,
+    private val protect: ((Socket) -> Boolean)? = null,
 ) : TunnelSocket {
     private var socket: Socket? = null
     private var inputStream: InputStream? = null
@@ -62,7 +62,10 @@ class RealTargetSocket(
         sock.tcpNoDelay = true
         sock.keepAlive = true
         // Protect socket from VPN routing to prevent routing loops
-        protect?.invoke(sock)
+        if (protect?.invoke(sock) == false) {
+            try { sock.close() } catch (_: Exception) {}
+            throw IOException("VpnService.protect failed for $host:$port")
+        }
         withContext(Dispatchers.IO) {
             sock.connect(InetSocketAddress(host, port), timeoutMs.toInt())
         }

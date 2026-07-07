@@ -10,6 +10,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.IOException
+import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.delay
@@ -146,6 +147,23 @@ class ReverseConnectHandlerTest {
     }
 
     // ── Tests ────────────────────────────────────────────────────────
+
+    @Test
+    fun `RealTargetSocket fails before connect when protect returns false`() = runTest {
+        val targetSocket = RealTargetSocket(protect = { _: Socket -> false })
+
+        try {
+            targetSocket.connect("127.0.0.1", 9, 1_000)
+            fail("Expected IOException when VpnService protect fails")
+        } catch (e: IOException) {
+            assertTrue(
+                "Expected protect failure message, got: ${e.message}",
+                e.message?.contains("VpnService.protect failed") == true,
+            )
+        } finally {
+            targetSocket.close()
+        }
+    }
 
     @Test
     fun `CONNECT success sends CONNECT_OK on same tunnel connection`() = runTest {

@@ -321,7 +321,11 @@ class BlockProxyVpnService : VpnService() {
         // Create protect callback for direct connections and tunnel sockets.
         // Primary loop prevention is addDisallowedApplication() in the VPN builder;
         // protect() is defense-in-depth for per-socket bypass.
-        val protectCallback: (Socket) -> Unit = { socket -> protect(socket) }
+        val protectCallback: (Socket) -> Boolean = { socket ->
+            val ok = protect(socket)
+            Log.i(TAG, "VpnService.protect(${socket.hashCode()}) = $ok")
+            ok
+        }
 
         // Establish VPN interface with routes and DNS
         val pfd = establishVpnInterface()
@@ -444,7 +448,7 @@ class BlockProxyVpnService : VpnService() {
             try {
                 builder.addDisallowedApplication(packageName)
             } catch (e: Exception) {
-                Log.w(TAG, "addDisallowedApplication failed", e)
+                Log.e(TAG, "addDisallowedApplication failed; relying on per-socket protect()", e)
             }
 
             builder.establish()

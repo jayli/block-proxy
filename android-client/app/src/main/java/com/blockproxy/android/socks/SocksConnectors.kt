@@ -84,13 +84,16 @@ interface ForwardConnector {
  * @param timeoutMs Connection timeout in milliseconds (default 10s)
  */
 class ProtectedDirectConnector(
-    private val protect: (Socket) -> Unit = {},
+    private val protect: (Socket) -> Boolean = { true },
     private val timeoutMs: Int = 10_000,
 ) : DirectConnector {
 
     override suspend fun connect(host: String, port: Int): Socket {
         val socket = Socket()
-        protect(socket)
+        if (!protect(socket)) {
+            try { socket.close() } catch (_: Exception) {}
+            throw java.io.IOException("VpnService.protect failed for $host:$port")
+        }
         socket.tcpNoDelay = true
         withContext(Dispatchers.IO) {
             socket.connect(InetSocketAddress(host, port), timeoutMs)

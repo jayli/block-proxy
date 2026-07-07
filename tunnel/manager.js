@@ -157,6 +157,12 @@ class TunnelManager {
     const targetHost = frame.addr;
     const targetPort = frame.port;
 
+    if (this.matchesTunnelDomain(targetHost)) {
+      console.warn(`[Tunnel] Reject recursive forward CONNECT ${reqid}: ${targetHost}:${targetPort}`);
+      this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid }, socket);
+      return;
+    }
+
     console.log(`[Tunnel] Forward CONNECT ${reqid}: ${targetHost}:${targetPort} (connection ${[...this._server._clientSockets].indexOf(socket) + 1}/${this._server._clientSockets.size})`);
 
     const stream = new TunnelDuplex(this, reqid);

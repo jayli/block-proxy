@@ -5,11 +5,14 @@ const TunnelManager = require('../manager');
 
 function createMockServer() {
   const handlers = [];
+  const sentFrames = [];
   return {
     onFrame: (h) => handlers.push(h),
-    sendFrame: () => {},
-    _emit: (frame) => handlers.forEach(h => h(frame)),
-    _handlers: handlers
+    sendFrame: (frame) => { sentFrames.push(frame); },
+    _emit: (frame, socket = {}) => handlers.forEach(h => h(frame, socket)),
+    _handlers: handlers,
+    _sentFrames: sentFrames,
+    _clientSockets: new Set([{}])
   };
 }
 
@@ -76,5 +79,27 @@ describe('TunnelManager.forward', () => {
     assert.ok(stream, 'Disconnected forward should return error stream');
     const [disconnectedErr] = await once(stream, 'error');
     assert.equal(disconnectedErr.message, 'tunnel-disconnected');
+  });
+
+  it('should reject recursive forward CONNECT to tunnel domains', () => {
+    const server = createMockServer();
+    const manager = new TunnelManager(server, {
+      tunnel_domains: ['a.com'],
+      proxy_port: 65535
+    });
+    const socket = [...server._clientSockets][0];
+
+    server._emit({
+      type: 0x01,
+      reqid: 0x8001,
+      atyp: 0x03,
+      addr: 'a.com',
+      port: 443
+    }, socket);
+
+    assert.deepEqual(server._sentFrames, [
+      { type: 0x81, reqid: 0x8001 }
+    ]);
+    assert.equal(manager.getStatus().activeRequests, 0);
   });
 });

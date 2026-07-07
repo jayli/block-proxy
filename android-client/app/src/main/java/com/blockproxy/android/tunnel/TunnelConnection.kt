@@ -282,7 +282,7 @@ class TunnelConnection(
 class RealTunnelSocket(
     private val useTls: Boolean,
     private val allowInsecure: Boolean,
-    private val protect: (Socket) -> Unit = {},
+    private val protect: (Socket) -> Boolean = { true },
 ) : TunnelSocket {
 
     private var socket: Socket? = null
@@ -293,7 +293,10 @@ class RealTunnelSocket(
         val sock = if (useTls) createSslSocket() else Socket()
 
         // Protect before connect to avoid routing through our own VPN
-        protect(sock)
+        if (!protect(sock)) {
+            try { sock.close() } catch (_: Exception) {}
+            throw IOException("VpnService.protect failed for $host:$port")
+        }
 
         sock.tcpNoDelay = true
         sock.keepAlive = true
