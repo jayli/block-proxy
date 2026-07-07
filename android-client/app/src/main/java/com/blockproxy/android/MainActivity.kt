@@ -100,8 +100,6 @@ class MainActivity : ComponentActivity() {
                         onNavigateBack = { currentScreen = "main" },
                         onUpdateHost = viewModel::updateHost,
                         onUpdatePort = viewModel::updatePort,
-                        onUpdateUseTls = viewModel::updateUseTls,
-                        onUpdateAllowInsecure = viewModel::updateAllowInsecure,
                         onUpdateUsername = viewModel::updateUsername,
                         onUpdatePassword = viewModel::updatePassword,
                         onSave = viewModel::saveConfig,

@@ -55,8 +55,6 @@ import androidx.compose.ui.unit.dp
  * @param onNavigateBack Called when the user taps the back button or saves
  * @param onUpdateHost Called when the host field changes
  * @param onUpdatePort Called when the port field changes
- * @param onUpdateUseTls Called when the TLS toggle changes
- * @param onUpdateAllowInsecure Called when the allow insecure toggle changes
  * @param onUpdateUsername Called when the username field changes
  * @param onUpdatePassword Called when the password field changes
  * @param onSave Called when the user taps the save button
@@ -72,8 +70,6 @@ fun ConfigScreen(
     onNavigateBack: () -> Unit,
     onUpdateHost: (String) -> Unit,
     onUpdatePort: (String) -> Unit,
-    onUpdateUseTls: (Boolean) -> Unit,
-    onUpdateAllowInsecure: (Boolean) -> Unit,
     onUpdateUsername: (String) -> Unit,
     onUpdatePassword: (String) -> Unit,
     onSave: () -> Unit,
@@ -135,39 +131,6 @@ fun ConfigScreen(
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("启用 TLS")
-                Switch(
-                    checked = config.useTls,
-                    onCheckedChange = onUpdateUseTls,
-                )
-            }
-
-            if (config.useTls) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column {
-                        Text("允许不安全证书")
-                        Text(
-                            text = "接受自签名证书",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(
-                        checked = config.allowInsecure,
-                        onCheckedChange = onUpdateAllowInsecure,
-                    )
-                }
-            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
