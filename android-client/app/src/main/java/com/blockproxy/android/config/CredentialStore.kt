@@ -8,7 +8,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import java.util.Base64
+import android.util.Base64
 
 // ─── Abstraction for testability ────────────────────────────────────────────
 
@@ -52,7 +52,7 @@ private val Context.credentialDataStore: DataStore<Preferences> by preferencesDa
  *
  * - `username` is stored as a plain string (it is not secret).
  * - `password` is Base64-encoded before storage so it is never persisted as
- *   cleartext. `java.util.Base64` is available on Android API 26+ (our minSdk).
+ *   cleartext. `android.util.Base64` is available on all Android API levels.
  *
  * **Security note:** Base64 is encoding, not encryption. A determined attacker
  * with access to the device's data can trivially recover the password. This is
@@ -69,13 +69,14 @@ class DataStoreCredentialDataSource(context: Context) : CredentialDataSource {
     override fun observe(): Flow<TunnelCredentials?> = store.data.map { prefs ->
         val username = prefs[KEY_USERNAME] ?: return@map null
         val encodedPassword = prefs[KEY_PASSWORD] ?: return@map null
-        val password = String(Base64.getDecoder().decode(encodedPassword))
+        val password = String(Base64.decode(encodedPassword, Base64.NO_WRAP))
         TunnelCredentials(username = username, password = password)
     }
 
     override suspend fun save(credentials: TunnelCredentials) {
-        val encodedPassword = Base64.getEncoder().encodeToString(
-            credentials.password.toByteArray(Charsets.UTF_8)
+        val encodedPassword = Base64.encodeToString(
+            credentials.password.toByteArray(Charsets.UTF_8),
+            Base64.NO_WRAP
         )
         store.edit { prefs ->
             prefs[KEY_USERNAME] = credentials.username

@@ -3,6 +3,7 @@ package com.blockproxy.android.service
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
+import android.os.Build
 import com.blockproxy.android.status.StatusStore
 import com.blockproxy.android.status.TunnelStatus
 
@@ -57,7 +58,11 @@ class TunnelServiceController(private val context: Context) {
      */
     fun startServiceInternal() {
         val intent = Intent(context, BlockProxyVpnService::class.java)
-        context.startForegroundService(intent)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
     }
 
     /**

@@ -184,7 +184,12 @@ class BlockProxyVpnService : VpnService() {
             vpnInterface = null
 
             // Remove foreground and stop service
-            stopForeground(STOP_FOREGROUND_REMOVE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
             stopSelf()
             return START_NOT_STICKY
         }

@@ -2,6 +2,7 @@ package com.blockproxy.android.service
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.blockproxy.android.config.ConfigRepository
@@ -68,7 +69,11 @@ class TunnelWatchdogWorker(
 
         if (shouldRestart(config != null, lastStatus, isRunning)) {
             val intent = Intent(applicationContext, BlockProxyVpnService::class.java)
-            applicationContext.startForegroundService(intent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                applicationContext.startForegroundService(intent)
+            } else {
+                applicationContext.startService(intent)
+            }
         }
 
         return Result.success()
