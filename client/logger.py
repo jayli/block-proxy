@@ -74,7 +74,7 @@ def setup_logging(log_dir=None):
         thread_name = args.thread.name if args.thread else "unknown"
         crash_logger.critical(
             f"Thread '{thread_name}' crashed",
-            exc_info=(args.exc_type, args.exc_value, args.exc_tb),
+            exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
         )
 
     threading.excepthook = _thread_excepthook

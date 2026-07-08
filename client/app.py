@@ -8,6 +8,7 @@ import objc
 import os
 import sys
 import platform
+import socket
 import subprocess
 import threading
 
@@ -237,17 +238,10 @@ class AppController(NSObject):
             return
 
         def _start():
+            # 1. 启动本地代理服务器（端口绑定，这是用户代理的核心）
             try:
                 self.proxy.start(self.config.data,
                                   config_dir=os.path.dirname(self.config.config_path))
-
-                if self.config.data.get('tunnel', {}).get('enabled'):
-                    self.tunnel_client = TunnelClient(
-                        self.config.data,
-                        on_status_change=lambda status, detail="": None
-                    )
-                    self.tunnel_client.start()
-                    self.proxy.set_tunnel_client(self.tunnel_client)
             except OSError as e:
                 self._run_on_main(
                     lambda: self._show_notification(
@@ -258,6 +252,7 @@ class AppController(NSObject):
                 )
                 return
 
+            # 2. 设置系统代理（本地服务器已就绪）
             if self.config.data["mode"] == "global":
                 try:
                     self.sys_proxy.enable(
@@ -271,9 +266,40 @@ class AppController(NSObject):
                         )
                     )
 
+            # 3. 启动隧道客户端（独立于本地代理，失败不影响本地代理）
+            if self._tunnel_enabled():
+                self._start_tunnel()
+
             self._run_on_main(self._on_connected)
 
         threading.Thread(target=_start, daemon=True).start()
+
+    def _start_tunnel(self):
+        """Start tunnel client. Called from _connect or health check.
+        Failure is non-fatal — local proxy continues to work."""
+        try:
+            tc = TunnelClient(
+                self.config.data,
+                on_status_change=lambda status, detail="": None
+            )
+            tc.start()
+            self.tunnel_client = tc
+            self.proxy.set_tunnel_client(tc)
+        except Exception as e:
+            logger.warning(f"Failed to start tunnel client: {e}", exc_info=True)
+
+    def _stop_tunnel(self):
+        """Stop tunnel client only (local proxy keeps running)."""
+        try:
+            self.proxy.set_tunnel_client(None)
+        except Exception as e:
+            logger.warning(f"Failed to clear tunnel client reference: {e}")
+        if self.tunnel_client:
+            try:
+                self.tunnel_client.stop()
+            except Exception as e:
+                logger.warning(f"Failed to stop tunnel client: {e}")
+            self.tunnel_client = None
 
     def _on_connected(self):
         self.connected = True
@@ -286,22 +312,12 @@ class AppController(NSObject):
         except Exception as e:
             logger.warning(f"Failed to disable system proxy: {e}")
 
+        self._stop_tunnel()
+
         try:
             self.proxy.stop()
         except Exception as e:
             logger.warning(f"Failed to stop proxy: {e}")
-
-        try:
-            self.proxy.set_tunnel_client(None)
-        except Exception as e:
-            logger.warning(f"Failed to clear tunnel client reference: {e}")
-
-        if self.tunnel_client:
-            try:
-                self.tunnel_client.stop()
-            except Exception as e:
-                logger.warning(f"Failed to stop tunnel client: {e}")
-            self.tunnel_client = None
 
         self.connected = False
         self.toggle_item.setTitle_("启动代理")
@@ -378,7 +394,16 @@ class AppController(NSObject):
             old_data = self.config.data.copy()
             self.config.load()
             if self.connected and self.config.data != old_data:
-                self._run_on_main(self._reconnect)
+                new_data = self.config.data.copy()
+                # 如果只有 tunnel 配置变化，只重启隧道（本地代理保持运行）
+                old_copy = old_data.copy()
+                new_copy = new_data.copy()
+                old_copy.pop('tunnel', None)
+                new_copy.pop('tunnel', None)
+                if old_copy == new_copy:
+                    self._reconnect_tunnel_only()
+                else:
+                    self._run_on_main(self._reconnect)
 
         threading.Thread(target=_reload_after, daemon=True).start()
 
@@ -402,8 +427,97 @@ class AppController(NSObject):
         threading.Thread(target=_reload_after, daemon=True).start()
 
     def _reconnect(self):
+        """Full reconnect: stop everything, restart everything."""
         self._disconnect()
         self._connect()
+
+    def _reconnect_tunnel_only(self):
+        """Restart only the tunnel client. Local proxy keeps running."""
+        def _do():
+            self._stop_tunnel()
+            if self._tunnel_enabled():
+                self._start_tunnel()
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _tunnel_enabled(self):
+        return (
+            self.config.data.get('server', {}).get('protocol') == 'tunnel'
+            or self.config.data.get('tunnel', {}).get('enabled')
+        )
+
+    def _local_port_is_listening(self, port):
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return True
+        except OSError:
+            return False
+
+    def _local_proxy_is_healthy(self):
+        if not self.proxy.is_running():
+            return False
+        return (
+            self._local_port_is_listening(self.proxy.socks_port)
+            and self._local_port_is_listening(self.proxy.http_port)
+        )
+
+    def _sync_system_proxy_if_needed(self):
+        if self.config.data.get("mode") != "global":
+            return
+        self.sys_proxy.enable(
+            socks_port=self.proxy.socks_port,
+            http_port=self.proxy.http_port,
+        )
+
+    def _restart_local_proxy_only(self):
+        self.proxy.stop()
+        self.proxy.start(
+            self.config.data,
+            config_dir=os.path.dirname(self.config.config_path),
+        )
+        self._sync_system_proxy_if_needed()
+
+    def _ensure_local_proxy_after_wake(self):
+        if not self.connected:
+            return
+        if self._local_proxy_is_healthy():
+            try:
+                self._sync_system_proxy_if_needed()
+            except Exception as e:
+                logger.warning(f"Failed to re-sync system proxy after wake: {e}")
+            return
+        logger.warning("Local proxy is not healthy after wake, restarting local proxy")
+        try:
+            self._restart_local_proxy_only()
+        except Exception as e:
+            logger.error(f"Failed to restart local proxy after wake: {e}", exc_info=True)
+            self._run_on_main(
+                lambda: self._show_notification(
+                    "SocksClient",
+                    "本地代理恢复失败",
+                    str(e),
+                )
+            )
+
+    def _ensure_tunnel_after_wake(self):
+        if not self.connected:
+            return
+        if not self._tunnel_enabled():
+            return
+        tc = self.tunnel_client
+        if not tc:
+            self._start_tunnel()
+            return
+        status = tc.get_status()
+        if status in ('occupied', 'auth_failed'):
+            logger.warning("Tunnel is in non-retryable state after wake: %s", status)
+            return
+        if not tc.is_thread_alive():
+            logger.warning("Tunnel thread is not alive after wake, restarting tunnel")
+            self._stop_tunnel()
+            self._start_tunnel()
+            return
+        # Tunnel is alive — re-link to proxy (may have been cleared by proxy restart)
+        self.proxy.set_tunnel_client(tc)
 
     # ------------------------------------------------------------------
     # About
@@ -447,13 +561,8 @@ class AppController(NSObject):
             self._routing_proc.terminate()
         if self._log_proc and self._log_proc.poll() is None:
             self._log_proc.terminate()
-        if self.tunnel_client:
-            try:
-                self.tunnel_client.stop()
-            except Exception as e:
-                logger.warning(f"Failed to stop tunnel client on quit: {e}")
-            self.tunnel_client = None
         if self.connected:
+            self._stop_tunnel()
             try:
                 self.sys_proxy.disable()
             except Exception as e:
@@ -487,22 +596,36 @@ class AppController(NSObject):
                 if self.proxy.is_running():
                     restart_count = 0
                     # 检查隧道客户端线程是否存活
-                    if self.tunnel_client:
-                        thread = self.tunnel_client._thread
-                        if thread is None or not thread.is_alive():
-                            crash_logger.warning("Tunnel client thread died, restarting")
-                            try:
-                                self.tunnel_client = TunnelClient(
-                                    self.config.data,
-                                    on_status_change=lambda status, detail="": None
-                                )
-                                self.tunnel_client.start()
-                                self.proxy.set_tunnel_client(self.tunnel_client)
-                                crash_logger.warning("Tunnel client restarted")
-                            except Exception as e:
-                                crash_logger.warning(
-                                    "Tunnel client restart failed: %s", e, exc_info=True
-                                )
+                    tc = self.tunnel_client  # snapshot to avoid race condition
+                    if tc and tc.is_thread_alive():
+                        # 检查隧道是否进入不可重试状态（不自动重启）
+                        status = tc.get_status()
+                        if status in ('occupied', 'auth_failed'):
+                            crash_logger.warning(
+                                "Tunnel entered non-retryable state: %s", status
+                            )
+                    elif tc and not tc.is_thread_alive():
+                        status = tc.get_status()
+                        if status in ('occupied', 'auth_failed'):
+                            crash_logger.warning(
+                                "Tunnel stopped in non-retryable state: %s", status
+                            )
+                            continue
+                        crash_logger.warning("Tunnel client thread died, restarting")
+                        try:
+                            tc.stop()
+                            new_tc = TunnelClient(
+                                self.config.data,
+                                on_status_change=lambda status, detail="": None
+                            )
+                            new_tc.start()
+                            self.tunnel_client = new_tc
+                            self.proxy.set_tunnel_client(new_tc)
+                            crash_logger.warning("Tunnel client restarted")
+                        except Exception as e:
+                            crash_logger.warning(
+                                "Tunnel client restart failed: %s", e, exc_info=True
+                            )
                     continue
 
                 restart_count += 1
@@ -524,13 +647,14 @@ class AppController(NSObject):
                     self.proxy.start(self.config.data,
                                   config_dir=os.path.dirname(self.config.config_path))
                     # 重启时同步重建隧道客户端
-                    if self.config.data.get('tunnel', {}).get('enabled'):
-                        self.tunnel_client = TunnelClient(
-                            self.config.data,
-                            on_status_change=lambda status, detail="": None
-                        )
-                        self.tunnel_client.start()
-                        self.proxy.set_tunnel_client(self.tunnel_client)
+                    if self._tunnel_enabled():
+                        old_tc = self.tunnel_client
+                        if old_tc:
+                            try:
+                                old_tc.stop()
+                            except Exception:
+                                pass
+                        self._start_tunnel()
                     # 重启后端口可能偏移，重新同步系统代理
                     if self.config.data.get("mode") == "global":
                         try:
@@ -639,7 +763,7 @@ class AppController(NSObject):
             logger.info("System will sleep, marking for reconnection on wake")
 
     def onSystemDidWake_(self, notification):
-        """System just woke up. Reconnect if we were connected before sleep."""
+        """System just woke up. Repair local proxy if it was lost during sleep."""
         if not self._was_connected:
             return
         self._was_connected = False
@@ -651,25 +775,17 @@ class AppController(NSObject):
         def _do_reconnect():
             try:
                 self._reconnecting = True
-                logger.info("System woke up, reconnecting proxy...")
-
-                # Stop current connections (may be dead/stale after sleep)
-                if self.connected:
-                    self._disconnect()
+                logger.info("System woke up, checking local proxy...")
 
                 # Wait a moment for network to stabilize
                 import time
                 time.sleep(1)
 
-                # Reconnect if config is still valid
-                if self.config.is_configured():
-                    self._connect()
-                    logger.info("Proxy reconnected after system wake")
-                else:
-                    logger.warning("Cannot reconnect: config is invalid")
+                self._ensure_local_proxy_after_wake()
+                self._ensure_tunnel_after_wake()
 
             except Exception as e:
-                logger.error(f"Failed to reconnect after wake: {e}", exc_info=True)
+                logger.error(f"Failed to check proxy after wake: {e}", exc_info=True)
             finally:
                 self._reconnecting = False
 

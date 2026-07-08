@@ -48,6 +48,14 @@ def _calls_self_method(node, method_name):
     return False
 
 
+def _class_node(tree, class_name):
+    return next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == class_name
+    )
+
+
 def _popen_first_arg_name(node):
     for child in ast.walk(node):
         if (
@@ -66,11 +74,7 @@ def _popen_first_arg_name(node):
 def test_show_config_window_reloads_disk_config_before_saving():
     source = Path(__file__).parents[1].joinpath("app.py").read_text()
     tree = ast.parse(source)
-    app_controller = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.ClassDef) and node.name == "AppController"
-    )
+    app_controller = _class_node(tree, "AppController")
     body = _method_body(app_controller, "_show_config_window")
 
     load_index = next(
@@ -85,3 +89,16 @@ def test_show_config_window_reloads_disk_config_before_saving():
     assert load_index is not None
     assert save_index is not None
     assert load_index < save_index
+
+
+def test_wake_handler_checks_local_proxy_without_full_disconnect():
+    source = Path(__file__).parents[1].joinpath("app.py").read_text()
+    tree = ast.parse(source)
+    app_controller = _class_node(tree, "AppController")
+    body = _method_body(app_controller, "onSystemDidWake_")
+
+    assert any(
+        _calls_self_method(node, "_ensure_local_proxy_after_wake")
+        for node in body
+    )
+    assert not any(_calls_self_method(node, "_disconnect") for node in body)

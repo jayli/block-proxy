@@ -1,9 +1,11 @@
 import struct
+import asyncio
 import pytest
 from tunnel_client import (
     FRAME_CONNECT, FRAME_DATA, FRAME_CLOSE, FRAME_CONNECT_OK,
     FRAME_CONNECT_FAILED, FRAME_AUTH, FRAME_AUTH_OK, FRAME_ERROR,
     ATYP_DOMAIN, ATYP_IPV4,
+    TunnelAuthFailedError, TunnelClient,
     encode_frame, decode_frame_from_buffer
 )
 
@@ -61,3 +63,35 @@ class TestDecodeFrame:
         frame = decode_frame_from_buffer(buf)
         assert frame['type'] == FRAME_ERROR
         assert frame['message'] == 'Port occupied'
+
+
+class TestTunnelClientLifecycle:
+    def test_non_retryable_status_is_preserved_after_loop_exits(self):
+        statuses = []
+        cfg = {
+            'server': {
+                'address': '127.0.0.1',
+                'port': 8002,
+                'username': 'u',
+                'password': 'p',
+                'tls': False,
+                'allowInsecure': True,
+            },
+            'tunnel': {
+                'enabled': True,
+                'server_address': '127.0.0.1',
+                'server_port': 8003,
+            },
+        }
+        tc = TunnelClient(cfg, lambda status, detail='': statuses.append(status))
+
+        async def fail_auth():
+            raise TunnelAuthFailedError('bad credentials')
+
+        tc._connect_and_serve = fail_auth
+        tc._running = True
+
+        asyncio.run(tc._run_loop())
+
+        assert statuses[-1] == 'auth_failed'
+        assert tc.get_status() == 'auth_failed'

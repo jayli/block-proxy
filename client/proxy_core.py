@@ -348,6 +348,7 @@ class ProxyCore:
         self._semaphore = None
         self._routing = None
         self._tunnel_client = None
+        self._stop_lock = threading.Lock()
 
     def set_tunnel_client(self, tc):
         self._tunnel_client = tc
@@ -394,31 +395,36 @@ class ProxyCore:
         self._running = True
 
     def stop(self):
-        self._running = False
-        if self._loop and self._loop.is_running():
-            # 先关闭 server sockets 释放端口，再停 loop
-            async def _shutdown():
-                await self._stop_servers()
-                self._loop.stop()
-            self._loop.call_soon_threadsafe(
-                asyncio.ensure_future, _shutdown()
-            )
+        with self._stop_lock:
+            self._running = False
+            loop = self._loop
+            thread = self._thread
 
-        if self._thread:
-            # Wait for thread to exit with short timeout
-            self._thread.join(timeout=3)
-            if not self._thread.is_alive() and self._loop:
-                try:
-                    self._loop.close()
-                except Exception:
-                    pass
-            elif self._loop:
-                logger.warning("proxy thread did not exit in time, skipping loop.close()")
-        self._loop = None
-        self._thread = None
+            if loop and loop.is_running():
+                # 先关闭 server sockets 释放端口，再停 loop
+                async def _shutdown():
+                    await self._stop_servers()
+                    loop.stop()
+                loop.call_soon_threadsafe(
+                    asyncio.ensure_future, _shutdown()
+                )
+
+            if thread:
+                # Wait for thread to exit with short timeout
+                thread.join(timeout=3)
+                if not thread.is_alive() and loop:
+                    try:
+                        loop.close()
+                    except Exception:
+                        pass
+                elif loop:
+                    logger.warning("proxy thread did not exit in time, skipping loop.close()")
+            self._loop = None
+            self._thread = None
 
     def is_running(self):
-        return self._running and self._thread is not None and self._thread.is_alive()
+        thread = self._thread
+        return self._running and thread is not None and thread.is_alive()
 
     @property
     def socks_port(self):

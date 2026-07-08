@@ -199,6 +199,10 @@ class TunnelClient:
         """Return current tunnel status: 'connecting', 'connected', 'reconnecting', etc."""
         return getattr(self, '_last_status', 'disconnected')
 
+    def is_thread_alive(self):
+        """Check if the tunnel background thread is alive."""
+        return self._thread is not None and self._thread.is_alive()
+
     def _on_status_change(self, status, detail=''):
         """Internal wrapper: track status and invoke user callback."""
         self._last_status = status
@@ -346,6 +350,7 @@ class TunnelClient:
     async def _run_loop(self):
         """Main reconnection loop with exponential backoff."""
         backoff = 1
+        terminal_status = None
 
         while self._running:
             try:
@@ -353,10 +358,12 @@ class TunnelClient:
                 await self._connect_and_serve()
                 backoff = 1  # Reset on success
             except TunnelOccupiedError as e:
+                terminal_status = 'occupied'
                 self._on_status_change('occupied', str(e))
                 logger.error(f'Tunnel occupied: {e}')
                 break  # Don't retry
             except TunnelAuthFailedError as e:
+                terminal_status = 'auth_failed'
                 self._on_status_change('auth_failed', str(e))
                 logger.error(f'Tunnel authentication failed: {e}')
                 break  # Don't retry: bad credentials will not heal by reconnecting
@@ -369,7 +376,8 @@ class TunnelClient:
                     break
                 backoff = min(backoff * 2, 60)
 
-        self._on_status_change('disconnected', '')
+        if terminal_status is None:
+            self._on_status_change('disconnected', '')
 
     async def _connect_and_serve(self):
         """Connect, authenticate, handle requests with dual connections."""
