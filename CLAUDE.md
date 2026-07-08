@@ -183,6 +183,7 @@ main.py (入口, 文件锁单实例, 崩溃自动重启) → app.py (纯 PyObjC 
 - **分流引擎**：内置 geosite/geoip 数据库（Xray/V2Ray 兼容格式），支持域名分流（geosite:tag）和 IP CIDR 分流（geoip:code），零外部依赖（自定义 protobuf 解析器）
 - **UI 线程安全**：代理启动/停止在后台线程执行，UI 更新通过 PyObjC 的 `performSelectorOnMainThread` 调度回主线程
 - **窗口作为独立进程**：配置/分流/日志窗口通过 `subprocess.Popen` 用系统 Python 启动（Nuitka 编译后 `sys.executable` 不是 Python 解释器），关闭后自动检测配置变化并重启代理
+- **菜单状态独立刷新**：分流规则菜单的勾选状态（`routing_item.setState_`）仅反映 `config.data["routing"]["enabled"]`，与代理是否运行无关。配置窗口和分流窗口关闭时均调用 `_update_routing_check()` 刷新状态
 - **Nuitka 构建后处理**：`build.sh` 自动重命名可执行文件、修正 Info.plist（CFBundleExecutable、LSUIElement 等）
 
 ### Reliability Architecture (v0.1.3+)

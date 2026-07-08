@@ -159,9 +159,10 @@ class AppController(NSObject):
         config_item.setKeyEquivalent_("p")
         config_item.setKeyEquivalentModifierMask_(NSCommandKeyMask)
 
-        routing_item = self._add_menu_item(menu, "分流规则...", "openRouting:")
-        routing_item.setKeyEquivalent_("f")
-        routing_item.setKeyEquivalentModifierMask_(NSCommandKeyMask)
+        self.routing_item = self._add_menu_item(menu, "分流规则...", "openRouting:")
+        self.routing_item.setKeyEquivalent_("f")
+        self.routing_item.setKeyEquivalentModifierMask_(NSCommandKeyMask)
+        self._update_routing_check()
         menu.addItem_(NSMenuItem.separatorItem())
 
         self.global_item = self._add_menu_item(
@@ -218,6 +219,11 @@ class AppController(NSObject):
         is_global = self.config.data["mode"] == "global"
         self.global_item.setState_(1 if is_global else 0)
         self.manual_item.setState_(1 if not is_global else 0)
+
+    def _update_routing_check(self):
+        """Update routing menu item checkmark based on routing enabled state."""
+        routing_enabled = self.config.data.get("routing", {}).get("enabled", False)
+        self.routing_item.setState_(1 if routing_enabled else 0)
 
     # ------------------------------------------------------------------
     # Proxy toggle
@@ -393,6 +399,7 @@ class AppController(NSObject):
             self._config_proc = None
             old_data = self.config.data.copy()
             self.config.load()
+            self._run_on_main(self._update_routing_check)
             if self.connected and self.config.data != old_data:
                 new_data = self.config.data.copy()
                 # 如果只有 tunnel 配置变化，只重启隧道（本地代理保持运行）
@@ -421,6 +428,7 @@ class AppController(NSObject):
             old_routing = self.config.data.get("routing", {})
             self.config.load()
             new_routing = self.config.data.get("routing", {})
+            self._run_on_main(self._update_routing_check)
             if self.connected and new_routing != old_routing:
                 self._run_on_main(self._reconnect)
 
