@@ -42,6 +42,12 @@
     "gen-icons": "node client/watch-icons.js",
     "watch:icons": "node client/watch-icons.js --watch",
     "test:proxy": "node test/run.js",
+    "test:android": "cd android-client && ./gradlew :app:testDebugUnitTest",
+    "test:android:emulator": "cd android-client && unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy && ./gradlew :app:connectedDebugAndroidTest",
+    "android:install": "~/Library/Android/sdk/platform-tools/adb install -r android-client/app/build/outputs/apk/debug/app-debug.apk",
+    "android:start": "~/Library/Android/sdk/platform-tools/adb shell am start -n com.blockproxy.android/.MainActivity",
+    "android:logcat": "~/Library/Android/sdk/platform-tools/adb logcat | grep -E 'BlockProxy|Tunnel|AndroidRuntime'",
+    "android:devices": "~/Library/Android/sdk/platform-tools/adb devices -l",
     "test:registry": "node test/mitm-registry-tests.js",
     "test:mitm-runtime": "node test/mitm-runtime-tests.js",
     "eject": "react-scripts eject"

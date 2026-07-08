@@ -157,6 +157,12 @@ class TunnelManager {
     const targetHost = frame.addr;
     const targetPort = frame.port;
 
+    if (this.matchesTunnelDomain(targetHost)) {
+      console.warn(`[Tunnel] Reject recursive forward CONNECT ${reqid}: ${targetHost}:${targetPort}`);
+      this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid }, socket);
+      return;
+    }
+
     console.log(`[Tunnel] Forward CONNECT ${reqid}: ${targetHost}:${targetPort} (connection ${[...this._server._clientSockets].indexOf(socket) + 1}/${this._server._clientSockets.size})`);
 
     const stream = new TunnelDuplex(this, reqid);
@@ -189,14 +195,14 @@ class TunnelManager {
       anyproxySocket.write(connectReq);
     });
 
-    let responseBuffer = '';
+    let responseBuffer = Buffer.alloc(0);
     anyproxySocket.on('data', (data) => {
       if (!entry.confirmed) {
-        responseBuffer += data.toString();
+        responseBuffer = Buffer.concat([responseBuffer, data]);
         const headerEnd = responseBuffer.indexOf('\r\n\r\n');
         if (headerEnd === -1) return;
 
-        const statusLine = responseBuffer.substring(0, responseBuffer.indexOf('\r\n'));
+        const statusLine = responseBuffer.slice(0, responseBuffer.indexOf('\r\n')).toString();
         if (statusLine.indexOf(' 2') === -1) {
           this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid }, entry.socket);
           cleanup();
@@ -207,12 +213,12 @@ class TunnelManager {
         entry.confirmed = true;
         this._server.sendFrame({ type: FRAME_TYPES.CONNECT_OK, reqid }, entry.socket);
 
-        // Forward any remaining data after headers
-        const remaining = responseBuffer.substring(headerEnd + 4);
+        // Forward any remaining data after headers (binary-safe)
+        const remaining = responseBuffer.slice(headerEnd + 4);
         if (remaining.length > 0) {
-          this._sendDataToClient(reqid, Buffer.from(remaining), entry.socket).catch(() => {});
+          this._sendDataToClient(reqid, remaining, entry.socket).catch(() => {});
         }
-        responseBuffer = '';
+        responseBuffer = Buffer.alloc(0);
         return;
       }
 

@@ -1,0 +1,126 @@
+package com.blockproxy.android.ui
+
+import com.blockproxy.android.status.TunnelStatus
+
+enum class SliderAction {
+    None,
+    StartFresh,
+    RetryStart,
+    Stop,
+}
+
+enum class SliderTrackTone {
+    Neutral,
+    Connecting,
+    Retrying,
+    Connected,
+}
+
+data class SliderRenderState(
+    val isActive: Boolean,
+    val trackTone: SliderTrackTone,
+)
+
+class SliderStateMachine {
+    private enum class UserIntent {
+        Reset,
+        WantsConnected,
+    }
+
+    private enum class AttemptPhase {
+        Idle,
+        Starting,
+        Failed,
+        Connected,
+    }
+
+    private var intent = UserIntent.Reset
+    private var attemptPhase = AttemptPhase.Idle
+    private var pendingAction = SliderAction.None
+
+    fun onUserSlideRight() {
+        intent = UserIntent.WantsConnected
+        attemptPhase = AttemptPhase.Starting
+        pendingAction = SliderAction.StartFresh
+    }
+
+    fun onUserSlideLeft() {
+        intent = UserIntent.Reset
+        attemptPhase = AttemptPhase.Idle
+        pendingAction = SliderAction.Stop
+    }
+
+    fun onStatusChanged(status: TunnelStatus) {
+        if (intent == UserIntent.Reset) return
+        when (status) {
+            TunnelStatus.Preparing,
+            TunnelStatus.Connecting -> attemptPhase = AttemptPhase.Starting
+            TunnelStatus.Connected -> {
+                attemptPhase = AttemptPhase.Connected
+                pendingAction = SliderAction.None
+            }
+            TunnelStatus.Reconnecting,
+            TunnelStatus.Error,
+            TunnelStatus.AuthFailed,
+            TunnelStatus.Occupied -> attemptPhase = AttemptPhase.Failed
+            TunnelStatus.Disconnected -> {
+                if (attemptPhase != AttemptPhase.Starting) {
+                    attemptPhase = AttemptPhase.Failed
+                }
+            }
+        }
+    }
+
+    fun consumePendingAction(): SliderAction {
+        val action = pendingAction
+        pendingAction = SliderAction.None
+        return action
+    }
+
+    fun onRetryTick(status: TunnelStatus): SliderAction {
+        if (intent != UserIntent.WantsConnected) return SliderAction.None
+        if (attemptPhase == AttemptPhase.Starting) return SliderAction.None
+        return if (status.shouldRetryStart()) SliderAction.RetryStart else SliderAction.None
+    }
+
+    fun render(status: TunnelStatus): SliderRenderState {
+        if (intent == UserIntent.Reset) {
+            return SliderRenderState(
+                isActive = false,
+                trackTone = SliderTrackTone.Neutral,
+            )
+        }
+
+        return SliderRenderState(
+            isActive = true,
+            trackTone = when (attemptPhase) {
+                AttemptPhase.Starting -> SliderTrackTone.Connecting
+                AttemptPhase.Connected -> SliderTrackTone.Connected
+                AttemptPhase.Failed -> SliderTrackTone.Retrying
+                AttemptPhase.Idle -> when (status) {
+                    TunnelStatus.Connected -> SliderTrackTone.Connected
+                    TunnelStatus.Preparing,
+                    TunnelStatus.Connecting -> SliderTrackTone.Connecting
+                    TunnelStatus.Reconnecting,
+                    TunnelStatus.Disconnected,
+                    TunnelStatus.Error,
+                    TunnelStatus.AuthFailed,
+                    TunnelStatus.Occupied -> SliderTrackTone.Retrying
+                }
+            },
+        )
+    }
+
+    private fun TunnelStatus.shouldRetryStart(): Boolean {
+        return when (this) {
+            TunnelStatus.Connected,
+            TunnelStatus.Preparing,
+            TunnelStatus.Connecting,
+            TunnelStatus.Reconnecting -> false
+            TunnelStatus.Disconnected,
+            TunnelStatus.Error,
+            TunnelStatus.AuthFailed,
+            TunnelStatus.Occupied -> true
+        }
+    }
+}

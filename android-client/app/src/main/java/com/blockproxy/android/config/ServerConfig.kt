@@ -1,0 +1,33 @@
+package com.blockproxy.android.config
+
+/**
+ * Server connection configuration persisted by the app.
+ *
+ * [serverHost] / [serverPort] are the tunnel-server address that
+ * [com.blockproxy.android.tunnel.TunnelClient] connects to directly.
+ *
+ * @property useTls       Whether to wrap the tunnel connection in TLS.
+ * @property allowInsecure When [useTls] is true, whether to accept self-signed / untrusted certs.
+ */
+data class ServerConfig(
+    val serverHost: String,
+    val serverPort: Int = DEFAULT_PORT,
+    val useTls: Boolean = true,
+    val allowInsecure: Boolean = true,
+) {
+    companion object {
+        /** Default tunnel server port (matches block-proxy tunnel server). */
+        const val DEFAULT_PORT: Int = 8003
+    }
+}
+
+/**
+ * SOCKS5 / tunnel authentication credentials.
+ *
+ * Never persist this directly — use [CredentialStore] which encodes the
+ * password before writing to disk.
+ */
+data class TunnelCredentials(
+    val username: String,
+    val password: String,
+)
