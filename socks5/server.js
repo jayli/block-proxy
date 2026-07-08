@@ -9,10 +9,11 @@ const _fs = require('../proxy/fs.js');
 const domain = require('../proxy/domain.js');
 const { pipeline } = require('stream');
 
+const { ensureTempCert } = require('../cert/generator');
 // 固定下游 HTTP 代理地址（可改为配置项）
 const DOWNSTREAM_HTTP_PROXY_HOST = '127.0.0.1';
-const keyFile = path.join(__dirname, '../cert/rootCA.key');
-const crtFile = path.join(__dirname, '../cert/rootCA.crt');
+const keyFile = path.join(__dirname, '../cert/socks5_tls.key');
+const crtFile = path.join(__dirname, '../cert/socks5_tls.crt');
 const ticketKeyPath = path.join(__dirname, './ticket-keys.bin');
 
 function initTicketKeyFile() {
@@ -28,6 +29,9 @@ function getTicketKeys() {
 
 async function init() {
   try {
+    // 确保 ECC P-256 临时 TLS 证书存在（首次启动自动生成，之后跳过）
+    await ensureTempCert('socks5_tls', keyFile, crtFile);
+
     const loadedConfig = await _fs.readConfig();
 
     const DOWNSTREAM_HTTP_PROXY_PORT = loadedConfig.proxy_port;

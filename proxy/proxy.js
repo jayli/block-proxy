@@ -30,11 +30,13 @@ const TunnelManager = require('../tunnel/manager');
 let ruleRegistry = mitmRegistry.createRegistry({ config: {} });
 let cliRulePath = null;
 
+const { ensureTempCert } = require('../cert/generator');
+
 // Tunnel module-level variables
 let tunnelServer = null;
 let tunnelManager = null;
-const tunnelCertFile = path.join(__dirname, '../cert/rootCA.crt');
-const tunnelKeyFile = path.join(__dirname, '../cert/rootCA.key');
+const tunnelCertFile = path.join(__dirname, '../cert/tunnel_tls.crt');
+const tunnelKeyFile = path.join(__dirname, '../cert/tunnel_tls.key');
 
 // 启用全局 keep-alive，使 AnyProxy 内部转发也复用连接
 http.globalAgent.keepAlive = true;
@@ -996,6 +998,10 @@ function passRequestWithHttpAgent(requestDetail, isHttps) {
 
 async function initTunnel(config) {
   await closeTunnel();
+
+  // 确保 ECC P-256 临时 TLS 证书存在（首次启动自动生成，之后跳过）
+  await ensureTempCert('tunnel_tls', tunnelKeyFile, tunnelCertFile);
+
   const enableTunnel = config.enable_tunnel || "1";
   const tunnelPort = config.tunnel_port || 8003;
   if (enableTunnel !== "1") return;

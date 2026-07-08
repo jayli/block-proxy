@@ -16,6 +16,12 @@ cams-config/*
 /src-tauri/target
 config_backup.json
 
+# 临时 TLS 证书（服务启动时自动生成，ECC P-256）
+cert/socks5_tls.key
+cert/socks5_tls.crt
+cert/tunnel_tls.key
+cert/tunnel_tls.crt
+
 # misc
 .DS_Store
 .env.local
