@@ -1,5 +1,5 @@
 """
-SocksClient routing rules window.
+BlockProxyClient routing rules window.
 Pure PyObjC implementation (no tkinter dependency).
 Launched as a subprocess from the main status bar app.
 """

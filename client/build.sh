@@ -1,16 +1,16 @@
 #!/bin/bash
 set -e
 
-APP_NAME="SocksClient"
-BUNDLE_ID="com.jaylli.socksclient"
-VERSION="0.1.2"
+APP_NAME="BlockProxyClient"
+BUNDLE_ID="com.jaylli.blockproxyclient"
+VERSION="0.1.3"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DIST_DIR="$SCRIPT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 
 # Detect architecture
 ARCH=$(uname -m)
-ZIP_NAME="SocksClient-macos-${ARCH}.zip"
+ZIP_NAME="BlockProxyClient-macos-${ARCH}.zip"
 
 echo "==> Detected architecture: $ARCH"
 

@@ -12,20 +12,20 @@ class TestAutostart:
     def setup_method(self):
         self.tmp = tempfile.mkdtemp()
         autostart.PLIST_DIR = self.tmp
-        autostart.PLIST_PATH = os.path.join(self.tmp, "com.jaylli.socksclient.plist")
+        autostart.PLIST_PATH = os.path.join(self.tmp, "com.jaylli.blockproxyclient.plist")
 
     def teardown_method(self):
         import shutil
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_enable_creates_plist(self):
-        fake_app = os.path.join(self.tmp, "SocksClient.app")
+        fake_app = os.path.join(self.tmp, "BlockProxyClient.app")
         os.makedirs(fake_app)
         autostart.enable(fake_app)
         assert os.path.exists(autostart.PLIST_PATH)
         with open(autostart.PLIST_PATH, "rb") as f:
             data = plistlib.load(f)
-        assert data["Label"] == "com.jaylli.socksclient"
+        assert data["Label"] == "com.jaylli.blockproxyclient"
         assert data["ProgramArguments"] == ["/usr/bin/open", "-a", fake_app]
         assert data["RunAtLoad"] is True
         assert data["KeepAlive"] is False
@@ -39,7 +39,7 @@ class TestAutostart:
         assert not os.path.exists(autostart.PLIST_PATH)
 
     def test_disable_removes_plist(self):
-        fake_app = os.path.join(self.tmp, "SocksClient.app")
+        fake_app = os.path.join(self.tmp, "BlockProxyClient.app")
         os.makedirs(fake_app)
         autostart.enable(fake_app)
         autostart.disable()
@@ -49,13 +49,13 @@ class TestAutostart:
         autostart.disable()  # should not raise
 
     def test_sync_enable(self):
-        fake_app = os.path.join(self.tmp, "SocksClient.app")
+        fake_app = os.path.join(self.tmp, "BlockProxyClient.app")
         os.makedirs(fake_app)
         autostart.sync(fake_app, True)
         assert os.path.exists(autostart.PLIST_PATH)
 
     def test_sync_disable(self):
-        fake_app = os.path.join(self.tmp, "SocksClient.app")
+        fake_app = os.path.join(self.tmp, "BlockProxyClient.app")
         os.makedirs(fake_app)
         autostart.enable(fake_app)
         autostart.sync(fake_app, False)

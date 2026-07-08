@@ -1,5 +1,5 @@
 """
-SocksClient — macOS status bar proxy client.
+BlockProxyClient — macOS status bar proxy client.
 Pure PyObjC implementation (no rumps dependency).
 """
 
@@ -63,7 +63,7 @@ def _bundle_resource_dir():
 def _bundle_path():
     """Return the .app bundle path in compiled mode, None in dev mode."""
     if _is_compiled():
-        # sys.executable = .../SocksClient.app/Contents/MacOS/SocksClient
+        # sys.executable = .../BlockProxyClient.app/Contents/MacOS/BlockProxyClient
         return os.path.dirname(os.path.dirname(os.path.dirname(sys.executable)))
     return None
 
@@ -245,7 +245,7 @@ class AppController(NSObject):
             except OSError as e:
                 self._run_on_main(
                     lambda: self._show_notification(
-                        "SocksClient", "启动失败",
+                        "BlockProxyClient", "启动失败",
                         "端口被占用，请检查端口是否已被其他程序使用"
                         if e.errno == 48 else str(e),
                     )
@@ -262,7 +262,7 @@ class AppController(NSObject):
                 except Exception as e:
                     self._run_on_main(
                         lambda: self._show_notification(
-                            "SocksClient", "系统代理设置失败", str(e)
+                            "BlockProxyClient", "系统代理设置失败", str(e)
                         )
                     )
 
@@ -492,7 +492,7 @@ class AppController(NSObject):
             logger.error(f"Failed to restart local proxy after wake: {e}", exc_info=True)
             self._run_on_main(
                 lambda: self._show_notification(
-                    "SocksClient",
+                    "BlockProxyClient",
                     "本地代理恢复失败",
                     str(e),
                 )
@@ -526,12 +526,12 @@ class AppController(NSObject):
     def showAbout_(self, sender):
         NSApp.activateIgnoringOtherApps_(True)
         alert = NSAlert.alloc().init()
-        alert.setMessageText_("关于 SocksClient")
+        alert.setMessageText_("关于 BlockProxyClient")
         alert.setInformativeText_(
             "项目：block-proxy\n"
             "作者：lijing00333\n"
             "地址：https://github.com/jayli/block-proxy\n"
-            "版本：v0.1.2"
+            "版本：v0.1.3"
         )
         alert.addButtonWithTitle_("好")
         alert.runModal()
@@ -817,7 +817,7 @@ class AppController(NSObject):
             pass
 
 
-class SocksClient:
+class BlockProxyClient:
     """Compatibility wrapper — same API as the old rumps-based class."""
 
     def run(self):

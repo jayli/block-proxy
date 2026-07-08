@@ -1,5 +1,5 @@
 """
-SocksClient configuration window.
+BlockProxyClient configuration window.
 Pure PyObjC implementation (no tkinter dependency).
 Launched as a subprocess from the main status bar app.
 """

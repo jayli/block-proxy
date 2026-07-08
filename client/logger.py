@@ -6,14 +6,14 @@ import sys
 import threading
 
 DEFAULT_LOG_DIR = os.path.expanduser(
-    "~/Library/Application Support/SocksClient/logs"
+    "~/Library/Application Support/BlockProxyClient/logs"
 )
 
 MAX_BYTES = 3 * 1024 * 1024  # 3MB
 BACKUP_COUNT = 10
 
-access_logger = logging.getLogger("socksclient.access")
-crash_logger = logging.getLogger("socksclient.crash")
+access_logger = logging.getLogger("blockproxyclient.access")
+crash_logger = logging.getLogger("blockproxyclient.crash")
 
 _crash_file = None
 _initialized = False

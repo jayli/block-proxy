@@ -5,7 +5,7 @@ import logging
 logger = logging.getLogger("autostart")
 
 PLIST_DIR = os.path.expanduser("~/Library/LaunchAgents")
-PLIST_PATH = os.path.join(PLIST_DIR, "com.jaylli.socksclient.plist")
+PLIST_PATH = os.path.join(PLIST_DIR, "com.jaylli.blockproxyclient.plist")
 
 
 def enable(app_path):
@@ -15,7 +15,7 @@ def enable(app_path):
         return
     os.makedirs(PLIST_DIR, exist_ok=True)
     plist = {
-        "Label": "com.jaylli.socksclient",
+        "Label": "com.jaylli.blockproxyclient",
         "ProgramArguments": ["/usr/bin/open", "-a", app_path],
         "RunAtLoad": True,
         "KeepAlive": False,

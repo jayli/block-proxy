@@ -32,7 +32,7 @@ DEFAULT_CONFIG = {
 }
 
 DEFAULT_CONFIG_DIR = os.path.expanduser(
-    "~/Library/Application Support/SocksClient"
+    "~/Library/Application Support/BlockProxyClient"
 )
 
 

@@ -10,7 +10,7 @@ import os
 import time
 
 DEFAULT_STATS_DIR = os.path.expanduser(
-    "~/Library/Application Support/SocksClient/logs"
+    "~/Library/Application Support/BlockProxyClient/logs"
 )
 
 

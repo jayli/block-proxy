@@ -1,5 +1,5 @@
 """
-SocksClient log viewer window.
+BlockProxyClient log viewer window.
 Pure PyObjC implementation with NSTableView and real-time file tailing.
 Launched as a subprocess from the main status bar app.
 """
@@ -43,7 +43,7 @@ from AppKit import (
 from traffic_view import TrafficView
 
 
-LOG_DIR = os.path.expanduser("~/Library/Application Support/SocksClient/logs")
+LOG_DIR = os.path.expanduser("~/Library/Application Support/BlockProxyClient/logs")
 MAX_LINES = 5000
 INITIAL_LINES = 500
 POLL_SEC = 0.5
@@ -146,7 +146,7 @@ class LogWindowController(NSObject):
         win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             ((x, y), (w, h)), WINDOW_STYLE, NSBackingStoreBuffered, False
         )
-        win.setTitle_("SocksClient 日志")
+        win.setTitle_("BlockProxyClient 日志")
         win.setLevel_(NSFloatingWindowLevel)
         win.setDelegate_(self)
 

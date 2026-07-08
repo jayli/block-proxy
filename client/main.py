@@ -2,7 +2,7 @@ import os
 import sys
 import fcntl
 
-LOCK_PATH = os.path.expanduser("~/Library/Application Support/SocksClient/.lock")
+LOCK_PATH = os.path.expanduser("~/Library/Application Support/BlockProxyClient/.lock")
 
 
 def acquire_lock():
@@ -31,8 +31,8 @@ def main():
     restarts = 0
     while restarts <= MAX_MAIN_RESTARTS:
         try:
-            from app import SocksClient
-            client = SocksClient()
+            from app import BlockProxyClient
+            client = BlockProxyClient()
             client.run()
             break
         except SystemExit:
