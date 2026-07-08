@@ -1,6 +1,6 @@
 # Block-Proxy 用户手册
 
-Block-Proxy 是一个基于 MITM 的代理过滤工具，用于家长控制、广告拦截和网络内容过滤。提供 HTTP 代理、SOCKS5 over TLS 代理、Web 管理界面和 macOS 状态栏客户端。
+Block-Proxy 是一个基于 MITM 的代理过滤工具，用于家长控制、广告拦截和网络内容过滤。提供 HTTP 代理、SOCKS5 over TLS 代理、Web 管理界面和 macOS 状态栏客户端。还提供双向隧道和 NAT 内网穿透反代能力。
 
 ## 目录
 
@@ -197,7 +197,7 @@ pm2 stop block-proxy    # 停止
 
 ## SOCKS5 over TLS 代理
 
-SOCKS5 over TLS 将 SOCKS5 协议承载在 TLS 加密连接上，适合在公网环境下安全使用（如 macOS 客户端在公司或外出时连回家中代理）。需要客户端支持 socks 套 tls才可以（因为我用的是自签证书，需要客户端勾选“AllowInsecure/允许不安全”），通常 xray、v2rayU 等工具支持。当然[block-proxy 客户端](https://github.com/jayli/block-proxy/releases)也支持。
+SOCKS5 over TLS 将 SOCKS5 协议承载在 TLS 加密连接上，适合在公网环境下安全使用（如 macOS 客户端在公司或外出时连回家中代理）。需要客户端支持 socks 套 tls才可以（因为我用的是自签证书，需要客户端勾选“AllowInsecure/允许不安全”），通常 xray、v2rayU 等工具支持。[block-proxy 客户端](https://github.com/jayli/block-proxy/releases)也支持。
 
 ### 服务端开启 TLS
 
