@@ -294,11 +294,39 @@ class TunnelClient:
         self._running = False
         self._connected = False
         self._connected_event.clear()
-        # Force-stop the event loop — all pending tasks will be abandoned
+
+        def _close_tunnel_state():
+            for task in list(self._connection_tasks):
+                task.cancel()
+            self._connection_tasks.clear()
+            if self._replenish_task:
+                self._replenish_task.cancel()
+                self._replenish_task = None
+            for task in list(self._relay_tasks):
+                task.cancel()
+            self._relay_tasks.clear()
+            for fwd in self._forward_requests.values():
+                fwd['connect_error'] = 'tunnel stopped'
+                fwd['connected'].set()
+            self._forward_requests.clear()
+            for writer in list(self._tunnel_writers):
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+            self._tunnel_writers.clear()
+            self._tunnel_readers.clear()
+
+        # Close TLS sockets before stopping the loop; otherwise the server may
+        # keep both tunnel slots occupied until heartbeat timeout.
         if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(_close_tunnel_state)
             self._loop.call_soon_threadsafe(self._loop.stop)
-        if self._thread:
-            self._thread.join(timeout=1)
+        else:
+            _close_tunnel_state()
+
+        if self._thread and self._thread is not threading.current_thread():
+            self._thread.join(timeout=2)
             self._thread = None
 
     def forward_connect_sync(self, host, port, timeout=30):

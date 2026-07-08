@@ -66,6 +66,50 @@ class TestDecodeFrame:
 
 
 class TestTunnelClientLifecycle:
+    def test_stop_closes_active_tunnel_writers(self):
+        cfg = {
+            'server': {
+                'address': '127.0.0.1',
+                'port': 8002,
+                'username': 'u',
+                'password': 'p',
+                'tls': False,
+                'allowInsecure': True,
+            },
+            'tunnel': {
+                'enabled': True,
+                'server_address': '127.0.0.1',
+                'server_port': 8003,
+            },
+        }
+
+        class FakeLoop:
+            def is_running(self):
+                return True
+
+            def call_soon_threadsafe(self, callback, *args):
+                callback(*args)
+
+            def stop(self):
+                pass
+
+        class FakeWriter:
+            def __init__(self):
+                self.closed = False
+
+            def close(self):
+                self.closed = True
+
+        writer = FakeWriter()
+        tc = TunnelClient(cfg, lambda status, detail='': None)
+        tc._running = True
+        tc._loop = FakeLoop()
+        tc._tunnel_writers = [writer]
+
+        tc.stop()
+
+        assert writer.closed is True
+
     def test_non_retryable_status_is_preserved_after_loop_exits(self):
         statuses = []
         cfg = {
