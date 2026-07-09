@@ -230,7 +230,7 @@ async function main() {
   // ── 检查代理服务状态 ──
   console.log(`${C.bold}检查代理服务...${C.reset}`);
 
-  const [httpStatus, socks5Status] = await Promise.all([
+  let [httpStatus, socks5Status] = await Promise.all([
     checkProxyAccessible(httpProxyConfig.host, httpProxyConfig.port, 'HTTP Proxy'),
     checkProxyAccessible(socks5Config.host, socks5Config.port, 'SOCKS5 Proxy'),
   ]);
@@ -261,6 +261,11 @@ async function main() {
         console.log(`启动方式: npm run dev\n`);
         process.exit(1);
       }
+
+      [httpStatus, socks5Status] = await Promise.all([
+        checkProxyAccessible(httpProxyConfig.host, httpProxyConfig.port, 'HTTP Proxy'),
+        checkProxyAccessible(socks5Config.host, socks5Config.port, 'SOCKS5 Proxy'),
+      ]);
     } else {
       console.log(`\n${C.red}代理服务未运行！请先启动代理服务：${C.reset}`);
       console.log(`  npm run dev        # 启动全部服务`);

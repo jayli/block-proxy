@@ -1,5 +1,5 @@
 // 文件名: proxy/proxy.js
-const AnyProxy = require('@bachi/anyproxy');
+const { ProxyServer, utils: { certMgr } } = require('./proxy-core');
 const { exec } = require('child_process');
 const fs = require('fs');
 const _fs = require('./fs.js');
@@ -539,8 +539,8 @@ function ensureRootCA() {
 function startProxyServer() {
   ensureRootCA();
   // Check if root CA is needed
-  if (!AnyProxy.utils.certMgr.ifRootCAFileExists()) {
-    AnyProxy.utils.certMgr.generateRootCA((error, keyPath) => {
+  if (!certMgr.ifRootCAFileExists()) {
+    certMgr.generateRootCA((error, keyPath) => {
       if (!error) {
         console.log('Root CA generated successfully, please install the certificate');
         console.log('Certificate path:', keyPath);
@@ -552,50 +552,13 @@ function startProxyServer() {
   } else {
     // Start proxy server
     let options = getAnyProxyOptions();
-    proxyServerInstance = new AnyProxy.ProxyServer(options);
+    proxyServerInstance = new ProxyServer(options);
 
     proxyServerInstance.on('ready', () => {
       console.log(`✅ \x1b[32mHTTP 代理服务启动，IP: ${localIp}, 端口: ${proxyPort}\x1b[0m`);
 
-      // 隧道域名 CONNECT 拦截：
-      // AnyProxy 从不读取 customConnect 选项，隧道域名会走默认的 net.connect 到原始服务器（内网不可达）。
-      // 这里在 ready 之后接管 connect 事件，隧道域名走 tunnelManager.forward()，其余委托原处理器。
-      const httpServer = proxyServerInstance.httpProxyServer;
-      const originalConnectHandler = httpServer.listeners('connect')[0];
-      httpServer.removeAllListeners('connect');
-      httpServer.on('connect', (req, cltSocket, head) => {
-        const host = req.url.split(':')[0];
-        const port = parseInt(req.url.split(':')[1], 10) || 443;
-
-        if (tunnelManager && tunnelManager.matchesTunnelDomain(host)) {
-          // 隧道域名：通过反向隧道转发到客户端侧处理
-          console.log(`[Tunnel] CONNECT ${host}:${port} → 走隧道转发`);
-          cltSocket.on('error', (err) => {
-            if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
-              console.log(`[Tunnel] client socket error for ${host}: ${err.message}`);
-            }
-          });
-          cltSocket.write('HTTP/' + req.httpVersion + ' 200 OK\r\n\r\n', () => {
-            const tunnelStream = tunnelManager.forward(host, port, () => {
-              console.log(`[Tunnel] CONNECT OK ${host}:${port}`);
-              if (head && head.length > 0) tunnelStream.write(head);
-              tunnelStream.pipe(cltSocket);
-              cltSocket.pipe(tunnelStream);
-            });
-            tunnelStream.on('error', (err) => {
-              console.log(`[Tunnel] 转发失败 ${host}:${port} - ${err.message}`);
-              try { cltSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n'); } catch (e) {}
-              cltSocket.destroy();
-            });
-          });
-          return;
-        }
-
-        // 非隧道域名：走 AnyProxy 原始 CONNECT 处理器
-        if (originalConnectHandler) {
-          originalConnectHandler(req, cltSocket, head);
-        }
-      });
+      // customConnect 已正确传入 proxy-core/request-handler，隧道域名 CONNECT 由核心处理。
+      // 不再需要 ready 之后接管 connect 事件。
     });
 
     proxyServerInstance.on('error', (e) => {
@@ -704,6 +667,7 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
     httpAgent: agent,
     httpsAgent: agent,
     responseType: 'stream', // 正确处理二进制响应
+    proxy: false,
     maxRedirects: 21
     // validateStatus: () => true, // 如果你想自己处理所有状态码，取消注释
   };
@@ -1465,7 +1429,6 @@ function getAnyProxyOptions() {
       },
 
     },
-    throttle: 800 * 1024 * 1024, // 800 Mbps
     forceProxyHttps: false, // 关闭全局 HTTPS 拦截
     wsIntercept: false,
     silent: true,

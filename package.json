@@ -6,8 +6,10 @@
     "block-proxy": "bin/start.js"
   },
   "dependencies": {
-    "@bachi/anyproxy": "^0.1.9",
     "axios": "^1.13.2",
+    "co": "^4.6.0",
+    "node-easy-cert": "^1.0.0",
+    "ws": "^5.1.0",
     "commander": "^14.0.2",
     "express": "^5.1.0",
     "http-proxy-agent": "^7.0.2",
@@ -51,6 +53,7 @@
     "android:logcat": "~/Library/Android/sdk/platform-tools/adb logcat | grep -E 'BlockProxy|Tunnel|AndroidRuntime'",
     "android:devices": "~/Library/Android/sdk/platform-tools/adb devices -l",
     "android:native:build": "cd android-client && bash build-native.sh",
+    "test:proxy-core": "node test/proxy-core-connect-tests.js",
     "test:registry": "node test/mitm-registry-tests.js",
     "test:mitm-runtime": "node test/mitm-runtime-tests.js",
     "eject": "react-scripts eject"
