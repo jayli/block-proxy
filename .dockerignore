@@ -1,8 +1,8 @@
 node_modules
 .git
-client/dist
-client/main.build
-client/main.dist
+docs
+client
+android-client
 *.zip
 *.tar
 .DS_Store
