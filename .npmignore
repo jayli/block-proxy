@@ -1,0 +1,67 @@
+# Client applications
+android-client/
+client/
+
+# Documentation
+docs/
+
+# Tests and dev tools
+test/
+tools/
+
+# Runtime config (generated at runtime)
+config.json
+config_backup.json
+certificates/
+
+# Build / CI
+Dockerfile
+docker-compose*
+
+# Internal / agent configs
+.agents/
+.claude/
+skills-lock.json
+
+# Build tools config (build/ already contains compiled output)
+craco.config.js
+.dockerignore
+.eslintignore
+.gitmodules
+pnpm-workspace.yaml
+
+# Dev configs
+.env
+.env.*
+.eslintrc*
+.prettierrc*
+CLAUDE.md
+
+# Test scripts bundled inside socks5/
+socks5/test_tls_reuse.js
+socks5/ticket-keys.bin
+
+# Package manager lock files (npm uses package-lock.json at install time)
+pnpm-lock.yaml
+yarn.lock
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.gitignore
+.gitattributes
+
+# GitHub
+.github/
+
+# Misc
+*.log
+npm-debug.log*
