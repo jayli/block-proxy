@@ -6,8 +6,10 @@
     "block-proxy": "bin/start.js"
   },
   "dependencies": {
-    "@bachi/anyproxy": "^0.1.9",
     "axios": "^1.13.2",
+    "co": "^4.6.0",
+    "node-easy-cert": "^1.0.0",
+    "ws": "^5.1.0",
     "commander": "^14.0.2",
     "express": "^5.1.0",
     "http-proxy-agent": "^7.0.2",
