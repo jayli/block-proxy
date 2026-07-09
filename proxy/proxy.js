@@ -667,6 +667,7 @@ async function forwardViaLocalProxy(url, requestOptions, body = null, proxyConfi
     httpAgent: agent,
     httpsAgent: agent,
     responseType: 'stream', // 正确处理二进制响应
+    proxy: false,
     maxRedirects: 21
     // validateStatus: () => true, // 如果你想自己处理所有状态码，取消注释
   };

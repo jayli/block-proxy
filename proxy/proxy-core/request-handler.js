@@ -314,6 +314,16 @@ function registerSocketMapCleanup(socketMap, key, socket) {
   socket.once('close', cleanup);
 }
 
+function getWebSocketConnectRequestText(chunk) {
+  try {
+    const text = chunk.toString();
+    return text.indexOf('GET ') === 0 ? text : '';
+  } catch (e) {
+    console.error(e);
+    return '';
+  }
+}
+
 /**
  * HTTP/HTTPS request handler (no recorder).
  *
@@ -576,6 +586,13 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
           // Push CONNECT head bytes first, before any socket data
           if (head && head.length > 0) {
             requestStream.push(head);
+            const headText = getWebSocketConnectRequestText(head);
+            if (headText) {
+              shouldIntercept = false;
+              if (reqHandlerCtx.wsIntercept && headText.indexOf('GET /do-not-proxy') !== 0) {
+                interceptWsRequest = true;
+              }
+            }
             resolved = true;
             resolve();
           }
@@ -584,17 +601,13 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
             requestStream.push(chunk);
             if (!resolved) {
               resolved = true;
-              try {
-                const chunkString = chunk.toString();
-                if (chunkString.indexOf('GET ') === 0) {
-                  shouldIntercept = false; // websocket, do not intercept
+              const chunkText = getWebSocketConnectRequestText(chunk);
+              if (chunkText) {
+                shouldIntercept = false; // websocket, do not intercept
 
-                  if (reqHandlerCtx.wsIntercept && chunkString.indexOf('GET /do-not-proxy') !== 0) {
-                    interceptWsRequest = true;
-                  }
+                if (reqHandlerCtx.wsIntercept && chunkText.indexOf('GET /do-not-proxy') !== 0) {
+                  interceptWsRequest = true;
                 }
-              } catch (e) {
-                console.error(e);
               }
               resolve();
             }
@@ -844,6 +857,7 @@ class RequestHandler {
 
 RequestHandler._test = {
   registerSocketMapCleanup,
+  getWebSocketConnectRequestText,
   CommonReadableStream,
   matchResponseRule,
   fetchRemoteResponse,

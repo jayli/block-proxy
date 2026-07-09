@@ -189,6 +189,7 @@ function createProxyAxios(proxyConfig, timeoutMs = 10000) {
   return axios.create({
     httpAgent: new HttpProxyAgent(proxyUrl),
     httpsAgent: new HttpsProxyAgent(proxyUrl),
+    proxy: false,
     timeout: timeoutMs,
     validateStatus: () => true,
   });
