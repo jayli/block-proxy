@@ -349,6 +349,9 @@ class ProxyCore:
         self._routing = None
         self._tunnel_client = None
         self._stop_lock = threading.Lock()
+        self._configured_socks_port = None
+        self._configured_http_port = None
+        self._server_sockets = []
 
     def set_tunnel_client(self, tc):
         self._tunnel_client = tc
@@ -371,6 +374,9 @@ class ProxyCore:
         self._server_config = user_config["server"]
         self._tunnel_config = user_config.get("tunnel", {})
         local = user_config["local"]
+        # 保存配置的原始端口，每次 start() 重置（防止端口漂移累积）
+        self._configured_socks_port = local["socks_port"]
+        self._configured_http_port = local["http_port"]
         self._socks_port = local["socks_port"]
         self._http_port = local["http_port"]
         self._proxy_private = local.get("proxy_private", False)
@@ -405,9 +411,7 @@ class ProxyCore:
                 async def _shutdown():
                     await self._stop_servers()
                     loop.stop()
-                loop.call_soon_threadsafe(
-                    asyncio.ensure_future, _shutdown()
-                )
+                asyncio.run_coroutine_threadsafe(_shutdown(), loop)
 
             if thread:
                 # Wait for thread to exit with short timeout
@@ -418,7 +422,13 @@ class ProxyCore:
                     except Exception:
                         pass
                 elif loop:
-                    logger.warning("proxy thread did not exit in time, skipping loop.close()")
+                    # 线程未退出：强制关闭 server sockets 释放端口
+                    for sock in self._server_sockets:
+                        try:
+                            sock.close()
+                        except Exception:
+                            pass
+                    logger.warning("proxy thread did not exit in time, forced server socket close")
             self._loop = None
             self._thread = None
 
@@ -567,6 +577,7 @@ class ProxyCore:
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT)
         init_writer()
         asyncio.ensure_future(self._flush_stats_loop())
+        self._server_sockets = []
         max_attempts = 100
         for attempt in range(max_attempts):
             try:
@@ -576,6 +587,10 @@ class ProxyCore:
                 self._http_server = await asyncio.start_server(
                     self._handle_http, "127.0.0.1", self._http_port
                 )
+                # 收集 server sockets 用于强制关闭
+                for server in (self._socks_server, self._http_server):
+                    for sock in server.sockets or []:
+                        self._server_sockets.append(sock)
                 return
             except OSError as e:
                 if e.errno == 48 and attempt < max_attempts - 1:
@@ -588,8 +603,9 @@ class ProxyCore:
                         self._http_server.close()
                         await self._http_server.wait_closed()
                         self._http_server = None
-                    self._socks_port += 1
-                    self._http_port += 1
+                    # 每次重试从配置的原始端口开始偏移，防止漂移累积
+                    self._socks_port = self._configured_socks_port + attempt + 1
+                    self._http_port = self._configured_http_port + attempt + 1
                 else:
                     raise
 

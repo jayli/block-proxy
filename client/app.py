@@ -494,17 +494,31 @@ class AppController(NSObject):
                 logger.warning(f"Failed to re-sync system proxy after wake: {e}")
             return
         logger.warning("Local proxy is not healthy after wake, restarting local proxy")
-        try:
-            self._restart_local_proxy_only()
-        except Exception as e:
-            logger.error(f"Failed to restart local proxy after wake: {e}", exc_info=True)
-            self._run_on_main(
-                lambda: self._show_notification(
-                    "BlockProxyClient",
-                    "本地代理恢复失败",
-                    str(e),
-                )
+        import time
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                self._restart_local_proxy_only()
+                # 验证重启是否成功
+                time.sleep(0.5)
+                if self._local_proxy_is_healthy():
+                    logger.info("Local proxy recovered after wake (attempt %d)", attempt + 1)
+                    return
+                logger.warning("Local proxy restart did not restore ports (attempt %d/%d)",
+                               attempt + 1, max_retries)
+            except Exception as e:
+                logger.warning("Failed to restart local proxy after wake (attempt %d/%d): %s",
+                               attempt + 1, max_retries, e, exc_info=True)
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+        logger.error("Failed to recover local proxy after %d attempts", max_retries)
+        self._run_on_main(
+            lambda: self._show_notification(
+                "BlockProxyClient",
+                "本地代理恢复失败",
+                f"尝试 {max_retries} 次后仍无法恢复，请手动重启代理",
             )
+        )
 
     def _ensure_tunnel_after_wake(self):
         if not self.connected:
@@ -597,48 +611,63 @@ class AppController(NSObject):
 
             restart_count = 0
             while True:
-                time.sleep(5)
+                time.sleep(3)
                 if not self.connected:
                     restart_count = 0
                     continue
-                if self.proxy.is_running():
+
+                # 如果 wake handler 或手动重连正在处理，跳过本轮检查
+                if self._reconnecting:
                     restart_count = 0
-                    # 检查隧道客户端线程是否存活
-                    tc = self.tunnel_client  # snapshot to avoid race condition
-                    if tc and tc.is_thread_alive():
-                        # 检查隧道是否进入不可重试状态（不自动重启）
-                        status = tc.get_status()
-                        if status in ('occupied', 'auth_failed'):
-                            crash_logger.warning(
-                                "Tunnel entered non-retryable state: %s", status
-                            )
-                    elif tc and not tc.is_thread_alive():
-                        status = tc.get_status()
-                        if status in ('occupied', 'auth_failed'):
-                            crash_logger.warning(
-                                "Tunnel stopped in non-retryable state: %s", status
-                            )
-                            continue
-                        crash_logger.warning("Tunnel client thread died, restarting")
-                        try:
-                            tc.stop()
-                            new_tc = TunnelClient(
-                                self.config.data,
-                                on_status_change=lambda status, detail="": None
-                            )
-                            new_tc.start()
-                            self.tunnel_client = new_tc
-                            self.proxy.set_tunnel_client(new_tc)
-                            crash_logger.warning("Tunnel client restarted")
-                        except Exception as e:
-                            crash_logger.warning(
-                                "Tunnel client restart failed: %s", e, exc_info=True
-                            )
                     continue
+
+                if self.proxy.is_running():
+                    # 线程存活 — 检查端口是否仍在监听
+                    if self._local_proxy_is_healthy():
+                        restart_count = 0
+                        # 检查隧道客户端线程是否存活
+                        tc = self.tunnel_client  # snapshot to avoid race condition
+                        if tc and tc.is_thread_alive():
+                            # 检查隧道是否进入不可重试状态（不自动重启）
+                            status = tc.get_status()
+                            if status in ('occupied', 'auth_failed'):
+                                crash_logger.warning(
+                                    "Tunnel entered non-retryable state: %s", status
+                                )
+                        elif tc and not tc.is_thread_alive():
+                            status = tc.get_status()
+                            if status in ('occupied', 'auth_failed'):
+                                crash_logger.warning(
+                                    "Tunnel stopped in non-retryable state: %s", status
+                                )
+                                continue
+                            crash_logger.warning("Tunnel client thread died, restarting")
+                            try:
+                                tc.stop()
+                                new_tc = TunnelClient(
+                                    self.config.data,
+                                    on_status_change=lambda status, detail="": None
+                                )
+                                new_tc.start()
+                                self.tunnel_client = new_tc
+                                self.proxy.set_tunnel_client(new_tc)
+                                crash_logger.warning("Tunnel client restarted")
+                            except Exception as e:
+                                crash_logger.warning(
+                                    "Tunnel client restart failed: %s", e, exc_info=True
+                                )
+                        continue
+
+                    # 线程存活但端口不可用（休眠唤醒或系统事件导致 socket 失效）
+                    crash_logger.warning(
+                        "Proxy thread alive but ports not listening, restarting local proxy"
+                    )
+                else:
+                    crash_logger.warning("Proxy thread died")
 
                 restart_count += 1
                 crash_logger.warning(
-                    "Proxy thread died, attempting restart (%d/%d)",
+                    "Proxy unhealthy, attempting restart (%d/%d)",
                     restart_count, MAX_RESTARTS,
                 )
 
@@ -785,9 +814,9 @@ class AppController(NSObject):
                 self._reconnecting = True
                 logger.info("System woke up, checking local proxy...")
 
-                # Wait a moment for network to stabilize
+                # Wait for network stack to stabilize (Wi-Fi reconnection can take 3-5s)
                 import time
-                time.sleep(1)
+                time.sleep(3)
 
                 self._ensure_local_proxy_after_wake()
                 self._ensure_tunnel_after_wake()
