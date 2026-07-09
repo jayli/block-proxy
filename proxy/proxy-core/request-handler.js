@@ -119,6 +119,7 @@ function _isRetryableMethod(method) {
  * @param {object} config
  * @param {boolean} config.dangerouslyIgnoreUnauthorized
  * @param {number} config.chunkSizeThreshold
+ * @param {number} config.timeout
  * @returns {Promise}
  */
 function fetchRemoteResponse(protocol, options, reqData, config) {
@@ -148,6 +149,18 @@ function fetchRemoteResponse(protocol, options, reqData, config) {
         ? (isHttps ? _httpsAgent : _httpAgent)
         : false;
 
+      let settled = false;
+      const settleResolve = (value) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const settleReject = (error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
+
       const proxyReq = (isHttps ? https : http).request(opts, (res) => {
         res.headers = util.getHeaderFromRawHeaders(res.rawHeaders);
         const statusCode = res.statusCode;
@@ -167,7 +180,7 @@ function fetchRemoteResponse(protocol, options, reqData, config) {
               return;
             }
           }).then((serverResData) => {
-            resolve({
+            settleResolve({
               statusCode,
               header: resHeader,
               body: serverResData,
@@ -175,7 +188,7 @@ function fetchRemoteResponse(protocol, options, reqData, config) {
               _res: res,
             });
           }).catch((e) => {
-            reject(e);
+            settleReject(e);
           });
         };
 
@@ -210,11 +223,19 @@ function fetchRemoteResponse(protocol, options, reqData, config) {
         });
         res.on('error', (error) => {
           logUtil.printLog('error happened in response:' + error, logUtil.T_ERR);
-          reject(error);
+          settleReject(error);
         });
       });
 
-      proxyReq.on('error', reject);
+      if (config.timeout) {
+        proxyReq.setTimeout(config.timeout, () => {
+          const error = new Error('request timeout');
+          error.code = 'ETIMEDOUT';
+          proxyReq.destroy(error);
+        });
+      }
+
+      proxyReq.on('error', settleReject);
       proxyReq.end(reqData);
     });
   }
@@ -237,6 +258,9 @@ function fetchRemoteResponse(protocol, options, reqData, config) {
 function getWsReqInfo(wsReq) {
   const headers = wsReq.headers || {};
   const host = headers.host;
+  if (!host) {
+    throw new Error('missing Host header in WebSocket request');
+  }
   const hostName = host.split(':')[0];
   const port = host.split(':')[1];
   const path = wsReq.url || '/';
@@ -463,6 +487,7 @@ function getUserReqHandler(userRule) {
           const remoteResponse = yield fetchRemoteResponse(userConfig.protocol, userConfig.requestOptions, userConfig.requestData, {
             dangerouslyIgnoreUnauthorized: reqHandlerCtx.dangerouslyIgnoreUnauthorized,
             chunkSizeThreshold: _chunkSizeThreshold,
+            timeout: reqHandlerCtx.timeout,
           });
           return {
             response: {
@@ -664,6 +689,9 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
 
         return new Promise((resolve, reject) => {
           const setupPipe = (conn) => {
+            if (conn.setTimeout) {
+              conn.setTimeout(0);
+            }
             requestStream.pipe(conn);
             conn.pipe(cltSocket);
             resolve();
@@ -679,6 +707,15 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
           if (!conn) {
             conn = net.connect(serverInfo.port, serverInfo.host, () => {
               setupPipe(conn);
+            });
+          }
+
+          if (reqHandlerCtx.timeout && conn.setTimeout) {
+            conn.setTimeout(reqHandlerCtx.timeout, () => {
+              const error = new Error('connect timeout');
+              error.code = 'ETIMEDOUT';
+              conn.destroy(error);
+              reject(error);
             });
           }
 
@@ -810,6 +847,7 @@ class RequestHandler {
    * @param {number} config.httpServerPort
    * @param {boolean} config.wsIntercept
    * @param {function} config.customConnect - optional custom CONNECT handler (for tunnel domains)
+   * @param {number} config.timeout
    * @param {object} rule - user rule callbacks
    */
   constructor(config, rule) {
@@ -819,6 +857,7 @@ class RequestHandler {
     this.httpServerPort = '';
     this.wsIntercept = false;
     this.customConnect = null;
+    this.timeout = 0;
 
     if (config.forceProxyHttps) {
       this.forceProxyHttps = true;
@@ -835,6 +874,10 @@ class RequestHandler {
     // Fix: pass customConnect into RequestHandler (fork gap)
     if (config.customConnect) {
       this.customConnect = config.customConnect;
+    }
+
+    if (config.timeout) {
+      this.timeout = config.timeout;
     }
 
     this.httpServerPort = config.httpServerPort;

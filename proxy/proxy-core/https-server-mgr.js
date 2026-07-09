@@ -23,6 +23,10 @@ const wsServerMgr = require('./ws-server-mgr');
 
 const DEFAULT_SNI_CONTEXT_CACHE_LIMIT = 1000;
 
+function getSecureOptions() {
+  return constants.SSL_OP_NO_SSLv3 | constants.SSL_OP_NO_TLSv1;
+}
+
 function createLRUCache(limit) {
   const maxEntries = Math.max(1, limit || DEFAULT_SNI_CONTEXT_CACHE_LIMIT);
   const store = new Map();
@@ -102,7 +106,7 @@ function createHttpsSNIServer(port, handler) {
 
   return new Promise((resolve) => {
     const server = https.createServer({
-      secureOptions: constants.SSL_OP_NO_SSLv3 || constants.SSL_OP_NO_TLSv1,
+      secureOptions: getSecureOptions(),
       SNICallback: SNIPrepareCert,
       ALPNProtocols: ['http/1.1'],
     }, handler).listen(port);
@@ -125,7 +129,7 @@ function createHttpsIPServer(ip, port, handler) {
     certMgr.getCertificate(ip, (err, keyContent, crtContent) => {
       if (err) return reject(err);
       const server = https.createServer({
-        secureOptions: constants.SSL_OP_NO_SSLv3 || constants.SSL_OP_NO_TLSv1,
+        secureOptions: getSecureOptions(),
         key: keyContent,
         cert: crtContent,
       }, handler).listen(port);
@@ -224,6 +228,7 @@ class HttpsServerMgr {
 
 HttpsServerMgr._test = {
   createLRUCache,
+  getSecureOptions,
   normalizeSNIName,
 };
 

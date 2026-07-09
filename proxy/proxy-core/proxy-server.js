@@ -57,6 +57,7 @@ class ProxyCore extends events.EventEmitter {
    * @param {boolean} [config.dangerouslyIgnoreUnauthorized=false]
    * @param {boolean} [config.wsIntercept]
    * @param {function} [config.customConnect]
+   * @param {number} [config.timeout]
    */
   constructor(config) {
     super();
@@ -97,6 +98,7 @@ class ProxyCore extends events.EventEmitter {
       forceProxyHttps: !!config.forceProxyHttps,
       dangerouslyIgnoreUnauthorized: !!config.dangerouslyIgnoreUnauthorized,
       customConnect: config.customConnect || null,
+      timeout: config.timeout,
     }, this.proxyRule);
   }
 
