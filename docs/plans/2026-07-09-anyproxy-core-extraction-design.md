@@ -1,326 +1,505 @@
-# 抽离 AnyProxy 核心逻辑设计文档
+# AnyProxy Core Extraction Design
 
-**日期**: 2026-07-09  
-**状态**: 设计已确认  
-**方案**: A — 搬运 + 裁剪
-
----
-
-## 背景与动机
-
-项目当前依赖私有 npm 包 `@bachi/anyproxy`（AnyProxy 的 fork），作为 HTTP/HTTPS 代理的核心引擎。该包存在以下问题：
-
-1. **私有包依赖**：新环境安装需要特殊配置 npm registry
-2. **大量无用功能**：Web 监控面板、请求录制、WebSocket 拦截、流量限速等功能从未被使用
-3. **调试困难**：核心代理逻辑在 node_modules 中，修改需要 fork + link，不便于版本管理
-4. **间接依赖过多**：引入 ~30 个间接依赖（nedb、pug、qrcode-npm、inquirer 等），增加供应链风险
-
-**目标**：将 AnyProxy 的核心逻辑（HTTP 代理 + HTTPS MITM）抽离到 `proxy/proxy-core/`，去掉对 `@bachi/anyproxy` 的依赖，保持现有 `proxy/proxy.js` 架构和 Rule 回调体系不变。
+**Date**: 2026-07-09
+**Status**: Revised after local code review
+**Strategy**: Capability-equivalent extraction, then dependency removal
 
 ---
 
-## 模块结构
+## Goal
+
+Move the subset of `node_modules/@bachi/anyproxy` that `block-proxy` actually depends on into this repository, so `package.json` no longer depends on `@bachi/anyproxy`.
+
+The migration must preserve current `block-proxy` behavior. The objective is not to reimplement upstream AnyProxy from scratch, and not to aggressively remove code that looks unused inside AnyProxy but is part of current proxy forwarding behavior.
+
+Current behavior is the combination of:
+
+- `proxy/proxy.js` rule system, authentication, tunnel integration, MITM registry, and lifecycle.
+- The local `@bachi/anyproxy` fork under `node_modules`, including its fork-specific changes.
+- The extra CONNECT listener override in `proxy/proxy.js` used for reverse tunnel domains.
+
+The extracted core must match that combined behavior.
+
+---
+
+## Current Dependency Surface
+
+`block-proxy` directly uses AnyProxy in these places:
+
+- `AnyProxy.utils.certMgr.ifRootCAFileExists()`
+- `AnyProxy.utils.certMgr.generateRootCA()`
+- `new AnyProxy.ProxyServer(options)`
+- `proxyServerInstance.httpProxyServer` after `ready`, to override CONNECT handling for tunnel domains
+
+`getAnyProxyOptions()` also relies on the rule callback contract:
+
+- `beforeDealHttpsRequest`
+- `beforeSendRequest`
+- `beforeSendResponse`
+- `onError`
+- `onConnectError`
+- `checkProxyAuth`
+- `sendAuthRequired`
+- `send407bySocket`
+- `responseRules`
+- `customConnect`
+
+Important finding: the current AnyProxy fork contains `customConnect` usage in `requestHandler.js`, but `proxy.js` does not pass `config.customConnect` into `RequestHandler`. That is why `proxy/proxy.js` currently re-wraps `httpProxyServer`'s `connect` listener after `ready`.
+
+---
+
+## Required Capabilities To Preserve
+
+These capabilities are in scope and must remain working:
+
+1. HTTP proxy forwarding
+   - Absolute-form HTTP requests through the proxy.
+   - GET/POST and binary payload forwarding.
+   - `beforeSendRequest` rule handling.
+   - Local synthetic responses returned from rules.
+
+2. HTTPS CONNECT forwarding without MITM
+   - `beforeDealHttpsRequest()` can return `false`.
+   - Proxy replies `200 Connection Established`.
+   - Client socket is piped to the target server.
+   - `head` bytes from Node's CONNECT event must be forwarded.
+
+3. HTTPS MITM
+   - `beforeDealHttpsRequest()` can return `true`.
+   - Dynamic SNI certificate generation.
+   - Internal HTTPS server receives decrypted HTTP requests.
+   - `beforeSendRequest` and `beforeSendResponse` run on decrypted requests/responses.
+   - Source IP is recovered for MITM requests via socket maps.
+
+4. WebSocket proxy forwarding
+   - Plain `ws://` over the HTTP proxy is currently supported through `wsServerMgr`.
+   - `wss://` without MITM is supported as raw CONNECT TCP forwarding.
+   - `wss://` inside MITM is supported through the internal HTTPS server's `upgrade` path.
+   - `wsIntercept: false` does not mean WebSocket support can be removed. It only disables forcing CONNECT WebSocket traffic into the local WS handler.
+
+5. Reverse tunnel domains
+   - Tunnel domains must remain pure TCP and must never be MITM-decrypted.
+   - Tunnel CONNECT must call `tunnelManager.forward(host, port, callback)`.
+   - `head` bytes must be forwarded into the tunnel stream.
+   - A tunnel domain must never fall back to `net.connect()` if the tunnel manager returns a failure stream.
+
+6. Response streaming and large response safety
+   - Current fork uses `CommonReadableStream` when a response exceeds the chunk threshold.
+   - Non-response-rule traffic uses a low threshold for early streaming.
+   - Response-rule traffic uses a higher threshold so `beforeSendResponse` can inspect whole bodies.
+   - This is core proxy forwarding behavior and must not be removed.
+
+7. Existing fork transport tuning
+   - Bounded keep-alive agents.
+   - Retry once with a fresh connection on `ECONNRESET`/`EPIPE` for retryable methods.
+   - Header handling based on `rawHeaders`.
+   - Transfer-Encoding and Content-Length handling compatible with current behavior.
+
+8. Error handling semantics
+   - `onError()` is called for remote request errors.
+   - `onConnectError()` is called for CONNECT failures.
+   - Existing handling for malformed upstream HTTP responses in `proxy/proxy.js` remains intact.
+
+---
+
+## Modules To Extract
 
 ```
 proxy/
-  proxy.js                    ← 现有，改动最小化（仅改 require 路径）
-  fs.js, attacker.js, ...     ← 现有，不动
-  mitm/                       ← 现有，不动
-  proxy-core/                 ← 新建
-    index.js                  ← 入口，导出 ProxyServer + utils.certMgr
-    proxy-server.js           ← 搬运自 anyproxy/proxy.js（服务器创建/生命周期）
-    request-handler.js        ← 搬运自 anyproxy/lib/requestHandler.js（请求处理管线）
-    https-server-mgr.js       ← 搬运自 anyproxy/lib/httpsServerMgr.js（MITM 服务器管理）
-    cert-mgr.js               ← 搬运自 anyproxy/lib/certMgr.js（证书管理）
-    util.js                   ← 搬运自 anyproxy/lib/util.js（工具函数精简版）
+  proxy.js
+  proxy-core/
+    index.js
+    proxy-server.js
+    request-handler.js
+    https-server-mgr.js
+    cert-mgr.js
+    util.js
+    ws-server-mgr.js
+    rule-default.js
+    request-error-handler.js
 ```
 
-**关键原则**：
-- 文件一一对应原始 AnyProxy 文件，方便搬运时逐行对照
-- 文件名用 kebab-case（`request-handler.js`），符合 block-proxy 现有风格
-- `index.js` 模拟原 AnyProxy 的导出结构，让 proxy.js 的改动最小
+### `index.js`
 
----
-
-## 裁剪清单
-
-搬运不是整文件复制，而是"搬运有用逻辑，删掉无用分支"。以下按文件列出删除项：
-
-### request-handler.js（原 1152 行 → 预计 ~850 行）
-
-| 删除项 | 原因 |
-|--------|------|
-| `recorder` 相关全部代码（appendRecord, updateRecord, resourceInfo 等） | 项目不使用录制功能 |
-| `getWsHandler` 函数（~150 行） | `wsIntercept: false`，从未启用 |
-| `global._throttle` 限速分支（fetchRemoteResponse 和 sendFinalResponse 中） | 项目不传 throttle 选项 |
-| `CommonReadableStream` 类 | 仅 throttle 和 recorder 使用 |
-| 日志中的 `logUtil` 调用 | 替换为 `console.log`/`console.error`，去掉 `colorful` 依赖 |
-
-### https-server-mgr.js（原 217 行 → 预计 ~150 行）
-
-| 删除项 | 原因 |
-|--------|------|
-| `wsServerMgr.getWsServer` 调用 | 不拦截 WebSocket |
-| `async-task-mgr` 依赖 | 替换为简单的 Promise 锁（同一 host 不重复创建服务器） |
-| `createHttpsIPServer` 函数 | 项目的 `beforeDealHttpsRequest` 对裸 IP 返回 false，不会走 MITM |
-
-### cert-mgr.js（原 104 行 → 预计 ~40 行）
-
-| 删除项 | 原因 |
-|--------|------|
-| `trustRootCA` generator 函数（交互式 inquirer） | 项目手动管理证书信任 |
-| `getCAStatus` generator 函数 | 从未调用 |
-| `defaultCertAttrs` 自定义属性 | 保持默认即可 |
-
-### util.js（原 339 行 → 预计 ~120 行）
-
-| 删除项 | 原因 |
-|--------|------|
-| `filewalker`, `simpleRender`, `contentType`, `contentLength` | 仅 webInterface 使用 |
-| `formatDate` | 仅 logUtil 使用 |
-| `execScriptSync`, `guideToHomePage` | 仅 certMgr.trustRootCA 使用 |
-| `deleteFolderContentsRecursive` | 仅 recorder 使用 |
-
-### proxy-server.js（原 364 行 → 预计 ~200 行）
-
-| 删除项 | 原因 |
-|--------|------|
-| `Recorder` 实例化和使用 | 不录制 |
-| `WebInterface` 实例化和使用 | 不启动 Web 面板 |
-| `ThrottleGroup` 初始化 | 不限速 |
-| `wsServerMgr` WebSocket 服务器 | 不拦截 WS |
-| ProxyCore / ProxyServer 两层继承 | 合并为单个 ProxyServer 类 |
-
-**总计**：从 AnyProxy 的 ~2700 行核心代码裁剪到 ~1360 行，去掉约一半无用逻辑。
-
----
-
-## API 接口设计
-
-### proxy-core/index.js 导出结构
+Exports a small AnyProxy-compatible facade:
 
 ```js
-// proxy/proxy-core/index.js
-const ProxyServer = require('./proxy-server');
-const certMgr = require('./cert-mgr');
-
 module.exports = {
   ProxyServer,
-  utils: { certMgr }  // 保持 AnyProxy 的 utils.certMgr 路径，proxy.js 改动最小
+  utils: { certMgr }
 };
 ```
 
-### proxy.js 改动点（共 4 处）
+This keeps `proxy/proxy.js` migration small.
 
-```diff
-// 改动 1：require 路径
-- const AnyProxy = require('@bachi/anyproxy');
-+ const { ProxyServer, utils: { certMgr } } = require('./proxy-core');
+### `proxy-server.js`
 
-// 改动 2：startProxyServer() 中的证书检查
-- if (!AnyProxy.utils.certMgr.ifRootCAFileExists()) {
--   AnyProxy.utils.certMgr.generateRootCA((error, keyPath) => {
-+ if (!certMgr.ifRootCAFileExists()) {
-+   certMgr.generateRootCA((error, keyPath) => {
+Extract from `node_modules/@bachi/anyproxy/proxy.js`.
 
-// 改动 3：创建服务器
-- proxyServerInstance = new AnyProxy.ProxyServer(options);
-+ proxyServerInstance = new ProxyServer(options);
+Keep:
 
-// 改动 4：getAnyProxyOptions() 中删除无用选项
-  function getAnyProxyOptions() {
-    return {
-      port: proxyPort,
-      customConnect: ...,
-      rule: { ... },           // ← Rule 回调完全不变
--     throttle: 800 * 1024 * 1024,
--     wsIntercept: false,
-      silent: true,
-      timeout: 120 * 1000
-    };
-  }
-```
+- `EventEmitter` behavior.
+- `ProxyServer` constructor options currently used by `block-proxy`.
+- `httpProxyServer` property.
+- `start()`, `close()`, socket pool cleanup.
+- HTTP and HTTPS proxy server creation.
+- CONNECT listener registration.
+- WebSocket server registration on the main proxy server.
 
-### 不变的部分
+Remove:
 
-- `LocalProxy` 对象（init/start/restart）— 对外 API 完全不变
-- `getAnyProxyOptions()` 中的 `rule` 对象 — 所有回调完全不变：
-  - `beforeDealHttpsRequest`
-  - `beforeSendRequest`
-  - `beforeSendResponse`
-  - `onError`
-  - `onConnectError`
-  - `checkProxyAuth`
-  - `sendAuthRequired`
-  - `send407bySocket`
-- `customConnect` 隧道拦截逻辑 — 不变
-- CONNECT 事件劫持（`proxyServerInstance.httpProxyServer`）— 不变
-- 所有 MITM 规则系统（proxy/mitm/）— 不变
+- `Recorder` instantiation and cleanup.
+- Web interface startup/shutdown.
+- `ProxyRecorder`, `ProxyWebServer`, `systemProxyMgr` exports.
+- `colorful` logging dependency.
+- `stream-throttle` support unless tests prove it is needed.
 
----
+Fix during extraction:
 
-## 请求处理管线
+- Pass `customConnect: config.customConnect` into `RequestHandler`.
 
-proxy-core 内部的请求处理流程与 AnyProxy 保持一致，去掉无用分支：
+### `request-handler.js`
 
-```
-客户端请求
-    │
-    ▼
-http.createServer (HTTP 请求)  ─────┐
-httpServer.on('connect') (CONNECT)  │
-    │                               │
-    ▼                               │
-┌─ getUserReqHandler ─────────────┐ │
-│  1. 收集请求 body               │ │
-│  2. 构建 requestDetail          │ │
-│  3. rule.beforeSendRequest()    │◄┘
-│     ├─ 返回 {response} → 本地响应
-│     └─ 返回 {requestOptions} → fetchRemoteResponse()
-│  4. rule.beforeSendResponse()
-│  5. sendFinalResponse()
-└─────────────────────────────────┘
+Extract from `node_modules/@bachi/anyproxy/lib/requestHandler.js`.
 
-CONNECT 请求单独路径：
-┌─ getConnectReqHandler ──────────┐
-│  1. rule.beforeDealHttpsRequest()
-│     ├─ false → net.connect(目标服务器) → 双向 pipe
-│     └─ true  → httpsServerMgr 创建本地 MITM 服务器
-│                → 客户端 TLS 流量解密后回灌 getUserReqHandler
-│  2. customConnect 优先（隧道域名）
-└─────────────────────────────────┘
-```
+Keep:
 
-### 与 AnyProxy 的关键差异
+- HTTP request handler.
+- CONNECT request handler.
+- WebSocket proxy handler.
+- `CommonReadableStream` or an equivalent local stream implementation.
+- `responseRules`/`chunkSizeThreshold` behavior.
+- keep-alive agents and retry behavior.
+- source IP socket map and cleanup.
+- rule callback flow.
+- local response support.
+- stream bypass for large responses.
+- `head` handling for CONNECT.
 
-| AnyProxy 原版 | 搬运后 |
-|--------------|--------|
-| CONNECT → recorder.appendRecord → 处理 | CONNECT → 直接处理（无 recorder） |
-| fetchRemoteResponse 有 throttle 分支 | 去掉 throttle，直接返回 |
-| wsHandler 处理 WebSocket 升级 | 删除，wsIntercept=false 时不会触发 |
-| cltSocket 写入时有详细错误处理链 | 保留 EPIPE/ECONNRESET 容错，简化日志 |
+Remove:
 
-### customConnect 保留
+- Recorder-specific parameters, fields, and updates.
+- `recorder.appendRecord`, `recorder.updateRecord`, `recorder.updateRecordWsMessage`, and any `resourceInfo` state used only for recording.
+- `global._throttle` branches if `throttle` is removed.
+- `colorful`/`logUtil` dependency, replacing with local lightweight logging.
+- Unused `brotli` package import if not referenced. Brotli response decompression in `proxy/proxy.js` already uses Node's `zlib.brotliDecompress`.
 
-这是 proxy.js 劫持隧道域名 CONNECT 的关键入口。在 `getConnectReqHandler` 中搬运这段逻辑：
+Fix during extraction:
+
+- Set `this.customConnect = config.customConnect`.
+- Remove recorder from extracted function signatures:
+  - `getUserReqHandler(userRule, recorder)` -> `getUserReqHandler(userRule)`
+  - `getConnectReqHandler(userRule, recorder, httpsServerMgr)` -> `getConnectReqHandler(userRule, httpsServerMgr)`
+  - `getWsHandler(userRule, recorder, wsClient, wsReq)` -> `getWsHandler(userRule, wsClient, wsReq)`
+- Preserve `head` bytes by pushing them into `requestStream` before normal socket data:
 
 ```js
-// request-handler.js 中搬运这段逻辑
-let conn;
-if (reqHandlerCtx.customConnect) {
-  conn = reqHandlerCtx.customConnect(host, port, () => {
-    setupPipe(conn);
-  });
-}
-if (!conn) {
-  conn = net.connect(port, host, () => {
-    setupPipe(conn);
-  });
+if (head && head.length > 0) {
+  requestStream.push(head);
 }
 ```
 
-这段逻辑使 `tunnelManager.forward()` 能接管隧道域名的连接，搬运后行为完全一致。
+- Do not delete `getWsHandler` or `wsServerMgr` integration.
+
+### `https-server-mgr.js`
+
+Extract from `node_modules/@bachi/anyproxy/lib/httpsServerMgr.js`.
+
+Keep:
+
+- SNI HTTPS server creation.
+- certificate generation via `certMgr.getCertificate()`.
+- SNI context cache.
+- active server tracking and close.
+- WebSocket server registration on internal HTTPS servers.
+- shared-server behavior for SNI hosts.
+
+May replace:
+
+- `async-task-mgr` with a small Promise lock/map.
+- `async` with Promise flow.
+- colored logging with local logging.
+
+Be careful:
+
+- Do not remove `createHttpsIPServer` unless `proxy/proxy.js` is also changed so IP hosts can never return `true` from `beforeDealHttpsRequest()`. Today `vpn_proxy` can force MITM before the IP bypass check, so IP MITM is reachable.
+
+### `ws-server-mgr.js`
+
+Extract from `node_modules/@bachi/anyproxy/lib/wsServerMgr.js`.
+
+Keep:
+
+- `ws.Server({ server })`.
+- `connection` callback wiring.
+- `headers` hook adding `x-anyproxy-websocket:true`.
+- error handling.
+
+This module is small and directly supports current WebSocket proxy capability.
+
+### `cert-mgr.js`
+
+Extract from `node_modules/@bachi/anyproxy/lib/certMgr.js`.
+
+Keep:
+
+- `node-easy-cert` integration.
+- `ifRootCAFileExists`.
+- `generateRootCA`.
+- inherited methods such as `getCertificate()` and `getRootCAFilePath()`.
+- current certificate directory compatibility: `~/.anyproxy/certificates`.
+- existing default certificate attributes unless tests confirm changing them is safe.
+
+Remove:
+
+- `trustRootCA`.
+- `getCAStatus`.
+- `inquirer`, `co`, and OS trust-store commands used only by those functions.
+
+### `util.js`
+
+Extract only helpers needed by local core:
+
+- `merge`
+- `freshRequire`
+- `getUserHome`
+- `getAnyProxyHome`
+- `getAnyProxyPath`
+- `getHeaderFromRawHeaders`
+- `getAllIpAddress` if still referenced
+- `getFreePort`
+- `collectErrorLog`
+- `getByteSize`
+- `isIp`
+
+Remove helpers used only by removed AnyProxy modules:
+
+- `filewalker`
+- `simpleRender`
+- `contentType`
+- `contentLength`
+- `formatDate`
+- `deleteFolderContentsRecursive`
+- `execScriptSync`
+- `guideToHomePage`
+
+### `rule-default.js`
+
+Extract default rule callbacks. Keep `onClientSocketError`, because current request handler calls it for some client socket errors.
+
+### `request-error-handler.js`
+
+Prefer a minimal local implementation that returns an HTML string.
+
+The current AnyProxy helper ultimately depends on `pug` templates under AnyProxy's `resource/` directory. Pulling that helper as-is would keep an unnecessary template dependency. The extracted core only needs an error response body for `getErrorResponse()`, while `proxy/proxy.js` rule `onError()` still has the chance to replace that response.
 
 ---
 
-## 依赖管理
+## Modules Not To Extract
 
-### 新增直接依赖
+These AnyProxy capabilities are not required by `block-proxy` and can be removed:
+
+- Web monitoring UI.
+- Request recorder database and record mutation.
+- AnyProxy CLI.
+- AnyProxy CA CLI.
+- System proxy manager.
+- Interactive certificate trust installer.
+- Rule loader/config utility for AnyProxy's standalone CLI.
+- Traffic throttle implementation, as long as no caller relies on real throttling behavior.
+
+---
+
+## Dependency Plan
+
+Remove:
+
+- `@bachi/anyproxy`
+
+Add direct dependencies only for extracted runtime code:
 
 ```json
 {
   "dependencies": {
-    "node-easy-cert": "^1.0.0"
+    "node-easy-cert": "^1.0.0",
+    "ws": "^5.1.0",
+    "co": "^4.6.0"
   }
 }
 ```
 
-仅这一个，用于证书生成（原 AnyProxy 的间接依赖，搬运后需要直接依赖）。
+`ws` and `co` versions should match the current fork's dependency declarations for the first extraction:
 
-### 可移除的间接依赖
+- `node_modules/@bachi/anyproxy/package.json` declares `"ws": "^5.1.0"`.
+- `node_modules/@bachi/anyproxy/package.json` declares `"co": "^4.6.0"`.
 
-随 `@bachi/anyproxy` 一起删除：
+`co` is intentionally retained for v1. Current request-handler flow calls rule callbacks through `co`/`co.wrap`, and rewriting that to native `async` would be a separate behavior-changing refactor.
 
-| 依赖 | 原用途 |
-|------|--------|
-| async | AnyProxy 内部流程控制 |
-| async-task-mgr | HTTPS 服务器去重 |
-| colorful | 日志着色 |
-| co | generator 异步控制 |
-| nedb | 请求录制数据库 |
-| pug | 错误页面模板 |
-| stream-throttle | 流量限速 |
-| ws | WebSocket 代理 |
-| qrcode-npm | Web UI 二维码 |
-| juicer | 模板引擎 |
-| moment | 日期格式化 |
-| inquirer | 交互式命令行 |
-| ... 等约 20 个依赖 |
+Package manager:
+
+- The repository has `package-lock.json`; use `npm install` and commit `package-lock.json`.
+- Do not introduce or rely on `pnpm-lock.yaml` unless the project intentionally switches package managers.
 
 ---
 
-## 测试策略
+## `proxy/proxy.js` Integration
 
-| 测试类型 | 方法 |
-|---------|------|
-| 冒烟测试 | `npm run test:proxy` — 验证 HTTP/SOCKS5 连通性、延迟、并发 |
-| HTTPS MITM | 浏览器设置代理 → 访问 https://example.com → 验证 MITM 解密正常 |
-| 隧道域名 | 配置 tunnel_domains → 验证 CONNECT 走隧道转发 |
-| 规则拦截 | 配置 block_hosts → 验证域名拦截 + match_rule 路径过滤 |
-| 认证 | 设置 auth_username/password → 验证 407 认证流程 |
+The intended end state:
 
----
-
-## 迁移顺序（分步验证）
-
-```
-步骤 1: 创建 proxy/proxy-core/ 目录结构
-        ↓
-步骤 2: 搬运 cert-mgr.js + util.js（无依赖，可独立测试）
-        ↓
-步骤 3: 搬运 https-server-mgr.js（依赖 cert-mgr）
-        ↓
-步骤 4: 搬运 request-handler.js（核心，最复杂）
-        ↓
-步骤 5: 搬运 proxy-server.js，创建 index.js 入口
-        ↓
-步骤 6: 修改 proxy.js 的 require 路径（4 处改动）
-        ↓
-步骤 7: npm run test:proxy 冒烟测试
-        ↓
-步骤 8: 从 package.json 移除 @bachi/anyproxy
+```diff
+- const AnyProxy = require('@bachi/anyproxy');
++ const { ProxyServer, utils: { certMgr } } = require('./proxy-core');
 ```
 
-每个步骤完成后都可以独立运行验证，不需要一次性完成所有搬运。
+Then:
+
+```diff
+- AnyProxy.utils.certMgr.ifRootCAFileExists()
++ certMgr.ifRootCAFileExists()
+
+- AnyProxy.utils.certMgr.generateRootCA(...)
++ certMgr.generateRootCA(...)
+
+- proxyServerInstance = new AnyProxy.ProxyServer(options);
++ proxyServerInstance = new ProxyServer(options);
+```
+
+`getAnyProxyOptions()` keeps:
+
+- `customConnect`
+- `rule`
+- `forceProxyHttps`
+- `silent`
+- `timeout`
+
+`wsIntercept` may remain explicit as `false` or be omitted with default false. It must not be used as a reason to remove WebSocket proxy support.
+
+`throttle` should be removed only after the core no longer references `global._throttle`.
+
+The ready-time CONNECT override in `proxy/proxy.js` should be removed after extracted `proxy-core` correctly passes `customConnect` into `RequestHandler` and preserves `head`. Keeping both paths creates duplicated tunnel logic.
 
 ---
 
-## 风险与缓解
+## Request Flow
 
-| 风险 | 影响 | 缓解方案 |
-|------|------|---------|
-| HTTPS MITM 流程复杂 | 高 — SNI 证书生成 + 动态端口 + 流量导入本地服务器 | 现有代码逻辑清晰，可直接参考移植 |
-| socket 映射追踪 sourceIP | 中 — HTTPS 拆包后 sourceIP 变为 127.0.0.1，需要 cltSockets Map 找回原始 IP | 逻辑已在 requestHandler.js 中实现，直接复用 |
-| CONNECT 隧道与 MITM 分支 | 中 — 非 MITM 时直接 pipe 到目标服务器，MITM 时 pipe 到本地 HTTPS 服务器 | 两条路径逻辑独立，可分别实现和测试 |
-| node-easy-cert 兼容性 | 低 — 该包较稳定，仅用于证书生成 | 如需要可进一步替换为直接调用 openssl |
+### HTTP
+
+```
+client request
+  -> proxy server request handler
+  -> collect request body
+  -> build requestDetail
+  -> rule.beforeSendRequest()
+       -> returns { response }        => local response
+       -> returns requestOptions/body => remote fetch
+  -> fetchRemoteResponse()
+       -> whole body for response-rule matches up to threshold
+       -> stream mode for large/non-response-rule bodies
+  -> rule.beforeSendResponse() unless stream mode or local response
+  -> sendFinalResponse()
+```
+
+### CONNECT Without MITM
+
+```
+CONNECT host:port
+  -> rule.beforeDealHttpsRequest() returns false
+  -> write 200 Connection Established
+  -> preserve head bytes
+  -> customConnect(host, port) if configured and matched
+  -> otherwise net.connect(port, host)
+  -> bidirectional pipe
+```
+
+### CONNECT With MITM
+
+```
+CONNECT host:port
+  -> rule.beforeDealHttpsRequest() returns true
+  -> https-server-mgr returns local HTTPS server
+  -> write 200 Connection Established
+  -> preserve head bytes
+  -> pipe client TLS stream to local HTTPS server
+  -> decrypted request enters HTTP request flow
+```
+
+### WebSocket
+
+```
+ws:// through HTTP proxy
+  -> main proxy server upgrade event
+  -> wsServerMgr
+  -> request-handler getWsHandler()
+  -> upstream ws:// connection
+  -> message relay both directions
+
+wss:// without MITM
+  -> CONNECT path returns false
+  -> raw TCP tunnel
+
+wss:// with MITM
+  -> CONNECT path returns true
+  -> internal HTTPS server upgrade event
+  -> wsServerMgr
+  -> getWsHandler()
+  -> upstream wss:// connection
+```
 
 ---
 
-## 收益
+## Verification Requirements
 
-- **去除 ~30 个间接依赖**，减少供应链风险和包体积
-- **完全掌控代理核心逻辑**，方便调试和定制（如之前修改 keep-alive 策略、responseRules chunkSize 等都需要改 AnyProxy 源码）
-- **消除私有 npm 包依赖**（`@bachi/anyproxy` 是私有 fork，新环境安装需要特殊配置）
-- **代码量反而更少**：去掉无用功能后，核心代码约 1360 行 vs AnyProxy 的 ~2700 行
+Before removing `@bachi/anyproxy`, tests must cover:
+
+- HTTP GET via proxy.
+- HTTP POST via proxy.
+- HTTPS CONNECT pass-through.
+- HTTPS MITM with dynamic cert path.
+- `beforeSendRequest` local response.
+- `beforeSendResponse` rewrite with gzip/br response body.
+- large response streaming without whole-body buffering.
+- plain `ws://` proxy.
+- `wss://` pass-through.
+- `wss://` MITM upgrade path where feasible.
+- tunnel domain CONNECT using `tunnelManager.forward`.
+- tunnel domain does not MITM.
+- CONNECT `head` preservation.
+- proxy auth 407 for HTTP and HTTPS CONNECT.
+- restart/close cleans sockets and internal HTTPS servers.
+
+Existing `npm run test:proxy` is not sufficient by itself, because it does not currently cover WebSocket, MITM certificate behavior, CONNECT `head`, or large stream mode.
 
 ---
 
-## 确认状态
+## Design Decisions
 
-- [x] 模块结构已确认
-- [x] 裁剪清单已确认
-- [x] API 接口设计已确认
-- [x] 请求处理管线已确认
-- [x] 依赖管理、测试策略与迁移顺序已确认
+- Preserve current fork-specific behavior first; reduce dependencies second.
+- Do not remove WS support.
+- Do not remove stream mode.
+- Move tunnel `customConnect` support into local core and remove the external CONNECT listener override after tests pass.
+- Keep file names close to the original modules to make code review against `node_modules/@bachi/anyproxy` straightforward.
+- Avoid unrelated refactors in `proxy/proxy.js`.
 
-**设计完成，待实施。**
+---
+
+## Risks
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| WebSocket path accidentally removed | Breaks ws/wss proxy forwarding | Extract `ws-server-mgr.js` and `getWsHandler`; add WS tests |
+| Large responses buffered fully | Memory pressure, stalled downloads/streams | Preserve stream threshold behavior |
+| Tunnel CONNECT loses `head` bytes | Intermittent TLS/tunnel failures | Explicit head preservation tests |
+| `customConnect` double-handled | Tunnel behavior divergence | Move support into core, then remove outer override |
+| IP MITM removed while `vpn_proxy` can force MITM | Debug path regression | Keep `createHttpsIPServer` or change `beforeDealHttpsRequest` order intentionally |
+| Transitive dependencies disappear | Runtime `Cannot find module` | Add direct deps or rewrite before removing AnyProxy |
+
+---
+
+## Completion Criteria
+
+- `@bachi/anyproxy` is removed from `package.json`.
+- `npm install` updates `package-lock.json`.
+- `rg '@bachi/anyproxy|AnyProxy' proxy package.json package-lock.json` shows no runtime dependency references.
+- All existing proxy tests pass.
+- New WebSocket/MITM/stream/tunnel regression tests pass.
+- Manual smoke testing confirms browser HTTP/HTTPS proxying and configured MITM rules still work.
