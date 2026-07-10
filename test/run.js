@@ -9,8 +9,8 @@ const { runAllTests, checkProxyAccessible } = require('./proxy-tests');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const DEFAULT_CONFIG = {
-  httpProxy: { host: '127.0.0.1', port: 8001, username: 'lijing', password: 'lijing' },
-  socks5: { host: '127.0.0.1', port: 8002, username: 'lijing', password: 'lijing' },
+  httpProxy: { host: '127.0.0.1', port: 8001, username: 'admin', password: 'admin' },
+  socks5: { host: '127.0.0.1', port: 8002, username: 'admin', password: 'admin' },
 };
 
 // ── CLI 参数解析 ──────────────────────────────────────────
@@ -20,8 +20,8 @@ function parseArgs() {
   const opts = {
     httpPort: 8001,
     socks5Port: 8002,
-    httpUser: 'lijing',
-    httpPass: 'lijing',
+    httpUser: 'admin',
+    httpPass: 'admin',
     skipExternal: false,
     autoStart: false,
     help: false,
@@ -50,8 +50,8 @@ Block-Proxy 测试工具
 选项:
   -p, --http-port <port>    HTTP 代理端口 (默认: 8001)
   -s, --socks5-port <port>  SOCKS5 代理端口 (默认: 8002)
-  -u, --http-user <user>    代理认证用户名 (默认: lijing)
-  --http-pass <pass>         代理认证密码 (默认: lijing)
+  -u, --http-user <user>    代理认证用户名 (默认: admin)
+  --http-pass <pass>         代理认证密码 (默认: admin)
   --skip-external            跳过外部站点测试
   --auto-start               自动启动代理服务 (如未运行)
   -h, --help                 显示帮助信息
