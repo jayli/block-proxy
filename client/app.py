@@ -20,8 +20,6 @@ from Foundation import (
     NSUserNotificationCenter,
     NSNotificationCenter,
     NSURL,
-    NSMutableAttributedString,
-    NSAttributedString,
 )
 from AppKit import (
     NSApplication,
@@ -36,8 +34,6 @@ from AppKit import (
     NSAlert,
     NSCommandKeyMask,
     NSWorkspace,
-    NSColor,
-    NSFont,
 )
 
 from config import Config
@@ -74,11 +70,6 @@ def _bundle_path():
 
 def _icon_dir():
     return os.path.join(_bundle_resource_dir(), "icons")
-
-
-_DARK_GREEN = (0.0, 0.5, 0.0, 1.0)
-_DARK_RED = (0.7, 0.0, 0.0, 1.0)
-_MENU_FONT = None  # resolved lazily from system menu font
 
 
 class _MenuDelegate(NSObject):
@@ -226,28 +217,6 @@ class AppController(NSObject):
         menu.addItem_(item)
         return item
 
-    def _set_title_color(self, item, full_text, color_text, rgba):
-        """Set menu item title with color applied to a specific substring."""
-        idx = full_text.find(color_text)
-        if idx < 0:
-            item.setTitle_(full_text)
-            return
-        attr = NSMutableAttributedString.alloc().initWithString_(full_text)
-        start = idx
-        end = idx + len(color_text)
-        global _MENU_FONT
-        if _MENU_FONT is None:
-            _MENU_FONT = NSFont.menuFontOfSize_(0) or NSFont.systemFontOfSize_(13)
-        attr.addAttribute_value_range_(
-            "NSFont", _MENU_FONT, (0, len(full_text))
-        )
-        attr.addAttribute_value_range_(
-            "NSColor",
-            NSColor.colorWithRed_green_blue_alpha_(*rgba),
-            (start, end - start),
-        )
-        item.setAttributedTitle_(attr)
-
     def _update_mode_menu(self):
         is_global = self.config.data["mode"] == "global"
         self.global_item.setState_(1 if is_global else 0)
@@ -364,7 +333,7 @@ class AppController(NSObject):
     def _on_connected(self):
         self._finish_connecting()
         self.connected = True
-        self.toggle_item.setTitle_("关闭代理（已连接）")
+        self.toggle_item.setTitle_("关闭代理")
         self._update_icon()
 
     def _disconnect(self):
@@ -836,9 +805,9 @@ class AppController(NSObject):
                     else:
                         proto_display = f"{protocol_name}已连接"
                     if latency is not None:
-                        latency_str = f"{latency}ms"
-                        title = f"关闭代理（{proto_display} - {latency_str}）"
-                        self._set_title_color(self.toggle_item, title, latency_str, _DARK_GREEN)
+                        self.toggle_item.setTitle_(
+                            f"关闭代理（{proto_display} - {latency}ms）"
+                        )
                     else:
                         reason_map = {
                             "auth_failed": "鉴权失败",
@@ -848,15 +817,22 @@ class AppController(NSObject):
                         suffix = reason_map.get(failure_reason)
                         if suffix:
                             if protocol_name.isascii():
-                                title = f"关闭代理（{protocol_name} 已中断 - {suffix}）"
+                                self.toggle_item.setTitle_(
+                                    f"关闭代理（{protocol_name} 已中断 - {suffix}）"
+                                )
                             else:
-                                title = f"关闭代理（{protocol_name}已中断 - {suffix}）"
+                                self.toggle_item.setTitle_(
+                                    f"关闭代理（{protocol_name}已中断 - {suffix}）"
+                                )
                         else:
                             if protocol_name.isascii():
-                                title = f"关闭代理（{protocol_name} 已中断）"
+                                self.toggle_item.setTitle_(
+                                    f"关闭代理（{protocol_name} 已中断）"
+                                )
                             else:
-                                title = f"关闭代理（{protocol_name}已中断）"
-                        self._set_title_color(self.toggle_item, title, "已中断", _DARK_RED)
+                                self.toggle_item.setTitle_(
+                                    f"关闭代理（{protocol_name}已中断）"
+                                )
 
                 self._run_on_main(_update)
             finally:
