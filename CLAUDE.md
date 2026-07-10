@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Common Commands
 
@@ -26,6 +26,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 - `npm run rm_bkconfig` – Remove backup config file
 - `npm run gen-icons` – Generate client app icons from `icons/app_icon.png`
 - `npm run watch:icons` – Watch icon changes and auto-regenerate
+
+### macOS Client
+- `npm run client:build` – 构建 macOS 客户端（自动检测架构，输出到 `client/dist/`）
 
 ### Android
 - `npm run android:build` – 构建 debug APK（cd android-client && gradlew :app:assembleDebug）
@@ -89,6 +92,29 @@ Client → HTTP Proxy (8001) → proxy-core → MITM Rules → Target Server
        → SOCKS5 (8002) → TLS → SOCKS5 Server → HTTP Proxy (8001) → Target Server
 ```
 SOCKS5 先做 TLS 握手和认证，然后通过 CONNECT 命令建立隧道，将 TCP 流量转发至下游 HTTP 代理。
+
+### Bidirectional Tunnel System (Port 8003)
+
+反向隧道系统用于 NAT 穿透，允许内网客户端通过 TLS 连接回服务端。
+
+**架构流程：**
+```
+内网客户端 → 隧道 TLS (8003) → TunnelManager → HTTP Proxy (8001) → MITM → 目标服务器
+```
+
+**关键特性：**
+- TLS 加密传输 + 用户名密码认证
+- 双 TCP 连接并行消除队头阻塞
+- 心跳检测（30s PING / 60s 超时）
+- 自动重连与连接池补充
+- 可配置隧道域名白名单（哪些域名走隧道转发）
+- 支持反向 CONNECT（服务端通过隧道访问客户端侧目标）
+
+**核心文件：**
+- `socks5/tunnel-server.js` — 隧道服务端，监听 8003 端口
+- `socks5/tunnel-client.js` — 隧道客户端（服务端侧，管理连接池）
+- `socks5/reverse-connect-handler.js` — 处理反向 CONNECT 请求
+- `client/tunnel_client.py` — macOS 客户端的隧道实现
 
 ## Key Patterns
 
@@ -262,6 +288,17 @@ VpnService TUN fd → tun2socks (native C, JNI) → 127.0.0.1:socksPort
 
 # Project Rules & Skills
 
-- **Local Skills**: 实时遵循 `.claude/skills/*/skill.md` 中的指令。可用技能: `commit`, `build-client`, `release-client`, `icon_generate`, `pcap-analyse`
-- **CLI入口**: 全局命令 `block-proxy` 注册在 `bin/start.js`，通过 `npm i -g` 安装后可直接调用
+### Local Skills (`.claude/skills/`)
+
+通过 `/skill-name` 或 `Skill` 工具调用：
+
+- **`/commit`** — 智能 Git 提交。分析变更、自动暂存、生成 Conventional Commit 消息（英文类型 + 中文正文），执行提交
+- **`/build-client`** — 构建 macOS 客户端（仅本地，不升级版本号）。自动检测架构，输出 `client/dist/BlockProxyClient.app` 和 `.zip`
+- **`/release-client`** — 构建并发布 macOS 客户端到 GitHub Release。自动 patch +1 版本号，支持多架构
+- **`/icon_generate`** — 生成状态栏 bar 图标。将源图标白色区域镂空为透明，缩放至 44x44 @ 144 DPI
+- **`/pcap-analyse`** — 分析 pcap/pcapng 网络抓包文件。专注代理场景的连接诊断、性能评估和异常检测，使用 scapy 或 tshark
+
+### Project Rules
+
+- **CLI 入口**: 全局命令 `block-proxy` 注册在 `bin/start.js`，通过 `npm i -g` 安装后可直接调用
 - **config.json** 是运行时配置文件（非源码），由 `proxy/fs.js` 管理读写和备份，不在 git 中追踪变更

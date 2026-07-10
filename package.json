@@ -53,6 +53,7 @@
     "android:logcat": "~/Library/Android/sdk/platform-tools/adb logcat | grep -E 'BlockProxy|Tunnel|AndroidRuntime'",
     "android:devices": "~/Library/Android/sdk/platform-tools/adb devices -l",
     "android:native:build": "cd android-client && bash build-native.sh",
+    "client:build": "bash client/build.sh",
     "test:proxy-core": "node test/proxy-core-connect-tests.js",
     "test:registry": "node test/mitm-registry-tests.js",
     "test:mitm-runtime": "node test/mitm-runtime-tests.js",
