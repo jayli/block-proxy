@@ -2,6 +2,7 @@ import logging
 import subprocess
 import atexit
 import signal
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("system_proxy")
@@ -58,8 +59,56 @@ class SystemProxy:
                 interfaces.append(line.strip())
         return interfaces
 
+    def _get_default_route_devices(self):
+        result = subprocess.run(
+            ["route", "-n", "get", "default"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return []
+        devices = []
+        for line in result.stdout.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("interface:"):
+                device = stripped.split(":", 1)[1].strip()
+                if device:
+                    devices.append(device)
+        return devices
+
+    def _get_ordered_services_by_device(self):
+        result = subprocess.run(
+            ["networksetup", "-listnetworkserviceorder"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return {}
+        services = {}
+        current_service = None
+        for line in result.stdout.splitlines():
+            service_match = re.match(r"^\(\d+\)\s+(.+)$", line.strip())
+            if service_match:
+                current_service = service_match.group(1).strip()
+                continue
+            device_match = re.search(r"Device:\s*([^)]+)\)", line)
+            if current_service and device_match:
+                services[device_match.group(1).strip()] = current_service
+                current_service = None
+        return services
+
+    def _get_target_interfaces(self):
+        devices = self._get_default_route_devices()
+        services_by_device = self._get_ordered_services_by_device() if devices else {}
+        interfaces = []
+        for device in devices:
+            service = services_by_device.get(device)
+            if service and service not in interfaces:
+                interfaces.append(service)
+        return interfaces or self._get_active_interfaces()
+
     def enable(self, socks_port, http_port):
-        self._interfaces = self._get_active_interfaces()
+        self._interfaces = self._get_target_interfaces()
         tasks = []
         for iface in self._interfaces:
             tasks.extend([

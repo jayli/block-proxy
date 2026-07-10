@@ -99,7 +99,9 @@ class AppController(NSObject):
         self._routing_proc = None
         self._log_proc = None
         self._measuring = False
+        self._connecting = False
         self._reconnecting = False
+        self._disconnecting = False
         self._was_connected = False  # state before sleep
         self._sleep_obs = None
         self._wake_obs = None
@@ -230,12 +232,16 @@ class AppController(NSObject):
     # ------------------------------------------------------------------
 
     def toggleProxy_(self, sender):
+        if self._connecting or self._disconnecting:
+            return
         if self.connected:
-            self._disconnect()
+            self._disconnect_async()
         else:
             self._connect()
 
     def _connect(self):
+        if self._connecting:
+            return
         if not self.config.is_configured():
             alert = NSAlert.alloc().init()
             alert.setMessageText_("请先配置节点信息")
@@ -243,19 +249,26 @@ class AppController(NSObject):
             alert.runModal()
             return
 
+        self._begin_connecting()
+
         def _start():
             # 1. 启动本地代理服务器（端口绑定，这是用户代理的核心）
             try:
                 self.proxy.start(self.config.data,
                                   config_dir=os.path.dirname(self.config.config_path))
             except OSError as e:
-                self._run_on_main(
-                    lambda: self._show_notification(
-                        "BlockProxyClient", "启动失败",
-                        "端口被占用，请检查端口是否已被其他程序使用"
-                        if e.errno == 48 else str(e),
-                    )
+                message = (
+                    "端口被占用，请检查端口是否已被其他程序使用"
+                    if e.errno == 48 else str(e)
                 )
+
+                def _fail():
+                    self._show_notification(
+                        "BlockProxyClient", "启动失败", message
+                    )
+                    self._on_disconnected()
+
+                self._run_on_main(_fail)
                 return
 
             # 2. 设置系统代理（本地服务器已就绪）
@@ -279,6 +292,16 @@ class AppController(NSObject):
             self._run_on_main(self._on_connected)
 
         threading.Thread(target=_start, daemon=True).start()
+
+    def _begin_connecting(self):
+        self._connecting = True
+        self.toggle_item.setEnabled_(False)
+        self.toggle_item.setTitle_("正在连接...")
+
+    def _finish_connecting(self):
+        if self._connecting:
+            self._connecting = False
+            self.toggle_item.setEnabled_(True)
 
     def _start_tunnel(self):
         """Start tunnel client. Called from _connect or health check.
@@ -308,11 +331,36 @@ class AppController(NSObject):
             self.tunnel_client = None
 
     def _on_connected(self):
+        self._finish_connecting()
         self.connected = True
         self.toggle_item.setTitle_("关闭代理")
         self._update_icon()
 
     def _disconnect(self):
+        self._disconnect_core()
+        self._on_disconnected()
+
+    def _disconnect_async(self):
+        if self._disconnecting:
+            return
+        self._disconnecting = True
+        self.toggle_item.setEnabled_(False)
+        self.toggle_item.setTitle_("正在关闭代理...")
+
+        def _stop():
+            try:
+                self._disconnect_core()
+            finally:
+                def _finish():
+                    self._disconnecting = False
+                    self.toggle_item.setEnabled_(True)
+                    self._on_disconnected()
+
+                self._run_on_main(_finish)
+
+        threading.Thread(target=_stop, daemon=True).start()
+
+    def _disconnect_core(self):
         try:
             self.sys_proxy.disable()
         except Exception as e:
@@ -325,6 +373,8 @@ class AppController(NSObject):
         except Exception as e:
             logger.warning(f"Failed to stop proxy: {e}")
 
+    def _on_disconnected(self):
+        self._finish_connecting()
         self.connected = False
         self.toggle_item.setTitle_("启动代理")
         self._update_icon()
@@ -618,6 +668,12 @@ class AppController(NSObject):
 
                 # 如果 wake handler 或手动重连正在处理，跳过本轮检查
                 if self._reconnecting:
+                    restart_count = 0
+                    continue
+                if self._connecting:
+                    restart_count = 0
+                    continue
+                if self._disconnecting:
                     restart_count = 0
                     continue
 

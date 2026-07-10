@@ -48,6 +48,19 @@ def _calls_self_method(node, method_name):
     return False
 
 
+def _calls_threading_thread(node):
+    for child in ast.walk(node):
+        if (
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr == "Thread"
+            and isinstance(child.func.value, ast.Name)
+            and child.func.value.id == "threading"
+        ):
+            return True
+    return False
+
+
 def _class_node(tree, class_name):
     return next(
         node
@@ -102,3 +115,32 @@ def test_wake_handler_checks_local_proxy_without_full_disconnect():
         for node in body
     )
     assert not any(_calls_self_method(node, "_disconnect") for node in body)
+
+
+def test_toggle_proxy_disconnect_uses_background_shutdown():
+    source = Path(__file__).parents[1].joinpath("app.py").read_text()
+    tree = ast.parse(source)
+    app_controller = _class_node(tree, "AppController")
+
+    toggle_body = _method_body(app_controller, "toggleProxy_")
+    assert any(
+        _calls_self_method(node, "_disconnect_async")
+        for node in toggle_body
+    )
+
+    disconnect_async_body = _method_body(app_controller, "_disconnect_async")
+    assert any(_calls_threading_thread(node) for node in disconnect_async_body)
+
+
+def test_connect_shows_disabled_connecting_state_until_terminal_state():
+    source = Path(__file__).parents[1].joinpath("app.py").read_text()
+    tree = ast.parse(source)
+    app_controller = _class_node(tree, "AppController")
+
+    connect_body = _method_body(app_controller, "_connect")
+    assert any(_calls_self_method(node, "_begin_connecting") for node in connect_body)
+
+    connected_body = _method_body(app_controller, "_on_connected")
+    disconnected_body = _method_body(app_controller, "_on_disconnected")
+    assert any(_calls_self_method(node, "_finish_connecting") for node in connected_body)
+    assert any(_calls_self_method(node, "_finish_connecting") for node in disconnected_body)

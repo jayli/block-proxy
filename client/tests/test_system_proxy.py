@@ -54,8 +54,34 @@ class TestSystemProxy:
 
         self.proxy.enable(socks_port=1080, http_port=1087)
 
-        # 7 set calls per interface x 2 + 3 verify calls per interface x 2 = 20
-        assert mock_run.call_count == 20
+        # 1 default-route probe + 7 set calls per interface x 2 + 3 verify calls per interface x 2 = 21
+        assert mock_run.call_count == 21
+
+    @patch("system_proxy.subprocess.run")
+    def test_enable_targets_default_route_service_when_available(self, mock_run):
+        def fake_run(args, capture_output=True, text=True):
+            if args == ["route", "-n", "get", "default"]:
+                return MagicMock(returncode=0, stdout="interface: en0\n", stderr="")
+            if args == ["networksetup", "-listnetworkserviceorder"]:
+                return MagicMock(
+                    returncode=0,
+                    stdout=(
+                        "(1) Wi-Fi\n"
+                        "(Hardware Port: Wi-Fi, Device: en0)\n"
+                        "(2) Ethernet\n"
+                        "(Hardware Port: Ethernet, Device: en1)\n"
+                    ),
+                    stderr="",
+                )
+            return MagicMock(returncode=0, stdout="Enabled: Yes\n", stderr="")
+
+        mock_run.side_effect = fake_run
+
+        self.proxy.enable(socks_port=1080, http_port=1087)
+
+        commands = [call_args.args[0] for call_args in mock_run.call_args_list]
+        assert ["networksetup", "-setwebproxy", "Wi-Fi", "127.0.0.1", "1087"] in commands
+        assert ["networksetup", "-setwebproxy", "Ethernet", "127.0.0.1", "1087"] not in commands
 
     @patch("system_proxy.subprocess.run")
     def test_get_active_interfaces(self, mock_run):
