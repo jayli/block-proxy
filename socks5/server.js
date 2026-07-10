@@ -287,6 +287,9 @@ async function init() {
 
     // SOCKS5 连接处理函数（TLS 和纯 TCP 共用）
     const connectionHandler = async (socket) => {
+      // TCP keepalive: 60秒无活动后开始探测，防止 NAT 静默断开
+      socket.setKeepAlive(true, 60000);
+
       // 👇 关键：捕获 socket 级别的错误（包括 ECONNRESET）
       socket.on('error', (err) => {
         console.warn('Client socket error (ignored):', err.message);
