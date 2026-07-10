@@ -37,7 +37,7 @@ function createEasyCert(certDir) {
 }
 
 function createState(options) {
-  const certDir = options.certDir || util.getAnyProxyPath('certificates');
+  const certDir = options.certDir || util.getAnyProxyHome();
   fs.mkdirSync(certDir, { recursive: true });
 
   return {

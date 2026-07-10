@@ -204,6 +204,19 @@ async function testMitmConnectForwardsHttpsRequest() {
     });
     res.end('pong');
   });
+
+  // Ensure certificates/ has rootCA for node-easy-cert (now project-local)
+  const certDir = path.join(__dirname, '../certificates');
+  fs.mkdirSync(certDir, { recursive: true });
+  const needCleanup = !fs.existsSync(path.join(certDir, 'rootCA.crt'));
+  if (needCleanup) {
+    fs.copyFileSync(path.join(__dirname, '../cert/rootCA.crt'), path.join(certDir, 'rootCA.crt'));
+    fs.copyFileSync(path.join(__dirname, '../cert/rootCA.key'), path.join(certDir, 'rootCA.key'));
+  }
+  // Re-init cert-lifecycle so it picks up the new certDir
+  const certLifecycle = require('../proxy/proxy-core/cert-lifecycle');
+  certLifecycle.init({ certDir, mitmRegistry: null });
+
   const proxyPort = await util.getFreePort();
   const proxy = new ProxyServer({
     port: proxyPort,

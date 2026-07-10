@@ -23,9 +23,9 @@ function getUserHome() {
 module.exports.getUserHome = getUserHome;
 
 function getAnyProxyHome() {
-  const home = path.join(getUserHome(), '/.anyproxy/');
+  const home = path.join(__dirname, '../../certificates');
   if (!fs.existsSync(home)) {
-    fs.mkdirSync(home);
+    fs.mkdirSync(home, { recursive: true });
   }
   return home;
 }

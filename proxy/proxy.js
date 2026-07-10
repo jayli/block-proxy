@@ -542,7 +542,7 @@ function clearGeneratedCertCache(anyproxyDir) {
 }
 
 function ensureRootCA(options = {}) {
-  const anyproxyDir = options.anyproxyDir || path.join(os.homedir(), '.anyproxy', 'certificates');
+  const anyproxyDir = options.anyproxyDir || path.join(__dirname, '../certificates');
   const targetCrt = path.join(anyproxyDir, 'rootCA.crt');
   const targetKey = path.join(anyproxyDir, 'rootCA.key');
   const srcCrt = options.srcCrt || path.join(__dirname, '../cert/rootCA.crt');
@@ -565,13 +565,13 @@ function ensureRootCA(options = {}) {
   clearGeneratedCertCache(anyproxyDir);
   fs.copyFileSync(srcCrt, targetCrt);
   fs.copyFileSync(srcKey, targetKey);
-  console.log('✅ 已同步 cert/rootCA.* 到 ~/.anyproxy/certificates/，并清理旧域名证书缓存');
+  console.log('✅ 已同步 cert/rootCA.* 到 certificates/，并清理旧域名证书缓存');
   return hasTarget ? 'replaced' : 'created';
 }
 
 function initCertLifecycle() {
   certLifecycle.init({
-    certDir: path.join(os.homedir(), '.anyproxy', 'certificates'),
+    certDir: path.join(__dirname, '../certificates'),
     mitmRegistry: ruleRegistry,
   });
 }
