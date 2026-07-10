@@ -1,50 +1,19 @@
 'use strict';
 
 /**
- * Certificate manager extracted from @bachi/anyproxy/lib/certMgr.js.
+ * AnyProxy-compatible certificate manager facade.
  *
- * Kept:
- *  - node-easy-cert integration
- *  - ifRootCAFileExists, generateRootCA, getCertificate, getRootCAFilePath
- *  - existing ~/.anyproxy/certificates location
- *
- * Removed:
- *  - trustRootCA, getCAStatus, inquirer, trust-store shell commands
+ * The lifecycle module still uses node-easy-cert underneath; this facade keeps
+ * the old callback API while allowing startup prewarming and SNI invalidation
+ * to share the same certificate cache.
  */
 
-const EasyCert = require('node-easy-cert');
-const util = require('./util');
+const certLifecycle = require('./cert-lifecycle');
 
-const options = {
-  rootDirPath: util.getAnyProxyPath('certificates'),
-  inMemory: false,
-  defaultCertAttrs: [
-    { name: 'countryName', value: 'CN' },
-    { name: 'organizationName', value: 'AnyProxy' },
-    { shortName: 'ST', value: 'SH' },
-    { shortName: 'OU', value: 'AnyProxy SSL Proxy' }
-  ]
+module.exports = {
+  getCertificate: certLifecycle.getCertificate,
+  ifRootCAFileExists: certLifecycle.ifRootCAFileExists,
+  getRootCAFilePath: certLifecycle.getRootCAFilePath,
+  generateRootCA: certLifecycle.generateRootCA,
+  invalidateCert: certLifecycle.invalidateCert,
 };
-
-const easyCert = new EasyCert(options);
-const crtMgr = util.merge({}, easyCert);
-
-// Rename to match AnyProxy API
-crtMgr.ifRootCAFileExists = easyCert.isRootCAFileExists;
-
-crtMgr.generateRootCA = function (cb) {
-  doGenerate(false);
-
-  function doGenerate(overwrite) {
-    const rootOptions = {
-      commonName: 'AnyProxy',
-      overwrite: !!overwrite
-    };
-
-    easyCert.generateRootCA(rootOptions, (error, keyPath, crtPath) => {
-      cb(error, keyPath, crtPath);
-    });
-  }
-};
-
-module.exports = crtMgr;

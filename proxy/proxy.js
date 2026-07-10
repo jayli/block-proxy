@@ -1,5 +1,5 @@
 // 文件名: proxy/proxy.js
-const { ProxyServer, utils: { certMgr } } = require('./proxy-core');
+const { ProxyServer, utils: { certMgr, certLifecycle } } = require('./proxy-core');
 const { exec } = require('child_process');
 const fs = require('fs');
 const _fs = require('./fs.js');
@@ -569,8 +569,40 @@ function ensureRootCA(options = {}) {
   return hasTarget ? 'replaced' : 'created';
 }
 
+function initCertLifecycle() {
+  certLifecycle.init({
+    certDir: path.join(os.homedir(), '.anyproxy', 'certificates'),
+    mitmRegistry: ruleRegistry,
+  });
+}
+
+async function runHealthCheckAndPrewarm(config = { block_hosts: blockHosts }) {
+  try {
+    const healthResult = await certLifecycle.healthCheck();
+    console.log(`[cert-lifecycle] 健康检查完成: 保留 ${healthResult.kept}, 移除 ${healthResult.removed}`);
+  } catch (e) {
+    console.error('[cert-lifecycle] 健康检查失败:', e.message);
+  }
+
+  try {
+    const domains = certLifecycle.getDomainsToPrewarm(config);
+    if (domains.length === 0) {
+      return { success: 0, fail: 0, total: 0 };
+    }
+
+    console.log(`[cert-lifecycle] 开始预热 ${domains.length} 个域名证书...`);
+    const prewarmResult = await certLifecycle.prewarmCerts(domains);
+    console.log(`[cert-lifecycle] 预热完成: 成功 ${prewarmResult.success}, 失败 ${prewarmResult.fail}`);
+    return prewarmResult;
+  } catch (e) {
+    console.error('[cert-lifecycle] 预热失败:', e.message);
+    return { success: 0, fail: 1, total: 0 };
+  }
+}
+
 function startProxyServer() {
   ensureRootCA();
+  initCertLifecycle();
   // Check if root CA is needed
   if (!certMgr.ifRootCAFileExists()) {
     certMgr.generateRootCA((error, keyPath) => {
@@ -592,6 +624,9 @@ function startProxyServer() {
 
       // customConnect 已正确传入 proxy-core/request-handler，隧道域名 CONNECT 由核心处理。
       // 不再需要 ready 之后接管 connect 事件。
+      runHealthCheckAndPrewarm({ block_hosts: blockHosts }).catch(e => {
+        console.error('[cert-lifecycle] 健康检查/预热异常:', e.message);
+      });
     });
 
     proxyServerInstance.on('error', (e) => {
@@ -1635,5 +1670,7 @@ module.exports._test = {
     return MITMHandler(type, url, request, response);
   },
   ensureRootCA,
+  initCertLifecycle,
+  runHealthCheckAndPrewarm,
   getCertificateFingerprint
 };

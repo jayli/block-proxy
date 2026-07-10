@@ -52,6 +52,10 @@ function createLRUCache(limit) {
 
     size() {
       return store.size;
+    },
+
+    delete(key) {
+      return store.delete(key);
     }
   };
 }
@@ -99,6 +103,11 @@ function createHttpsSNIServer(port, handler) {
         SNICallback(null, ctx);
       } catch (e) {
         logUtil.printLog('err occurred when prepare certs for SNI - ' + e, logUtil.T_ERR);
+        try {
+          certMgr.invalidateCert(serverName, secureContextCache);
+        } catch (invalidateErr) {
+          logUtil.printLog('err occurred when invalidating cert - ' + invalidateErr, logUtil.T_ERR);
+        }
         SNICallback(e);
       }
     });
