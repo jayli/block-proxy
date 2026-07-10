@@ -500,3 +500,10 @@ A: 点击管理界面「刷新路由表」按钮手动触发 ARP 扫描。系统
 ### Q: iOS 设置了代理但无法上网？
 
 A: 如果 block-proxy 部署在路由器上且配置了代理认证，iOS 会拒绝连接（Safari 安全限制：带认证的代理地址不能与网关 IP 相同）。解决方案：去掉代理认证，或将 block-proxy 部署在路由器以外的独立设备上。
+
+### Q：还能做哪些用途？
+
+MITM 作为 服务中心，外围嫁接节点线路（起点），远程办公/代理，虚拟通道...
+
+<img width="700" alt="image" src="https://github.com/user-attachments/assets/08cf212d-f856-4bbd-a1cd-5e78e81ab861" />
+
