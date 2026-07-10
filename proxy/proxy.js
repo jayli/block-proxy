@@ -74,6 +74,7 @@ var enable_socks5 = "1";
 var socks5_tls = "1";
 
 var enable_mitm = "1"; // "0", "1"，是否对 HTTPS 启用 MITM 解密（关闭后纯隧道转发，不拦截）
+var mitm_debug_log = "0"; // "0", "1"，是否输出 MITM 调试日志（[DEBUG-REQ] 等）
 // 域名判断，区分浏览器和 App
 var filtered_mitm_domains = [
   ...uaFilter.filtered_mitm_domains
@@ -285,6 +286,9 @@ async function loadConfig() {
       enable_mitm = loadedConfig.enable_mitm || "1"; // 默认开启，兼容旧配置文件缺少此字段
       config.enable_mitm = enable_mitm;
 
+      mitm_debug_log = loadedConfig.mitm_debug_log || "0"; // 默认关闭
+      config.mitm_debug_log = mitm_debug_log;
+
       config.enable_tunnel = loadedConfig.enable_tunnel || "1";
       config.tunnel_port = loadedConfig.tunnel_port || 8003;
       config.tunnel_domains = loadedConfig.tunnel_domains || [];
@@ -328,6 +332,7 @@ async function loadConfig() {
         enable_socks5: enable_socks5,
         socks5_tls: socks5_tls,
         enable_mitm: enable_mitm,
+        mitm_debug_log: mitm_debug_log,
         enable_tunnel: "1",
         tunnel_port: 8003,
         tunnel_domains: [],
@@ -1079,6 +1084,7 @@ async function closeTunnel() {
 function getAnyProxyOptions() {
   return {
     port: proxyPort,
+    mitmDebugLog: mitm_debug_log === "1",
     customConnect: (host, port, callback) => {
       if (tunnelManager && tunnelManager.matchesTunnelDomain(host)) {
         return tunnelManager.forward(host, port, callback);

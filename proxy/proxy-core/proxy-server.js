@@ -99,6 +99,7 @@ class ProxyCore extends events.EventEmitter {
       dangerouslyIgnoreUnauthorized: !!config.dangerouslyIgnoreUnauthorized,
       customConnect: config.customConnect || null,
       timeout: config.timeout,
+      mitmDebugLog: !!config.mitmDebugLog,
     }, this.proxyRule);
   }
 

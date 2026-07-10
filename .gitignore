@@ -12,17 +12,18 @@
 cams-config.json
 cams-config/*
 
-# production
-/src-tauri/target
+# Runtime config and data (generated at runtime)
+config.json
 config_backup.json
+proxy/mitm/persistentStore.json
 
-# 临时 TLS 证书（服务启动时自动生成，ECC P-256）
+# TLS certificates (auto-generated at startup)
 cert/socks5_tls.key
 cert/socks5_tls.crt
 cert/tunnel_tls.key
 cert/tunnel_tls.crt
 
-# MITM 域名证书缓存（运行时生成）
+# MITM certificates cache (runtime generated)
 /certificates/
 
 # misc

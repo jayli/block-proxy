@@ -362,11 +362,13 @@ function getUserReqHandler(userRule) {
     const host = req.headers.host;
     const protocol = (!!req.connection.encrypted && !(/^http:/).test(req.url)) ? 'https' : 'http';
 
-    console.log('[DEBUG-REQ] === Incoming Request ===');
-    console.log('[DEBUG-REQ] req.url:', req.url);
-    console.log('[DEBUG-REQ] req.headers.host (before reconstruct):', host);
-    console.log('[DEBUG-REQ] req.connection.encrypted:', !!req.connection.encrypted);
-    console.log('[DEBUG-REQ] protocol:', protocol);
+    if (reqHandlerCtx.mitmDebugLog) {
+      console.log('[DEBUG-REQ] === Incoming Request ===');
+      console.log('[DEBUG-REQ] req.url:', req.url);
+      console.log('[DEBUG-REQ] req.headers.host (before reconstruct):', host);
+      console.log('[DEBUG-REQ] req.connection.encrypted:', !!req.connection.encrypted);
+      console.log('[DEBUG-REQ] protocol:', protocol);
+    }
 
     let fullUrl = protocol + '://' + host + req.url;
     if (protocol === 'http') {
@@ -385,8 +387,10 @@ function getUserReqHandler(userRule) {
 
     // Reconstruct headers from rawHeaders
     req.headers = util.getHeaderFromRawHeaders(req.rawHeaders);
-    console.log('[DEBUG-REQ] req.headers.host (after reconstruct):', req.headers.host);
-    console.log('[DEBUG-REQ] req.headers keys:', Object.keys(req.headers));
+    if (reqHandlerCtx.mitmDebugLog) {
+      console.log('[DEBUG-REQ] req.headers.host (after reconstruct):', req.headers.host);
+      console.log('[DEBUG-REQ] req.headers keys:', Object.keys(req.headers));
+    }
 
     logUtil.printLog(`received request to: ${req.method} ${host}${path}`);
 
@@ -887,6 +891,8 @@ class RequestHandler {
     if (config.timeout) {
       this.timeout = config.timeout;
     }
+
+    this.mitmDebugLog = !!config.mitmDebugLog;
 
     this.httpServerPort = config.httpServerPort;
     const default_rule = util.freshRequire('./rule-default');
