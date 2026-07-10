@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const assert = require('assert');
+const zlib = require('zlib');
 const mitmRegistry = require('../proxy/mitm/registry');
 const LocalProxy = require('../proxy/proxy');
 
@@ -93,6 +94,45 @@ function testYoutubeUaFilterRequiresEffectiveBuiltinYoutube() {
   LocalProxy._test.setEnableMitmForTest("1");
 }
 
+async function testNullBeforeSendResponseDoesNotMutateOriginalResponse() {
+  const registry = mitmRegistry.createRegistry({
+    builtinRules: {
+      Custom: [{
+        type: 'beforeSendResponse',
+        host: 'response.example.com',
+        regexp: '^https://response.example.com/path',
+        callback: async function() {
+          return null;
+        }
+      }]
+    },
+    config: {}
+  });
+  LocalProxy._test.setRuleRegistryForTest(registry);
+
+  const originalBody = zlib.gzipSync(Buffer.from('{"ok":true}'));
+  const response = {
+    statusCode: 200,
+    header: {
+      'Content-Encoding': 'gzip',
+      'Content-Length': String(originalBody.length)
+    },
+    body: originalBody
+  };
+
+  const result = await LocalProxy._test.runMITMHandler(
+    'beforeSendResponse',
+    'https://response.example.com/path',
+    {},
+    response
+  );
+
+  assert.strictEqual(result, null);
+  assert.strictEqual(response.header['Content-Encoding'], 'gzip');
+  assert.strictEqual(response.header['x-anyproxy-origin-content-encoding'], undefined);
+  assert.strictEqual(response.body, originalBody);
+}
+
 (async () => {
   await testDisabledRulesDoNotMitmOrBufferOrRewrite();
   console.log('PASS testDisabledRulesDoNotMitmOrBufferOrRewrite');
@@ -100,4 +140,6 @@ function testYoutubeUaFilterRequiresEffectiveBuiltinYoutube() {
   console.log('PASS testEnabledRulesRewriteAndPreserveThis');
   testYoutubeUaFilterRequiresEffectiveBuiltinYoutube();
   console.log('PASS testYoutubeUaFilterRequiresEffectiveBuiltinYoutube');
+  await testNullBeforeSendResponseDoesNotMutateOriginalResponse();
+  console.log('PASS testNullBeforeSendResponseDoesNotMutateOriginalResponse');
 })();

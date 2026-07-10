@@ -2,11 +2,17 @@
 
 const assert = require('assert');
 const constants = require('constants');
+const fs = require('fs');
 const http = require('http');
+const https = require('https');
+const path = require('path');
+const tls = require('tls');
 const { Duplex, PassThrough } = require('stream');
 const HttpsServerMgr = require('../proxy/proxy-core/https-server-mgr');
 const ProxyServer = require('../proxy/proxy-core/proxy-server');
 const RequestHandler = require('../proxy/proxy-core/request-handler');
+const util = require('../proxy/proxy-core/util');
+const LocalProxy = require('../proxy/proxy');
 
 class FakeClientSocket extends Duplex {
   constructor() {
@@ -150,6 +156,121 @@ function testProxyServerPassesTimeoutToRequestHandler() {
   assert.strictEqual(proxy.requestHandler.timeout, 4321);
 }
 
+function testEnsureRootCAReplacesMismatchedCache() {
+  const tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'block-proxy-ca-'));
+  const certDir = path.join(tmpDir, 'certificates');
+  const srcDir = path.join(tmpDir, 'src');
+  fs.mkdirSync(certDir, { recursive: true });
+  fs.mkdirSync(srcDir, { recursive: true });
+
+  const srcCrt = path.join(srcDir, 'rootCA.crt');
+  const srcKey = path.join(srcDir, 'rootCA.key');
+  const targetCrt = path.join(certDir, 'rootCA.crt');
+  const targetKey = path.join(certDir, 'rootCA.key');
+  const staleDomainCrt = path.join(certDir, 'youtubei.googleapis.com.crt');
+  const staleDomainKey = path.join(certDir, 'youtubei.googleapis.com.key');
+
+  fs.copyFileSync(path.join(__dirname, '../cert/rootCA.crt'), srcCrt);
+  fs.copyFileSync(path.join(__dirname, '../cert/rootCA.key'), srcKey);
+  fs.writeFileSync(targetCrt, fs.readFileSync(path.join(__dirname, '../cert/tunnel_tls.crt')));
+  fs.writeFileSync(targetKey, fs.readFileSync(path.join(__dirname, '../cert/tunnel_tls.key')));
+  fs.writeFileSync(staleDomainCrt, 'stale cert');
+  fs.writeFileSync(staleDomainKey, 'stale key');
+
+  try {
+    const result = LocalProxy._test.ensureRootCA({
+      anyproxyDir: certDir,
+      srcCrt,
+      srcKey,
+    });
+
+    assert.strictEqual(result, 'replaced');
+    assert.strictEqual(fs.readFileSync(targetCrt, 'utf8'), fs.readFileSync(srcCrt, 'utf8'));
+    assert.strictEqual(fs.readFileSync(targetKey, 'utf8'), fs.readFileSync(srcKey, 'utf8'));
+    assert.strictEqual(fs.existsSync(staleDomainCrt), false);
+    assert.strictEqual(fs.existsSync(staleDomainKey), false);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+async function testMitmConnectForwardsHttpsRequest() {
+  const key = fs.readFileSync(path.join(__dirname, '../cert/rootCA.key'));
+  const cert = fs.readFileSync(path.join(__dirname, '../cert/rootCA.crt'));
+  const upstream = https.createServer({ key, cert }, (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/plain',
+      'Content-Length': '4',
+    });
+    res.end('pong');
+  });
+  const proxyPort = await util.getFreePort();
+  const proxy = new ProxyServer({
+    port: proxyPort,
+    dangerouslyIgnoreUnauthorized: true,
+    rule: {
+      *beforeDealHttpsRequest() {
+        return true;
+      },
+      *beforeSendResponse() {
+        return null;
+      },
+    },
+  });
+
+  try {
+    await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+    const upstreamPort = upstream.address().port;
+    await new Promise((resolve, reject) => {
+      proxy.once('ready', resolve);
+      proxy.once('error', reject);
+      proxy.start();
+    });
+
+    const connectReq = http.request({
+      host: '127.0.0.1',
+      port: proxyPort,
+      method: 'CONNECT',
+      path: 'example.test:443',
+    });
+
+    const response = await new Promise((resolve, reject) => {
+      connectReq.once('connect', (res, socket) => {
+        assert.strictEqual(res.statusCode, 200);
+        const tlsSocket = tls.connect({
+          socket,
+          servername: 'example.test',
+          rejectUnauthorized: false,
+        }, () => {
+          tlsSocket.write([
+            'GET /ping HTTP/1.1',
+            `Host: 127.0.0.1:${upstreamPort}`,
+            'Connection: close',
+            '',
+            '',
+          ].join('\r\n'));
+        });
+
+        let data = '';
+        tlsSocket.setEncoding('utf8');
+        tlsSocket.on('data', chunk => {
+          data += chunk;
+        });
+        tlsSocket.once('end', () => resolve(data));
+        tlsSocket.once('error', reject);
+      });
+      connectReq.once('error', reject);
+      connectReq.end();
+    });
+
+    assert.match(response, /^HTTP\/1\.1 200 OK/i);
+    assert.match(response, /\r\n\r\npong$/);
+  } finally {
+    await proxy.close();
+    await new Promise(resolve => upstream.close(resolve));
+  }
+}
+
 async function run() {
   testHttpsServerSecureOptionsDisableSslv3AndTlsv1();
   console.log('PASS testHttpsServerSecureOptionsDisableSslv3AndTlsv1');
@@ -161,8 +282,12 @@ async function run() {
   console.log('PASS testRequestHandlerStoresTimeoutConfig');
   testProxyServerPassesTimeoutToRequestHandler();
   console.log('PASS testProxyServerPassesTimeoutToRequestHandler');
+  testEnsureRootCAReplacesMismatchedCache();
+  console.log('PASS testEnsureRootCAReplacesMismatchedCache');
   await testConnectHeadWebSocketUsesLocalProxy();
   console.log('PASS testConnectHeadWebSocketUsesLocalProxy');
+  await testMitmConnectForwardsHttpsRequest();
+  console.log('PASS testMitmConnectForwardsHttpsRequest');
 }
 
 run().catch((error) => {

@@ -14,6 +14,7 @@ const _util = require('../server/util.js');
 const os = require('os');
 const http = require("http");
 const https = require('https');
+const crypto = require('crypto');
 const { URL } = require('url');
 const axios = require('axios');
 const { HttpProxyAgent } = require('http-proxy-agent');
@@ -515,25 +516,57 @@ function getMacByIp(ipAddress) {
 // 保存代理服务器实例的变量
 let proxyServerInstance = null;
 
-function ensureRootCA() {
-  const anyproxyDir = path.join(os.homedir(), '.anyproxy', 'certificates');
-  const targetCrt = path.join(anyproxyDir, 'rootCA.crt');
-  const targetKey = path.join(anyproxyDir, 'rootCA.key');
-  const srcCrt = path.join(__dirname, '../cert/rootCA.crt');
-  const srcKey = path.join(__dirname, '../cert/rootCA.key');
+function getCertificateFingerprint(filePath) {
+  try {
+    const cert = new crypto.X509Certificate(fs.readFileSync(filePath));
+    return cert.fingerprint256;
+  } catch (e) {
+    return null;
+  }
+}
 
-  if (fs.existsSync(targetCrt) && fs.existsSync(targetKey)) {
+function clearGeneratedCertCache(anyproxyDir) {
+  if (!fs.existsSync(anyproxyDir)) {
     return;
   }
 
+  for (const fileName of fs.readdirSync(anyproxyDir)) {
+    if (fileName === 'rootCA.crt' || fileName === 'rootCA.key') {
+      continue;
+    }
+    const filePath = path.join(anyproxyDir, fileName);
+    if (fs.statSync(filePath).isFile()) {
+      fs.unlinkSync(filePath);
+    }
+  }
+}
+
+function ensureRootCA(options = {}) {
+  const anyproxyDir = options.anyproxyDir || path.join(os.homedir(), '.anyproxy', 'certificates');
+  const targetCrt = path.join(anyproxyDir, 'rootCA.crt');
+  const targetKey = path.join(anyproxyDir, 'rootCA.key');
+  const srcCrt = options.srcCrt || path.join(__dirname, '../cert/rootCA.crt');
+  const srcKey = options.srcKey || path.join(__dirname, '../cert/rootCA.key');
+
   if (!fs.existsSync(srcCrt) || !fs.existsSync(srcKey)) {
-    return;
+    return 'missing-source';
   }
 
   fs.mkdirSync(anyproxyDir, { recursive: true });
+  const hasTarget = fs.existsSync(targetCrt) && fs.existsSync(targetKey);
+  const srcFingerprint = getCertificateFingerprint(srcCrt);
+  const targetFingerprint = hasTarget ? getCertificateFingerprint(targetCrt) : null;
+  const shouldReplace = !hasTarget || !srcFingerprint || srcFingerprint !== targetFingerprint;
+
+  if (!shouldReplace) {
+    return 'unchanged';
+  }
+
+  clearGeneratedCertCache(anyproxyDir);
   fs.copyFileSync(srcCrt, targetCrt);
   fs.copyFileSync(srcKey, targetKey);
-  console.log('✅ 已将 cert/rootCA.* 复制到 ~/.anyproxy/certificates/');
+  console.log('✅ 已同步 cert/rootCA.* 到 ~/.anyproxy/certificates/，并清理旧域名证书缓存');
+  return hasTarget ? 'replaced' : 'created';
 }
 
 function startProxyServer() {
@@ -798,7 +831,7 @@ function getResponseRules() {
 // requestHandler.js 120 行 request() 里的逻辑
 function parseResponseFromZippedChunk(response) {
   return new Promise((resolve, reject) => {
-    var resHeader = response.header;
+    var resHeader = { ...(response.header || {}) };
     const contentEncoding = resHeader['content-encoding'] || resHeader['Content-Encoding'];
     const ifServerGzipped = /gzip/i.test(contentEncoding);
     const isServerDeflated = /deflate/i.test(contentEncoding);
@@ -1600,5 +1633,7 @@ module.exports._test = {
   },
   async runMITMHandler(type, url, request, response) {
     return MITMHandler(type, url, request, response);
-  }
+  },
+  ensureRootCA,
+  getCertificateFingerprint
 };
