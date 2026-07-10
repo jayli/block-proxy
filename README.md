@@ -20,8 +20,15 @@ npx block-proxy
 
 **方式二：全局安装后启动**
 
+全局安装：
+
 ```bash
 npm install -g block-proxy
+```
+
+启动：
+
+```bash
 block-proxy
 ```
 
@@ -43,6 +50,16 @@ docker run --init -d --restart=unless-stopped \
   --name block-proxy \
   crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest
 ```
+
+**方式五：pm2 启动**
+
+先安装 `pnpm install -g block-proxy`
+
+```
+pm2 start block-proxy --interpreter bash
+```
+
+或者直接进项目目录：`pm2 start npm --name "block-proxy" -- run start`
 
 首次启动后访问 `http://代理IP:8004` 进入后台配置面板。
 
