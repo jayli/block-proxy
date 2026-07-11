@@ -282,14 +282,14 @@ class TestTunnelClientLifecycle:
         assert frame['type'] == FRAME_PONG
         assert frame['payload'] == b'abc'
 
-    def test_rotation_disabled_by_default(self):
+    def test_rotation_enabled_by_default(self):
         cfg = {
             'server': {'address': '127.0.0.1', 'username': 'u', 'password': 'p', 'allowInsecure': True},
             'tunnel': {'server_address': '127.0.0.1', 'server_port': 8003},
         }
         tc = TunnelClient(cfg, lambda status, detail='': None)
 
-        assert tc._tunnel_cfg.get('rotation_enabled', False) is False
+        assert tc._tunnel_cfg.get('rotation_enabled', True) is True
         assert tc._rotation_task is None
 
     def test_rotation_failure_keeps_old_active_ws(self):

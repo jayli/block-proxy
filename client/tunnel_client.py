@@ -462,7 +462,7 @@ class TunnelClient:
             self._ws_read_tasks[ws] = self._read_task
             if self._tunnel_cfg.get('client_heartbeat', False):
                 self._heartbeat_task = asyncio.ensure_future(self._heartbeat_loop(ws))
-            if self._tunnel_cfg.get('rotation_enabled', False):
+            if self._tunnel_cfg.get('rotation_enabled', True):
                 self._rotation_task = asyncio.ensure_future(self._rotation_loop())
             await self._read_task
         finally:
@@ -626,7 +626,7 @@ class TunnelClient:
             await self._ws_send(ws, encode_frame(FRAME_PING, payload=payload))
 
     async def _rotation_loop(self):
-        while self._running and self._tunnel_cfg.get('rotation_enabled', False):
+        while self._running and self._tunnel_cfg.get('rotation_enabled', True):
             interval = random.uniform(
                 self._tunnel_cfg.get('rotation_min', 600),
                 self._tunnel_cfg.get('rotation_max', 1800),
