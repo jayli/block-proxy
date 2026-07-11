@@ -31,13 +31,28 @@ const TunnelManager = require('../tunnel/manager');
 let ruleRegistry = mitmRegistry.createRegistry({ config: {} });
 let cliRulePath = null;
 
-const { ensureTempCert } = require('../cert/generator');
-
 // Tunnel module-level variables
 let tunnelServer = null;
 let tunnelManager = null;
-const tunnelCertFile = path.join(__dirname, '../cert/tunnel_tls.crt');
-const tunnelKeyFile = path.join(__dirname, '../cert/tunnel_tls.key');
+
+// Tunnel TLS 证书路径
+function getTunnelCertPaths() {
+  // 优先使用命令行参数指定的路径
+  if (process.env.TUNNEL_PUBKEY && process.env.TUNNEL_PRIVKEY) {
+    return {
+      cert: process.env.TUNNEL_PUBKEY,
+      key: process.env.TUNNEL_PRIVKEY,
+      type: '命令行指定'
+    };
+  }
+
+  // 默认复用 SOCKS5 证书
+  return {
+    cert: path.join(__dirname, '../cert/socks5_tls.crt'),
+    key: path.join(__dirname, '../cert/socks5_tls.key'),
+    type: '复用 SOCKS5 证书 (socks5_tls.crt/key)'
+  };
+}
 
 // 启用全局 keep-alive，使 AnyProxy 内部转发也复用连接
 http.globalAgent.keepAlive = true;
@@ -1036,19 +1051,28 @@ function passRequestWithHttpAgent(requestDetail, isHttps) {
 async function initTunnel(config) {
   await closeTunnel();
 
-  // 确保 ECC P-256 临时 TLS 证书存在（首次启动自动生成，之后跳过）
-  await ensureTempCert('tunnel_tls', tunnelKeyFile, tunnelCertFile);
-
   const enableTunnel = config.enable_tunnel || "1";
   const tunnelPort = config.tunnel_port || 8003;
   if (enableTunnel !== "1") return;
 
-  if (!fs.existsSync(tunnelCertFile) || !fs.existsSync(tunnelKeyFile)) {
-    throw new Error(`Tunnel TLS cert/key missing: cert=${tunnelCertFile}, key=${tunnelKeyFile}`);
+  // 获取证书路径
+  const certPaths = getTunnelCertPaths();
+
+  // 如果使用默认 SOCKS5 证书且不存在，则生成
+  if (!process.env.TUNNEL_PUBKEY) {
+    if (!fs.existsSync(certPaths.cert) || !fs.existsSync(certPaths.key)) {
+      const { ensureTempCert } = require('../cert/generator');
+      await ensureTempCert('socks5_tls', certPaths.key, certPaths.cert);
+    }
   }
 
-  const tunnelCert = fs.readFileSync(tunnelCertFile);
-  const tunnelKey = fs.readFileSync(tunnelKeyFile);
+  if (!fs.existsSync(certPaths.cert) || !fs.existsSync(certPaths.key)) {
+    throw new Error(`Tunnel TLS 证书缺失: ${certPaths.cert} 或 ${certPaths.key}`);
+  }
+
+  console.log(`[Tunnel] 使用证书: ${certPaths.type}`);
+  const tunnelCert = fs.readFileSync(certPaths.cert);
+  const tunnelKey = fs.readFileSync(certPaths.key);
 
   tunnelServer = new TunnelServer({
     port: tunnelPort,

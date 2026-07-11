@@ -104,7 +104,9 @@ process.on('SIGTERM', () => {
     .name('block-proxy')
     .description('极简的 MITM 代理工具：https://github.com/jayli/block-proxy')
     .version('0.1.3')
-    .option('-c, --config <config>', 'MITM 配置文件');
+    .option('-c, --config <config>', 'MITM 配置文件')
+    .option('--pubkey <path>', 'Tunnel TLS 公钥证书路径')
+    .option('--privkey <path>', 'Tunnel TLS 私钥路径');
 
   program.parse(process.argv);
   const options = program.opts();
@@ -117,6 +119,18 @@ process.on('SIGTERM', () => {
       var configFile = path.resolve(pwd, options.config);
       await _fs.setGlobalConfigFile(configFile);
     }
+  }
+
+  // 传递 Tunnel TLS 证书路径参数
+  if (options.pubkey) {
+    process.env.TUNNEL_PUBKEY = path.isAbsolute(options.pubkey)
+      ? options.pubkey
+      : path.resolve(process.cwd(), options.pubkey);
+  }
+  if (options.privkey) {
+    process.env.TUNNEL_PRIVKEY = path.isAbsolute(options.privkey)
+      ? options.privkey
+      : path.resolve(process.cwd(), options.privkey);
   }
 
   // 启动
