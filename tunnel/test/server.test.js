@@ -210,6 +210,34 @@ describe('TunnelServer WebSocket', () => {
     closeWs(ws);
   });
 
+  it('accepts a maximum-sized DATA frame over WebSocket', async () => {
+    const port = nextPort();
+    let receivedFrame = null;
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' }
+    });
+    server.onFrame((frame) => { receivedFrame = frame; });
+    await server.start();
+
+    const ws = await connectClient(port);
+    assert.equal((await authenticate(ws)).type, FRAME_TYPES.AUTH_OK);
+
+    const maxData = Buffer.alloc(65535 - 3, 0x61);
+    ws.send(encodeFrame({
+      type: FRAME_TYPES.DATA,
+      reqid: 7,
+      data: maxData,
+    }));
+
+    await waitForCondition(() => receivedFrame !== null, 1000);
+    assert.equal(receivedFrame.type, FRAME_TYPES.DATA);
+    assert.equal(receivedFrame.reqid, 7);
+    assert.equal(receivedFrame.data.length, maxData.length);
+    closeWs(ws);
+  });
+
   it('rejects bad auth', async () => {
     const port = nextPort();
     server = new TunnelServer({

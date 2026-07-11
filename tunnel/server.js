@@ -1,7 +1,7 @@
 const https = require('https');
 const crypto = require('crypto');
 const { WebSocketServer, WebSocket } = require('ws');
-const { FRAME_TYPES, encodeFrame, decodeFrame } = require('./protocol');
+const { FRAME_TYPES, MAX_FRAME_PAYLOAD, encodeFrame, decodeFrame } = require('./protocol');
 const { handleDisguiseRequest } = require('./disguiseResponse');
 
 const DEFAULT_WS_PATH = '/ws';
@@ -48,7 +48,7 @@ class TunnelServer {
       this._wss = new WebSocketServer({
         server: this._server,
         path: this.wsPath,
-        maxPayload: 2 ** 16,
+        maxPayload: MAX_FRAME_PAYLOAD + 2,
       });
       this._wss.on('connection', (ws, req) => this._handleWsConnection(ws, req));
 
