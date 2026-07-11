@@ -98,6 +98,7 @@ class ProxyCore extends events.EventEmitter {
       forceProxyHttps: !!config.forceProxyHttps,
       dangerouslyIgnoreUnauthorized: !!config.dangerouslyIgnoreUnauthorized,
       customConnect: config.customConnect || null,
+      isTunnelDomain: config.isTunnelDomain || null,
       timeout: config.timeout,
       mitmDebugLog: !!config.mitmDebugLog,
     }, this.proxyRule);

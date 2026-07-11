@@ -1091,6 +1091,9 @@ function getAnyProxyOptions() {
       }
       return null;
     },
+    isTunnelDomain: (host) => {
+      return tunnelManager && tunnelManager.matchesTunnelDomain(host);
+    },
     rule: {
       responseRules: getResponseRules(),
       // 验证 Proxy-Authorization

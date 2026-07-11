@@ -333,6 +333,7 @@ class TunnelDuplex extends Duplex {
     super({ highWaterMark: 65536 });
     this._manager = manager;
     this._reqid = reqid;
+    this.isTunnelStream = true;
   }
 
   _read() {
