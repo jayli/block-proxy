@@ -2,6 +2,7 @@ const https = require('https');
 const crypto = require('crypto');
 const { WebSocketServer, WebSocket } = require('ws');
 const { FRAME_TYPES, encodeFrame, decodeFrame } = require('./protocol');
+const { handleDisguiseRequest } = require('./disguiseResponse');
 
 const DEFAULT_WS_PATH = '/ws';
 const DEFAULT_HEARTBEAT_MIN = 15;
@@ -9,18 +10,6 @@ const DEFAULT_HEARTBEAT_MAX = 40;
 const DEFAULT_HEARTBEAT_TIMEOUT = 60;
 const DEFAULT_ROTATION_DRAIN_TIMEOUT = 10;
 const DEFAULT_ROTATION_DRAIN_IDLE_TIMEOUT = 20;
-
-const FAVICON_ICO = Buffer.from([
-  0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x01,
-  0x00, 0x00, 0x01, 0x00, 0x20, 0x00, 0x28, 0x00,
-  0x00, 0x00, 0x16, 0x00, 0x00, 0x00, 0x28, 0x00,
-  0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00,
-  0x00, 0x00, 0x01, 0x00, 0x20, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x22, 0x7a,
-  0xa8, 0xff, 0x00, 0x00, 0x00, 0x00
-]);
 
 class TunnelServer {
   constructor(options) {
@@ -117,29 +106,7 @@ class TunnelServer {
   }
 
   _handleHttpRequest(req, res) {
-    if (req.url === '/' || req.url === '/index.html') {
-      const body = '<!doctype html><html><head><title>OK</title></head><body>OK</body></html>';
-      res.writeHead(200, {
-        'content-type': 'text/html; charset=utf-8',
-        'content-length': Buffer.byteLength(body),
-        'cache-control': 'no-store',
-      });
-      res.end(body);
-      return;
-    }
-
-    if (req.url === '/favicon.ico') {
-      res.writeHead(200, {
-        'content-type': 'image/x-icon',
-        'content-length': FAVICON_ICO.length,
-        'cache-control': 'public, max-age=86400',
-      });
-      res.end(FAVICON_ICO);
-      return;
-    }
-
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-    res.end('Not found');
+    handleDisguiseRequest(req, res);
   }
 
   _handleWsConnection(ws, req) {

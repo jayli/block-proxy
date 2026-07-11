@@ -134,7 +134,7 @@ describe('TunnelServer HTTP disguise', () => {
     if (server) { await server.stop(); server = null; }
   });
 
-  it('GET / returns small HTML', async () => {
+  it('GET / returns a plausible site homepage', async () => {
     const port = nextPort();
     server = new TunnelServer({
       port,
@@ -146,10 +146,18 @@ describe('TunnelServer HTTP disguise', () => {
     const res = await getHttps(port, '/');
     assert.equal(res.statusCode, 200);
     assert.match(res.headers['content-type'], /text\/html/);
-    assert.match(res.body.toString('utf8'), /html/i);
+    assert.match(res.headers['cache-control'], /no-cache|no-store|max-age/i);
+    assert.ok(Number(res.headers['content-length']) > 0);
+    const body = res.body.toString('utf8');
+    assert.match(body, /<!doctype html>/i);
+    assert.match(body, /Northstar Digital/i);
+    assert.match(body, /Insights/i);
+    assert.match(body, /<style>/i);
+    assert.doesNotMatch(body, /<title>OK<\/title>|<body>OK<\/body>/i);
+    assert.doesNotMatch(body, /tunnel|websocket|proxy/i);
   });
 
-  it('GET /favicon.ico returns icon bytes', async () => {
+  it('GET /index.html returns the same plausible homepage', async () => {
     const port = nextPort();
     server = new TunnelServer({
       port,
@@ -158,10 +166,25 @@ describe('TunnelServer HTTP disguise', () => {
     });
     await server.start();
 
-    const res = await getHttps(port, '/favicon.ico');
+    const res = await getHttps(port, '/index.html');
     assert.equal(res.statusCode, 200);
-    assert.match(res.headers['content-type'], /image\/x-icon/);
-    assert.ok(res.body.length > 0);
+    assert.match(res.headers['content-type'], /text\/html/);
+    assert.match(res.body.toString('utf8'), /Northstar Digital/i);
+  });
+
+  it('GET unknown path is not disguised', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' }
+    });
+    await server.start();
+
+    const res = await getHttps(port, '/products/2026/report.html');
+    assert.equal(res.statusCode, 404);
+    assert.match(res.headers['content-type'], /text\/plain/);
+    assert.equal(res.body.toString('utf8'), 'Not found');
   });
 });
 
