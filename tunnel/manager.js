@@ -45,7 +45,7 @@ class TunnelManager {
 
     this._activeRequests.set(reqid, {
       reqid, stream, confirmed: false, timeout: null, direction: 'reverse',
-      socket
+      socket, lastActivityAt: Date.now()
     });
     const entry = this._activeRequests.get(reqid);
 
@@ -105,12 +105,14 @@ class TunnelManager {
 
     switch (frame.type) {
       case FRAME_TYPES.CONNECT_OK: {
+        entry.lastActivityAt = Date.now();
         entry.confirmed = true;
         entry.stream.emit('tunnel-connect-ok');
         break;
       }
 
       case FRAME_TYPES.DATA: {
+        entry.lastActivityAt = Date.now();
         if (entry.direction === 'forward' && entry._anyproxySocket) {
           const canContinue = entry._anyproxySocket.write(frame.data);
           if (!canContinue) {
@@ -127,6 +129,7 @@ class TunnelManager {
       }
 
       case FRAME_TYPES.CLOSE: {
+        entry.lastActivityAt = Date.now();
         if (entry.direction === 'forward' && entry._anyproxySocket) {
           entry._anyproxySocket.destroy();
         }
@@ -138,6 +141,7 @@ class TunnelManager {
       }
 
       case FRAME_TYPES.CONNECT_FAILED: {
+        entry.lastActivityAt = Date.now();
         if (entry.direction === 'forward' && entry._anyproxySocket) {
           entry._anyproxySocket.destroy();
         }
@@ -165,7 +169,7 @@ class TunnelManager {
     const entry = {
       reqid, stream, confirmed: false, timeout: null,
       direction: 'forward', _anyproxySocket: null,
-      socket
+      socket, lastActivityAt: Date.now()
     };
     this._activeRequests.set(reqid, entry);
 
@@ -194,6 +198,7 @@ class TunnelManager {
     let responseBuffer = Buffer.alloc(0);
     anyproxySocket.on('data', (data) => {
       if (!entry.confirmed) {
+        entry.lastActivityAt = Date.now();
         responseBuffer = Buffer.concat([responseBuffer, data]);
         const headerEnd = responseBuffer.indexOf('\r\n\r\n');
         if (headerEnd === -1) return;
@@ -219,6 +224,7 @@ class TunnelManager {
       }
 
       // Relay data from AnyProxy to client
+      entry.lastActivityAt = Date.now();
       this._sendDataToClient(reqid, data, entry.socket).catch(() => {});
     });
 
@@ -241,6 +247,8 @@ class TunnelManager {
   }
 
   async _sendDataToClient(reqid, data, socket) {
+    const entry = this._activeRequests.get(reqid);
+    if (entry) entry.lastActivityAt = Date.now();
     for (let offset = 0; offset < data.length; offset += MAX_DATA_CHUNK) {
       await this._server.sendFrame({
         type: FRAME_TYPES.DATA,
@@ -252,6 +260,8 @@ class TunnelManager {
   }
 
   _sendCloseToClient(reqid, socket) {
+    const entry = this._activeRequests.get(reqid);
+    if (entry) entry.lastActivityAt = Date.now();
     this._server.sendFrame({ type: FRAME_TYPES.CLOSE, reqid }, socket);
   }
 
@@ -265,6 +275,7 @@ class TunnelManager {
   async _sendData(reqid, data) {
     const entry = this._activeRequests.get(reqid);
     if (!entry) return;
+    entry.lastActivityAt = Date.now();
     for (let offset = 0; offset < data.length; offset += MAX_DATA_CHUNK) {
       await this._server.sendFrame({
         type: FRAME_TYPES.DATA,
@@ -278,6 +289,7 @@ class TunnelManager {
   _sendClose(reqid) {
     const entry = this._activeRequests.get(reqid);
     if (!entry) return;
+    entry.lastActivityAt = Date.now();
     this._server.sendFrame({ type: FRAME_TYPES.CLOSE, reqid }, entry.socket);
     this._clearActiveRequest(reqid);
   }
@@ -299,6 +311,25 @@ class TunnelManager {
       candidateConnections: counts.candidate || 0,
       drainingConnections: counts.draining || 0
     };
+  }
+
+  getSocketActiveRequestCount(socket) {
+    let count = 0;
+    for (const entry of this._activeRequests.values()) {
+      if (entry.socket === socket) count++;
+    }
+    return count;
+  }
+
+  getSocketDrainState(socket) {
+    let activeCount = 0;
+    let lastActivityAt = 0;
+    for (const entry of this._activeRequests.values()) {
+      if (entry.socket !== socket) continue;
+      activeCount++;
+      lastActivityAt = Math.max(lastActivityAt, entry.lastActivityAt || Date.now());
+    }
+    return { activeCount, lastActivityAt };
   }
 
   setConnected(socket, connected, clientAddress) {

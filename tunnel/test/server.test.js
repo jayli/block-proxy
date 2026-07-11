@@ -368,4 +368,73 @@ describe('TunnelServer rotation state', () => {
     closeWs(ws2);
     closeWs(ws3);
   });
+
+  it('keeps draining WS open after timeout while bound requests remain', async () => {
+    const port = nextPort();
+    let oldWs;
+    let activeRequests = 1;
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+      rotationDrainTimeout: 0.05,
+    });
+    server.setActiveRequestChecker((socket) => socket === oldWs ? activeRequests : 0);
+    await server.start();
+
+    const ws1 = await connectClient(port);
+    assert.equal((await authenticate(ws1)).type, FRAME_TYPES.AUTH_OK);
+    oldWs = server.getActiveSocket();
+
+    const ws2 = await connectClient(port);
+    assert.equal((await authenticate(ws2)).type, FRAME_TYPES.AUTH_OK);
+    await waitForCondition(() => server.getConnectionCounts().draining === 1);
+
+    await new Promise(r => setTimeout(r, 120));
+    assert.equal(server.getConnectionCounts().draining, 1);
+    assert.notEqual(ws1.readyState, WebSocket.CLOSED);
+
+    activeRequests = 0;
+    await waitForCondition(() => server.getConnectionCounts().draining === 0);
+    assert.equal(server.getConnectionCounts().draining, 0);
+
+    closeWs(ws1);
+    closeWs(ws2);
+  });
+
+  it('closes draining WS after bound requests become idle', async () => {
+    const port = nextPort();
+    let oldWs;
+    let lastActivityAt = Date.now();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+      rotationDrainTimeout: 0.05,
+      rotationDrainIdleTimeout: 0.1,
+    });
+    server.setActiveRequestChecker((socket) => socket === oldWs
+      ? { activeCount: 1, lastActivityAt }
+      : { activeCount: 0, lastActivityAt: 0 });
+    await server.start();
+
+    const ws1 = await connectClient(port);
+    assert.equal((await authenticate(ws1)).type, FRAME_TYPES.AUTH_OK);
+    oldWs = server.getActiveSocket();
+
+    const ws2 = await connectClient(port);
+    assert.equal((await authenticate(ws2)).type, FRAME_TYPES.AUTH_OK);
+    await waitForCondition(() => server.getConnectionCounts().draining === 1);
+
+    lastActivityAt = Date.now();
+    await new Promise(r => setTimeout(r, 80));
+    assert.equal(server.getConnectionCounts().draining, 1);
+    assert.notEqual(ws1.readyState, WebSocket.CLOSED);
+
+    lastActivityAt = Date.now() - 1000;
+    await waitForCondition(() => server.getConnectionCounts().draining === 0, 1500);
+
+    closeWs(ws1);
+    closeWs(ws2);
+  });
 });

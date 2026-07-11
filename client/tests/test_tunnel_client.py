@@ -361,8 +361,11 @@ class TestTunnelClientLifecycle:
 
     def test_rotation_preserves_pending_forward_request_binding(self):
         class FakeWs:
+            def __init__(self):
+                self.closed = False
+
             async def close(self):
-                pass
+                self.closed = True
 
         cfg = {
             'server': {'address': '127.0.0.1', 'username': 'u', 'password': 'p', 'allowInsecure': True},
@@ -388,6 +391,126 @@ class TestTunnelClientLifecycle:
         tc._establish_connection = establish
         tc._handle_requests = fake_handle_requests
 
-        asyncio.run(tc._rotation_cycle())
+        async def run_rotation_with_pending_request():
+            task = asyncio.create_task(tc._rotation_cycle())
+            await asyncio.sleep(0.05)
 
-        assert tc._forward_requests[1]['ws'] is old_ws
+            assert task.done() is False
+            assert tc._active_ws is new_ws
+            assert tc._ws is new_ws
+            assert tc._forward_requests[1]['ws'] is old_ws
+            assert old_ws.closed is False
+
+            tc._forward_requests.pop(1)
+            await asyncio.wait_for(task, timeout=2)
+
+        asyncio.run(run_rotation_with_pending_request())
+
+        assert old_ws.closed is True
+
+    def test_rotation_new_forward_requests_use_new_ws_while_old_ws_drains(self):
+        class FakeWs:
+            def __init__(self):
+                self.closed = False
+                self.sent = []
+
+            async def close(self):
+                self.closed = True
+
+            async def send(self, data):
+                self.sent.append(data)
+
+        cfg = {
+            'server': {'address': '127.0.0.1', 'username': 'u', 'password': 'p', 'allowInsecure': True},
+            'tunnel': {
+                'server_address': '127.0.0.1',
+                'server_port': 8003,
+                'rotation_drain_timeout': 0,
+            },
+        }
+        tc = TunnelClient(cfg, lambda status, detail='': None)
+        old_ws = FakeWs()
+        new_ws = FakeWs()
+        tc._active_ws = old_ws
+        tc._ws = old_ws
+        tc._forward_requests[1] = {'connected': asyncio.Event(), 'connect_error': None, 'ws': old_ws}
+
+        async def establish(addr, port, credentials):
+            return new_ws
+
+        async def fake_handle_requests(ws):
+            return None
+
+        tc._establish_connection = establish
+        tc._handle_requests = fake_handle_requests
+
+        async def run_rotation_and_forward():
+            task = asyncio.create_task(tc._rotation_cycle())
+            await asyncio.sleep(0.05)
+
+            assert task.done() is False
+            assert tc._active_ws is new_ws
+
+            class FakeSock:
+                def close(self):
+                    pass
+
+            forward_task = asyncio.create_task(tc._forward_connect_async('example.com', 443, FakeSock()))
+            await asyncio.sleep(0.05)
+
+            assert tc._forward_requests[0x8000]['ws'] is new_ws
+
+            forward_task.cancel()
+            try:
+                await forward_task
+            except asyncio.CancelledError:
+                pass
+            tc._forward_requests.pop(1)
+            await asyncio.wait_for(task, timeout=2)
+
+        asyncio.run(run_rotation_and_forward())
+
+    def test_rotation_closes_idle_old_ws_after_drain_idle_timeout(self):
+        class FakeWs:
+            def __init__(self):
+                self.closed = False
+
+            async def close(self):
+                self.closed = True
+
+        cfg = {
+            'server': {'address': '127.0.0.1', 'username': 'u', 'password': 'p', 'allowInsecure': True},
+            'tunnel': {
+                'server_address': '127.0.0.1',
+                'server_port': 8003,
+                'rotation_drain_timeout': 0,
+                'rotation_drain_idle_timeout': 0.05,
+            },
+        }
+        tc = TunnelClient(cfg, lambda status, detail='': None)
+        old_ws = FakeWs()
+        new_ws = FakeWs()
+        tc._active_ws = old_ws
+        tc._ws = old_ws
+        tc._forward_requests[1] = {
+            'connected': asyncio.Event(),
+            'connect_error': None,
+            'ws': old_ws,
+            'last_activity': 0,
+        }
+
+        async def establish(addr, port, credentials):
+            return new_ws
+
+        async def fake_handle_requests(ws):
+            return None
+
+        tc._establish_connection = establish
+        tc._handle_requests = fake_handle_requests
+
+        async def run_rotation_until_idle_timeout():
+            await asyncio.wait_for(tc._rotation_cycle(), timeout=0.5)
+
+        asyncio.run(run_rotation_until_idle_timeout())
+
+        assert old_ws.closed is True

@@ -8,6 +8,7 @@ const DEFAULT_HEARTBEAT_MIN = 15;
 const DEFAULT_HEARTBEAT_MAX = 40;
 const DEFAULT_HEARTBEAT_TIMEOUT = 60;
 const DEFAULT_ROTATION_DRAIN_TIMEOUT = 10;
+const DEFAULT_ROTATION_DRAIN_IDLE_TIMEOUT = 20;
 
 const FAVICON_ICO = Buffer.from([
   0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x01,
@@ -32,6 +33,7 @@ class TunnelServer {
     this.heartbeatMax = options.heartbeatMax || options.tunnel_heartbeat_max || DEFAULT_HEARTBEAT_MAX;
     this.heartbeatTimeout = options.heartbeatTimeout || options.tunnel_heartbeat_timeout || DEFAULT_HEARTBEAT_TIMEOUT;
     this.rotationDrainTimeout = options.rotationDrainTimeout || options.tunnel_rotation_drain_timeout || DEFAULT_ROTATION_DRAIN_TIMEOUT;
+    this.rotationDrainIdleTimeout = options.rotationDrainIdleTimeout || options.tunnel_rotation_drain_idle_timeout || DEFAULT_ROTATION_DRAIN_IDLE_TIMEOUT;
     this.onConnect = options.onConnect || (() => {});
     this.onDisconnect = options.onDisconnect || (() => {});
 
@@ -42,6 +44,7 @@ class TunnelServer {
     this._clientWs = null;
     this._records = new Map();
     this._heartbeatTimer = null;
+    this._drainCheckCallback = null;
   }
 
   start() {
@@ -242,9 +245,7 @@ class TunnelServer {
         oldRecord.state = 'draining';
         if (oldRecord.drainTimer) clearTimeout(oldRecord.drainTimer);
         oldRecord.drainTimer = setTimeout(() => {
-          if (oldRecord.ws.readyState !== WebSocket.CLOSED) {
-            oldRecord.ws.terminate();
-          }
+          this._tryDrainSocket(oldRecord);
         }, Math.max(1, this.rotationDrainTimeout * 1000));
         oldRecord.drainTimer.unref();
       }
@@ -331,6 +332,35 @@ class TunnelServer {
 
   getActiveSocket() {
     return this._clientWs && this._clientWs.readyState === WebSocket.OPEN ? this._clientWs : null;
+  }
+
+  setActiveRequestChecker(fn) {
+    this._drainCheckCallback = fn;
+  }
+
+  _tryDrainSocket(record) {
+    if (this._drainCheckCallback) {
+      const drainState = this._drainCheckCallback(record.ws);
+      const activeCount = typeof drainState === 'number' ? drainState : (drainState && drainState.activeCount) || 0;
+      if (activeCount > 0) {
+        const lastActivityAt = typeof drainState === 'number' ? null : drainState.lastActivityAt;
+        const idleMs = Math.max(0, this.rotationDrainIdleTimeout * 1000);
+        if (!idleMs || !lastActivityAt || Date.now() - lastActivityAt < idleMs) {
+          const delay = lastActivityAt && idleMs
+            ? Math.min(1000, Math.max(10, idleMs - (Date.now() - lastActivityAt)))
+            : 1000;
+          record.drainTimer = setTimeout(() => this._tryDrainSocket(record), delay);
+          record.drainTimer.unref();
+          return;
+        }
+        console.warn(`[Tunnel] Draining connection idle for ${this.rotationDrainIdleTimeout}s; closing stale requests`);
+      } else {
+        record.drainTimer = null;
+      }
+    }
+    if (record.ws.readyState !== WebSocket.CLOSED) {
+      record.ws.terminate();
+    }
   }
 
   getConnectionCounts() {

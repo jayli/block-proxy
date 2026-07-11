@@ -7,6 +7,7 @@ import socket
 import logging
 import random
 import types
+import time
 from logger import crash_logger
 
 try:
@@ -571,6 +572,33 @@ class TunnelClient:
             return False
         return True
 
+    def _get_ws_drain_state(self, ws):
+        """返回指定 WS 连接上的活跃请求数和最近活动时间。"""
+        if not self._ws_is_open(ws):
+            return {'active_count': 0, 'last_activity': 0}
+        active_count = 0
+        last_activity = 0
+        for entry in self._active_writers.values():
+            if entry.get('ws') is ws:
+                active_count += 1
+                last_activity = max(last_activity, entry.get('last_activity', time.monotonic()))
+        for fwd in self._forward_requests.values():
+            if fwd.get('ws') is ws:
+                active_count += 1
+                last_activity = max(last_activity, fwd.get('last_activity', time.monotonic()))
+        return {'active_count': active_count, 'last_activity': last_activity}
+
+    def _has_active_requests_on_ws(self, ws):
+        return self._get_ws_drain_state(ws)['active_count'] > 0
+
+    def _old_ws_is_still_draining(self, ws, idle_timeout):
+        state = self._get_ws_drain_state(ws)
+        if state['active_count'] <= 0:
+            return False
+        if idle_timeout is None or idle_timeout <= 0:
+            return True
+        return (time.monotonic() - state['last_activity']) < idle_timeout
+
     async def _ws_send(self, ws, data):
         if not self._ws_is_open(ws):
             return False
@@ -643,7 +671,14 @@ class TunnelClient:
 
         drain_timeout = self._tunnel_cfg.get('rotation_drain_timeout', 10)
         try:
+            # 第一步：等待最小 drain_timeout
             await asyncio.sleep(drain_timeout)
+            # 第二步：轮询等待旧连接上所有活跃请求完成
+            drain_idle_timeout = self._tunnel_cfg.get('rotation_drain_idle_timeout', 20)
+            while True:
+                if not self._old_ws_is_still_draining(old_ws, drain_idle_timeout):
+                    break
+                await asyncio.sleep(min(1, max(0.01, drain_idle_timeout / 2 if drain_idle_timeout else 1)))
         except asyncio.CancelledError:
             raise
         finally:
@@ -690,6 +725,7 @@ class TunnelClient:
                         reqid = frame['reqid']
                         fwd = self._forward_requests.get(reqid)
                         if fwd:
+                            fwd['last_activity'] = time.monotonic()
                             fwd['connected'].set()
                         else:
                             logger.warning(f'Received CONNECT_OK for unknown reqid={reqid}')
@@ -698,6 +734,7 @@ class TunnelClient:
                         reqid = frame['reqid']
                         fwd = self._forward_requests.get(reqid)
                         if fwd:
+                            fwd['last_activity'] = time.monotonic()
                             fwd['connect_error'] = 'connect failed'
                             fwd['connected'].set()
                         else:
@@ -708,12 +745,14 @@ class TunnelClient:
                         # Forward direction: data from tunnel → queue → sock
                         fwd = self._forward_requests.get(reqid)
                         if fwd and 'queue' in fwd:
+                            fwd['last_activity'] = time.monotonic()
                             await fwd['queue'].put(frame['data'])
                             continue
                         # Reverse direction: data from tunnel → target socket
                         entry = self._active_writers.get(reqid)
                         tw = entry.get('writer') if entry else None
                         if tw and not tw.is_closing():
+                            entry['last_activity'] = time.monotonic()
                             task = asyncio.create_task(write_to_target(reqid, tw, frame['data']))
                             target_write_tasks.add(task)
                             task.add_done_callback(target_write_tasks.discard)
@@ -723,6 +762,7 @@ class TunnelClient:
                         # Forward direction: EOF signal
                         fwd = self._forward_requests.get(reqid)
                         if fwd and 'queue' in fwd:
+                            fwd['last_activity'] = time.monotonic()
                             await fwd['queue'].put(None)
                             continue
                         # Reverse direction: close target socket
@@ -792,7 +832,7 @@ class TunnelClient:
         # Send CONNECT_OK confirmation
         await self._ws_send(ws, encode_frame(FRAME_CONNECT_OK, reqid=reqid))
 
-        self._active_writers[reqid] = {'writer': target_writer, 'ws': ws}
+        self._active_writers[reqid] = {'writer': target_writer, 'ws': ws, 'last_activity': time.monotonic()}
 
         # Read from target → send as DATA frames
         try:
@@ -802,6 +842,9 @@ class TunnelClient:
                     break
                 if not self._ws_is_open(ws):
                     break
+                entry = self._active_writers.get(reqid)
+                if entry:
+                    entry['last_activity'] = time.monotonic()
                 await self._ws_send(ws, encode_frame(FRAME_DATA, reqid=reqid, data=data))
                 await asyncio.sleep(0)  # Yield to other reqids
         except (ConnectionResetError, BrokenPipeError, OSError) as e:
@@ -834,6 +877,7 @@ class TunnelClient:
             'connect_error': None,
             'queue': queue,
             'ws': ws,
+            'last_activity': time.monotonic(),
         }
         self._forward_requests[reqid] = fwd
 
@@ -864,6 +908,7 @@ class TunnelClient:
                             break
                         if not self._ws_is_open(ws):
                             break
+                        fwd['last_activity'] = time.monotonic()
                         await self._ws_send(ws, encode_frame(
                             FRAME_DATA, reqid=reqid, data=data
                         ))

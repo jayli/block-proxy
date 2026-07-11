@@ -243,6 +243,8 @@ async function loadConfig() {
     express_port: expressPort,
     enable_tunnel: "1",
     tunnel_port: 8003,
+    tunnel_rotation_drain_timeout: 10,
+    tunnel_rotation_drain_idle_timeout: 20,
     tunnel_domains: [],
     rule_modules: {},
     devices: []
@@ -306,6 +308,8 @@ async function loadConfig() {
 
       config.enable_tunnel = loadedConfig.enable_tunnel || "1";
       config.tunnel_port = loadedConfig.tunnel_port || 8003;
+      config.tunnel_rotation_drain_timeout = loadedConfig.tunnel_rotation_drain_timeout || 10;
+      config.tunnel_rotation_drain_idle_timeout = loadedConfig.tunnel_rotation_drain_idle_timeout || 20;
       config.tunnel_domains = loadedConfig.tunnel_domains || [];
 
       config.rule_modules = loadedConfig.rule_modules || {};
@@ -350,6 +354,8 @@ async function loadConfig() {
         mitm_debug_log: mitm_debug_log,
         enable_tunnel: "1",
         tunnel_port: 8003,
+        tunnel_rotation_drain_timeout: 10,
+        tunnel_rotation_drain_idle_timeout: 20,
         tunnel_domains: [],
         rule_modules: {},
         vpn_proxy: ""
@@ -1082,6 +1088,8 @@ async function initTunnel(config) {
       username: config.auth_username,
       password: config.auth_password
     },
+    tunnel_rotation_drain_timeout: config.tunnel_rotation_drain_timeout,
+    tunnel_rotation_drain_idle_timeout: config.tunnel_rotation_drain_idle_timeout,
     onConnect: (socket, addr, port) => {
       tunnelManager.setConnected(socket, true, `${addr}:${port}`);
       console.log(`[Tunnel] Client connected: ${addr}:${port}`);
@@ -1093,6 +1101,7 @@ async function initTunnel(config) {
   });
 
   tunnelManager = new TunnelManager(tunnelServer, config);
+  tunnelServer.setActiveRequestChecker((socket) => tunnelManager.getSocketDrainState(socket));
   await tunnelServer.start();
   console.log(`[Tunnel] Server started on port ${tunnelPort}`);
 }

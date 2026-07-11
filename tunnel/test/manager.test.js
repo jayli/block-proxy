@@ -199,4 +199,23 @@ describe('TunnelManager.forward', () => {
     assert.equal(status.activeConnections, 1);
     assert.equal(status.drainingConnections, 1);
   });
+
+  it('counts active requests only for the selected socket', () => {
+    const server = createMockServer();
+    const manager = new TunnelManager(server, { tunnel_domains: [] });
+    manager.setConnected(server._socketA, true);
+
+    const streamA = manager.forward('a.test', 443, () => {});
+    server._setActiveSocket(server._socketB);
+    const streamB = manager.forward('b.test', 443, () => {});
+
+    assert.equal(manager.getSocketActiveRequestCount(server._socketA), 1);
+    assert.equal(manager.getSocketActiveRequestCount(server._socketB), 1);
+    assert.equal(manager.getSocketActiveRequestCount({ name: 'other' }), 0);
+    assert.equal(manager.getSocketDrainState(server._socketA).activeCount, 1);
+    assert.ok(manager.getSocketDrainState(server._socketA).lastActivityAt > 0);
+
+    streamA.destroy();
+    streamB.destroy();
+  });
 });
