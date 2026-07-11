@@ -33,10 +33,7 @@ import com.blockproxy.android.status.StatusStore
 import com.blockproxy.android.status.TunnelStatus
 import com.blockproxy.android.tun.Tun2Socks
 import com.blockproxy.android.tunnel.RealTargetSocketFactory
-import com.blockproxy.android.tunnel.RealTunnelSocket
 import com.blockproxy.android.tunnel.TunnelClient
-import com.blockproxy.android.tunnel.TunnelSocket
-import com.blockproxy.android.tunnel.TunnelSocketFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -345,17 +342,6 @@ class BlockProxyVpnService : VpnService() {
         }
         vpnInterface = pfd
 
-        // Create socket factories for tunnel connections
-        val tunnelSocketFactory = object : TunnelSocketFactory {
-            override fun create(): TunnelSocket {
-                return RealTunnelSocket(
-                    useTls = config.useTls,
-                    allowInsecure = config.allowInsecure,
-                    protect = protectCallback,
-                )
-            }
-        }
-
         val targetSocketFactory = RealTargetSocketFactory(protect = protectCallback)
 
         // Create TunnelClient (needed by TunnelForwardConnector for LocalSocksServer)
@@ -363,9 +349,9 @@ class BlockProxyVpnService : VpnService() {
         val client = TunnelClient(
             config = config,
             credentials = credentials,
-            socketFactory = tunnelSocketFactory,
             targetSocketFactory = targetSocketFactory,
             clientScope = scope,
+            protect = protectCallback,
         )
         tunnelClient = client
 

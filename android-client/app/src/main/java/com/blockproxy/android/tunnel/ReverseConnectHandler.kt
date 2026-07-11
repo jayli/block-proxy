@@ -19,13 +19,25 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
+ * Abstraction over a target (downstream) TCP socket for reverse CONNECT.
+ *
+ * Production code uses [RealTargetSocket]; tests inject fake implementations.
+ */
+interface TargetSocket {
+    suspend fun connect(host: String, port: Int, timeoutMs: Long)
+    suspend fun read(buffer: ByteArray): Int
+    suspend fun write(bytes: ByteArray)
+    fun close()
+}
+
+/**
  * Factory for creating target (downstream) TCP sockets.
  *
  * Production code uses [RealTargetSocketFactory] which creates plain TCP sockets.
  * Tests inject a fake factory to avoid real networking.
  */
 interface TargetSocketFactory {
-    fun create(): TunnelSocket
+    fun create(): TargetSocket
 }
 
 /**
@@ -37,13 +49,13 @@ interface TargetSocketFactory {
 class RealTargetSocketFactory(
     private val protect: ((Socket) -> Boolean)? = null,
 ) : TargetSocketFactory {
-    override fun create(): TunnelSocket = RealTargetSocket(protect)
+    override fun create(): TargetSocket = RealTargetSocket(protect)
 }
 
 /**
  * Plain TCP socket for target (downstream) connections.
  *
- * Unlike [RealTunnelSocket], this does not use TLS — it connects directly
+ * Unlike the tunnel WebSocket, this does not use TLS — it connects directly
  * to the target server.
  *
  * @param protect Optional callback to protect sockets from VPN routing (e.g., `VpnService.protect`).
@@ -51,7 +63,7 @@ class RealTargetSocketFactory(
  */
 class RealTargetSocket(
     private val protect: ((Socket) -> Boolean)? = null,
-) : TunnelSocket {
+) : TargetSocket {
     private var socket: Socket? = null
     private var inputStream: InputStream? = null
     private var outputStream: OutputStream? = null
@@ -106,9 +118,9 @@ class RealTargetSocket(
  * 3. Sends CONNECT_OK back on the same tunnel connection
  * 4. Relays data bidirectionally between target and tunnel
  *
- * Each session is bound to the specific [TunnelConnection] that received the
+ * Each session is bound to the specific [FrameSender] that received the
  * CONNECT frame. When a tunnel disconnects, [closeSessionsFor] cleans up only
- * the sessions owned by that connection.
+ * the sessions owned by that sender.
  *
  * @param scope Coroutine scope for launching relay and write tasks.
  * @param socketFactory Factory for creating target TCP sockets.
@@ -127,9 +139,9 @@ class ReverseConnectHandler(
      * Dispatches CONNECT, DATA, and CLOSE frames to the appropriate session.
      * Other frame types are silently ignored.
      */
-    suspend fun handleFrame(connection: TunnelConnection, frame: Frame) {
+    suspend fun handleFrame(sender: FrameSender, frame: Frame) {
         when (frame) {
-            is Frame.Connect -> handleConnect(connection, frame)
+            is Frame.Connect -> handleConnect(sender, frame)
             is Frame.Data -> handleData(frame)
             is Frame.Close -> handleClose(frame)
             else -> { /* ignore other frame types */ }
@@ -143,12 +155,12 @@ class ReverseConnectHandler(
      * this specific connection are closed; sessions on other connections
      * are unaffected. Safe to call multiple times (idempotent).
      */
-    fun closeSessionsFor(connection: TunnelConnection) {
+    fun closeSessionsFor(sender: FrameSender) {
         // Snapshot matching sessions, then remove-and-close each.
         // Using remove(key, value) ensures we don't remove a new session
         // that reused the same reqid after the old one was closed.
         val toClose = sessions.entries
-            .filter { it.value.connection === connection }
+            .filter { it.value.sender === sender }
             .map { it.key to it.value }
 
         for ((reqid, session) in toClose) {
@@ -157,15 +169,31 @@ class ReverseConnectHandler(
         }
     }
 
+    /**
+     * Returns the drain state for the given [sender]: number of active requests
+     * and the most recent activity timestamp.
+     */
+    fun getDrainState(sender: FrameSender): DrainState {
+        var activeCount = 0
+        var lastActivityAt = 0L
+        for (session in sessions.values) {
+            if (session.sender === sender) {
+                activeCount++
+                lastActivityAt = maxOf(lastActivityAt, session.lastActivityAt)
+            }
+        }
+        return DrainState(activeCount, lastActivityAt)
+    }
+
     // ── Internal ──────────────────────────────────────────────────────
 
-    private suspend fun handleConnect(connection: TunnelConnection, frame: Frame.Connect) {
+    private suspend fun handleConnect(sender: FrameSender, frame: Frame.Connect) {
         val reqid = frame.reqid
         val targetSocket = socketFactory.create()
 
         val session = RequestSession(
             reqid = reqid,
-            connection = connection,
+            sender = sender,
             targetSocket = targetSocket,
             scope = scope,
             onEnd = { s -> sessions.remove(s.reqid, s) },
@@ -174,7 +202,7 @@ class ReverseConnectHandler(
         val existing = sessions.putIfAbsent(reqid, session)
         if (existing != null) {
             try { targetSocket.close() } catch (_: Exception) {}
-            try { connection.send(Frame.ConnectFailed(reqid)) } catch (_: Exception) {}
+            try { sender.sendFrame(FrameCodec.encode(Frame.ConnectFailed(reqid))) } catch (_: Exception) {}
             return
         }
 
@@ -182,7 +210,7 @@ class ReverseConnectHandler(
             is FrameAddress.IPv4 -> addr.address
             is FrameAddress.Domain -> addr.domain
             is FrameAddress.IPv6 -> {
-                connection.send(Frame.ConnectFailed(reqid))
+                try { sender.sendFrame(FrameCodec.encode(Frame.ConnectFailed(reqid))) } catch (_: Exception) {}
                 sessions.remove(reqid, session)
                 try { targetSocket.close() } catch (_: Exception) {}
                 return
@@ -199,13 +227,13 @@ class ReverseConnectHandler(
                 try { targetSocket.close() } catch (_: Exception) {}
                 return
             }
-            connection.send(Frame.ConnectOk(reqid))
+            sender.sendFrame(FrameCodec.encode(Frame.ConnectOk(reqid)))
             session.startRelay()
         } catch (e: TimeoutCancellationException) {
             // Connect timed out - send CONNECT_FAILED
             sessions.remove(reqid, session)
             try { targetSocket.close() } catch (_: Exception) {}
-            try { connection.send(Frame.ConnectFailed(reqid)) } catch (_: Exception) {}
+            try { sender.sendFrame(FrameCodec.encode(Frame.ConnectFailed(reqid))) } catch (_: Exception) {}
         } catch (e: CancellationException) {
             // Scope cancelled — propagate
             sessions.remove(reqid, session)
@@ -215,7 +243,7 @@ class ReverseConnectHandler(
             // Connect failed
             sessions.remove(reqid, session)
             try { targetSocket.close() } catch (_: Exception) {}
-            try { connection.send(Frame.ConnectFailed(reqid)) } catch (_: Exception) {}
+            try { sender.sendFrame(FrameCodec.encode(Frame.ConnectFailed(reqid))) } catch (_: Exception) {}
         }
     }
 
@@ -244,8 +272,8 @@ class ReverseConnectHandler(
  */
 internal class RequestSession(
     val reqid: Int,
-    val connection: TunnelConnection,
-    private val targetSocket: TunnelSocket,
+    val sender: FrameSender,
+    private val targetSocket: TargetSocket,
     private val scope: CoroutineScope,
     private val onEnd: (RequestSession) -> Unit,
 ) {
@@ -253,6 +281,10 @@ internal class RequestSession(
     private val writeChannel = Channel<ByteArray>(Channel.UNLIMITED)
     private var writeJob: Job? = null
     private var relayJob: Job? = null
+
+    /** Timestamp of last activity (DATA sent/received), used for drain tracking. */
+    @Volatile
+    internal var lastActivityAt: Long = System.currentTimeMillis()
 
     /**
      * Launches the relay and write-loop coroutines.
@@ -317,7 +349,8 @@ internal class RequestSession(
                 val n = targetSocket.read(buffer)
                 if (n <= 0) break
                 val chunk = if (n == buffer.size) buffer.copyOf() else buffer.copyOfRange(0, n)
-                connection.send(Frame.Data(reqid, chunk))
+                lastActivityAt = System.currentTimeMillis()
+                sender.sendFrame(FrameCodec.encode(Frame.Data(reqid, chunk)))
                 yield() // Allow other sessions to enqueue frames
             }
         } catch (e: CancellationException) {
@@ -328,7 +361,7 @@ internal class RequestSession(
             // Only send CLOSE and clean up if we weren't already closed
             // (e.g., by the server sending CLOSE which cancelled our relay job).
             if (closed.compareAndSet(false, true)) {
-                try { connection.send(Frame.Close(reqid)) } catch (_: Exception) {}
+                try { sender.sendFrame(FrameCodec.encode(Frame.Close(reqid))) } catch (_: Exception) {}
                 try { targetSocket.close() } catch (_: Exception) {}
                 writeChannel.close()
                 writeJob?.cancel()

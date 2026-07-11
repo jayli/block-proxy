@@ -26,7 +26,7 @@ class ForwardSession internal constructor(
     val reqid: Int,
     val host: String,
     val port: Int,
-    internal val connection: TunnelConnection,
+    internal val sender: FrameSender,
     /** Completed when CONNECT_OK arrives; failed on CONNECT_FAILED / disconnect / stop. */
     internal val openResult: CompletableDeferred<Unit>,
     inboundCapacity: Int,
@@ -36,6 +36,10 @@ class ForwardSession internal constructor(
 
     /** Whether this session has been closed. */
     val isClosed: Boolean get() = closed.get()
+
+    /** Timestamp of last activity (DATA sent/received), used for drain tracking. */
+    @Volatile
+    internal var lastActivityAt: Long = System.currentTimeMillis()
 
     /**
      * Bounded channel for inbound DATA from the tunnel server.
@@ -53,7 +57,8 @@ class ForwardSession internal constructor(
      */
     suspend fun sendData(data: ByteArray) {
         if (closed.get()) return
-        connection.send(Frame.Data(reqid, data))
+        lastActivityAt = System.currentTimeMillis()
+        sender.sendFrame(FrameCodec.encode(Frame.Data(reqid, data)))
     }
 
     /**
@@ -62,7 +67,7 @@ class ForwardSession internal constructor(
      */
     suspend fun sendClose() {
         if (!closed.compareAndSet(false, true)) return
-        try { connection.send(Frame.Close(reqid)) } catch (_: Exception) { /* best effort */ }
+        try { sender.sendFrame(FrameCodec.encode(Frame.Close(reqid))) } catch (_: Exception) { /* best effort */ }
         inboundData.close()
         onEnd(this)
     }
@@ -87,6 +92,7 @@ class ForwardSession internal constructor(
      */
     internal fun deliverData(data: ByteArray) {
         if (closed.get()) return
+        lastActivityAt = System.currentTimeMillis()
         val result = inboundData.trySend(data)
         if (result.isFailure) {
             Log.w(TAG, "Inbound channel full for reqid $reqid, dropping ${data.size} bytes")
