@@ -53,7 +53,7 @@ class TunnelProtocolException(message: String) : Exception(message)
  * @param authPayload     预编码的 AUTH 帧
  * @param customHeaders   自定义 HTTP headers (可为空)
  * @param onAuthSuccess   认证成功回调
- * @param onFrame         认证后的帧回调（完整 encoded frame bytes）
+ * @param onFrame         认证后的帧回调 (sender, encoded frame bytes)
  * @param onDisconnect    断连回调 (error != null 表示异常断开)
  */
 class TunnelWebSocket(
@@ -61,7 +61,7 @@ class TunnelWebSocket(
     private val authPayload: ByteArray,
     private val customHeaders: Map<String, String>,
     private val onAuthSuccess: (FrameSender) -> Unit,
-    private val onFrame: (ByteArray) -> Unit,
+    private val onFrame: (FrameSender, ByteArray) -> Unit,
     private val onDisconnect: (FrameSender, Throwable?) -> Unit,
 ) : FrameSender {
 
@@ -128,7 +128,7 @@ class TunnelWebSocket(
                     return
                 }
                 try {
-                    onFrame(frameBytes)
+                    onFrame(this@TunnelWebSocket, frameBytes)
                 } catch (t: Throwable) {
                     ws.close(1002, "bad frame")
                     onDisconnect(this@TunnelWebSocket, t)

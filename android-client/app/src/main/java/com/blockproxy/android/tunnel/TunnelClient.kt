@@ -93,26 +93,25 @@ class TunnelClient(
 
     suspend fun stop(timeoutMs: Long = 5_000L) {
         stopped = true
-        connected = false
         mainJob?.cancel()
-        heartbeatJob?.cancel()
-        rotationJob?.cancel()
         mainJob = null
-        heartbeatJob = null
-        rotationJob = null
+        // Note: heartbeatJob and rotationJob are cancelled by establishAndServe()'s finally
+        // when the poll loop exits due to stopped=true.
 
-        // Close all WebSocket connections
+        // Close all active/draining/candidate senders
         for (sender in listOfNotNull(activeWs, candidateWs, drainingWs)) {
-            try { sender.close(1000, "client stopping") } catch (_: Exception) {}
+            closeSender(sender)
         }
         activeWs = null
         candidateWs = null
         drainingWs = null
 
-        // Clean up per-sender state
-        for ((sender, ch) in frameChannels) {
+        // Close any remaining channels/jobs (safety net)
+        for ((_, ch) in frameChannels) {
             ch.close()
-            senderReadJobs[sender]?.cancel()
+        }
+        for ((_, job) in senderReadJobs) {
+            job.cancel()
         }
         frameChannels.clear()
         senderReadJobs.clear()
@@ -183,12 +182,14 @@ class TunnelClient(
     private suspend fun establishAndServe() {
         val sender = establishConnection()
 
+        // Channel was pre-created by establishConnection() and registered in onAuthSuccess
+        val frameChannel = frameChannels[sender]
+            ?: throw IllegalStateException("Frame channel not registered for sender")
+
         // Start rotation first, then set as active atomically via stateMutex
         rotationJob = clientScope.launch { rotationLoop() }
 
         stateMutex.withLock {
-            // If we already have an active ws (should not happen normally),
-            // close the old one
             activeWs?.let { old ->
                 Log.w(TAG, "Replacing existing active WS during establish")
                 drainingWs = old
@@ -205,38 +206,30 @@ class TunnelClient(
         heartbeatJob = clientScope.launch { heartbeatLoop() }
 
         // Start frame handling for this sender
-        val frameChannel = Channel<ByteArray>(Channel.UNLIMITED)
-        frameChannels[sender] = frameChannel
         val readJob = clientScope.launch { handleFrames(sender, frameChannel) }
         senderReadJobs[sender] = readJob
 
-        try {
+        // Auto-cleanup when this sender's read job completes (normal disconnection or cancellation)
+        clientScope.launch {
             readJob.join()
+            closeSender(sender)
+        }
+
+        // Wait until stopped, or until the active connection is lost and needs reconnecting.
+        // When rotation replaces this sender, closeSender() sets drainingWs=null but
+        // activeWs is set to the candidate — so activeWs stays non-null and we keep waiting.
+        // When the active sender genuinely disconnects, closeSender() sets activeWs=null
+        // and this loop exits, triggering a reconnect in mainLoop().
+        try {
+            while (clientScope.isActive && !stopped && activeWs != null) {
+                delay(500)
+            }
         } finally {
-            // Connection ended — cleanup
             connected = false
             heartbeatJob?.cancel()
             heartbeatJob = null
             rotationJob?.cancel()
             rotationJob = null
-
-            // Clean up this sender's state
-            frameChannels.remove(sender)
-            senderReadJobs.remove(sender)
-            heartbeatStates.remove(sender)
-
-            // Close forward/rev sessions on this sender
-            handler.closeSessionsFor(sender)
-            forwardRegistry.closeSessionsFor(sender)
-
-            // Clean up ws references
-            stateMutex.withLock {
-                if (activeWs === sender) activeWs = null
-                if (drainingWs === sender) drainingWs = null
-                if (candidateWs === sender) candidateWs = null
-            }
-
-            try { sender.close(1000, "done") } catch (_: Exception) {}
         }
     }
 
@@ -258,23 +251,22 @@ class TunnelClient(
         // Encode AUTH payload
         val authPayload = FrameCodec.encode(Frame.Auth(credentials.username, credentials.password))
 
-        // Channel for frame callback → coroutine bridge (used before auth completes)
-        val preAuthChannel = Channel<ByteArray>(Channel.UNLIMITED)
+        // Pre-create frame channel — registered in onAuthSuccess before any post-auth frame arrives.
+        // OkHttp serializes onMessage callbacks on a single thread, so by the time the first
+        // post-auth onFrame fires, the channel is already registered.
+        val frameChannel = Channel<ByteArray>(Channel.UNLIMITED)
 
         val tunnelWs = TunnelWebSocket(
             url = wsUrl,
             authPayload = authPayload,
             customHeaders = config.customHeaders,
             onAuthSuccess = { sender ->
-                // Channel already created; pre-auth frames forwarded via same callback
-                // After auth, frames are dispatched through the frame channel
+                frameChannels[sender] = frameChannel
             },
-            onFrame = { frameBytes ->
-                frameChannels.values.firstOrNull()?.trySend(frameBytes)
-                preAuthChannel.trySend(frameBytes)
+            onFrame = { sender, frameBytes ->
+                frameChannels[sender]?.trySend(frameBytes)
             },
             onDisconnect = { sender, error ->
-                // Frame handling loop will detect channel close
                 frameChannels[sender]?.close()
             },
         )
@@ -282,7 +274,7 @@ class TunnelClient(
         return try {
             tunnelWs.connect(okHttpClient)
         } catch (e: Exception) {
-            preAuthChannel.close()
+            frameChannel.close()
             throw e
         }
     }
@@ -403,10 +395,7 @@ class TunnelClient(
         val oldWs = activeWs ?: return
         if (!oldWs.isOpen) return
 
-        val addr = config.serverHost
-        val port = config.serverPort
-
-        // Establish candidate connection
+        // Establish candidate connection (channel pre-created and registered in onAuthSuccess)
         val candidate = try {
             establishConnection()
         } catch (e: Exception) {
@@ -414,21 +403,29 @@ class TunnelClient(
             return
         }
 
-        // Set up frame handling for candidate
-        val candidateChannel = Channel<ByteArray>(Channel.UNLIMITED)
-        frameChannels[candidate] = candidateChannel
+        val candidateChannel = frameChannels[candidate]
+            ?: run {
+                Log.w(TAG, "Rotation candidate channel not registered")
+                try { candidate.close(1000, "no channel") } catch (_: Exception) {}
+                return
+            }
+
+        // Start frame handling for candidate with auto-cleanup
         val candidateReadJob = clientScope.launch { handleFrames(candidate, candidateChannel) }
         senderReadJobs[candidate] = candidateReadJob
-
-        // Initialize heartbeat state for candidate
         heartbeatStates[candidate] = HeartbeatState()
+
+        clientScope.launch {
+            candidateReadJob.join()
+            closeSender(candidate)
+        }
 
         // Atomic switch: old → draining, candidate → active
         stateMutex.withLock {
             candidateWs = null
-            // If we already have a draining ws from a previous rotation, close it
-            drainingWs?.let { old ->
-                clientScope.launch { closeSender(old) }
+            // If a previous draining ws is still lingering, close it now
+            drainingWs?.let { prior ->
+                clientScope.launch { closeSender(prior) }
             }
             drainingWs = oldWs
             activeWs = candidate
@@ -514,7 +511,14 @@ class TunnelClient(
         heartbeatStates.remove(sender)
         handler.closeSessionsFor(sender)
         forwardRegistry.closeSessionsFor(sender)
-        try { sender.close(1000, "rotation cleanup") } catch (_: Exception) {}
+
+        stateMutex.withLock {
+            if (activeWs === sender) activeWs = null
+            if (drainingWs === sender) drainingWs = null
+            if (candidateWs === sender) candidateWs = null
+        }
+
+        try { sender.close(1000, "done") } catch (_: Exception) {}
     }
 }
 
