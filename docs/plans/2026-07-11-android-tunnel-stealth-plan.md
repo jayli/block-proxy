@@ -1,10 +1,10 @@
 # Android 客户端隧道隐匿改造实施计划
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 将 Android 隧道客户端从 TLS 原始 Socket + 双连接补充模型改造为 OkHttp WebSocket + 单活跃连接轮换模型，与 Python 端行为完全一致。
 
-**Architecture:** OkHttp WebSocket 替代原始 TLS Socket 作为传输层，单活跃 WS + 定期轮换 + drain 机制替代原有双连接补充模型，帧协议保持不变。
+**Architecture:** OkHttp WebSocket 替代原始 TLS Socket 作为传输层，单活跃 WS + 定期轮换 + drain 机制替代原有双连接补充模型。WebSocket binary message 承载现有 tunnel 完整 frame（`length(2) + payload`），协议格式保持不变，仅 PING/PONG payload 兼容 Python/服务端的新行为。
 
 **Tech Stack:** Kotlin + OkHttp 4.x WebSocket + Coroutines + Jetpack DataStore
 
@@ -134,6 +134,10 @@ data class ServerConfig(
 ) { ... }
 ```
 
+语义约束：
+- 生产连接固定使用 `wss://`；`useTls` 作为旧配置兼容字段保留，但 WebSocket tunnel 实现默认忽略它并在代码注释中说明。
+- 如果后续测试确实需要明文 `ws://`，必须显式增加测试专用配置，不要让 UI 的 `useTls=false` 静默改变生产行为。
+
 **Step 3: 更新 DataStoreConfigDataSource**
 
 添加新 key 的序列化/反序列化：
@@ -157,7 +161,7 @@ prefs[KEY_WS_PATH] = config.wsPath
 prefs[KEY_HTTP_DISGUISE] = config.httpDisguise
 ```
 
-注意：`customHeaders` 暂不持久化到 DataStore（使用频率低，先在代码中硬编码，后续如有需要再加 UI）。
+注意：`customHeaders` 暂不持久化到 DataStore（使用频率低，先在代码中硬编码，后续如有需要再用 JSON string 持久化）。设计文档和实现必须保持这个语义一致。
 
 **Step 4: 验证编译**
 
@@ -198,15 +202,25 @@ interface FrameSender {
     suspend fun sendFrame(encoded: ByteArray): Boolean
     /** 关闭 WebSocket */
     fun close(code: Int, reason: String)
+    /** 当前连接是否可发送 */
+    val isOpen: Boolean
 }
+
+/** Thrown when the server responds with AUTH_FAIL. */
+class TunnelAuthFailedException(message: String) : Exception(message)
+
+/** Thrown when the server responds with ERROR during the authentication phase. */
+class TunnelOccupiedException(message: String) : Exception(message)
+
+/** Thrown when an unexpected or malformed frame is received during authentication. */
+class TunnelProtocolException(message: String) : Exception(message)
 
 /**
  * OkHttp WebSocket 连接封装。
  *
  * @param url             wss://host:port/path
  * @param authPayload     AUTH 帧的编码字节
- * @param headers         自定义 HTTP headers (可为空)
- * @param allowInsecure   是否信任自签证书
+ * @param customHeaders   自定义 HTTP headers (可为空)
  * @param onAuthSuccess   认证成功回调 (ws, sender) -> Unit
  * @param onFrame         认证后帧回调
  * @param onDisconnect    断连回调 (error: Throwable?) -> Unit
@@ -214,35 +228,40 @@ interface FrameSender {
 class TunnelWebSocket(
     private val url: String,
     private val authPayload: ByteArray,
-    private val headers: Map<String, String>,
-    private val allowInsecure: Boolean,
+    private val customHeaders: Map<String, String>,
     private val onAuthSuccess: (FrameSender) -> Unit,
     private val onFrame: (ByteArray) -> Unit,
     private val onDisconnect: (Throwable?) -> Unit,
 ) : FrameSender {
 
-    private val authCompleted = CompletableDeferred<Unit>()
     private val sendMutex = Mutex()
     
     @Volatile private var webSocket: WebSocket? = null
-    @Volatile var isOpen: Boolean = false
+    @Volatile override var isOpen: Boolean = false
         private set
 
     /** 是否为 authenticated 状态（认证已通过） */
-    val isAuthenticated: Boolean get() = authCompleted.isCompleted
+    @Volatile private var authenticated: Boolean = false
 }
 ```
 
-**Step 2: 实现 OkHttpClient 创建（trust-all SSL）**
+**Step 2: 实现 OkHttpClient 创建（trust-all SSL + VPN protect）**
 
 ```kotlin
     companion object {
-        fun createOkHttpClient(allowInsecure: Boolean): OkHttpClient {
+        fun createOkHttpClient(
+            allowInsecure: Boolean,
+            protect: ((java.net.Socket) -> Boolean)?,
+        ): OkHttpClient {
             val builder = OkHttpClient.Builder()
                 .pingInterval(null) // 不用 OkHttp 内置 ping
                 .readTimeout(0, TimeUnit.MILLISECONDS) // 无超时，由应用层心跳管理
                 .writeTimeout(30, TimeUnit.SECONDS)
                 .connectTimeout(10, TimeUnit.SECONDS)
+
+            if (protect != null) {
+                builder.socketFactory(ProtectedSocketFactory(protect))
+            }
 
             if (allowInsecure) {
                 val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
@@ -259,21 +278,52 @@ class TunnelWebSocket(
             return builder.build()
         }
     }
+
+class ProtectedSocketFactory(
+    private val protect: (java.net.Socket) -> Boolean,
+) : javax.net.SocketFactory() {
+    private val delegate = javax.net.SocketFactory.getDefault()
+
+    private fun protectSocket(socket: java.net.Socket): java.net.Socket {
+        val ok = protect(socket)
+        if (!ok) {
+            android.util.Log.w("TunnelWebSocket", "VpnService.protect() returned false; continuing with app-level VPN exclusion")
+        }
+        return socket
+    }
+
+    override fun createSocket(): java.net.Socket = protectSocket(delegate.createSocket())
+    override fun createSocket(host: String, port: Int): java.net.Socket =
+        protectSocket(delegate.createSocket()).apply { connect(java.net.InetSocketAddress(host, port)) }
+    override fun createSocket(host: String, port: Int, localHost: java.net.InetAddress, localPort: Int): java.net.Socket =
+        protectSocket(delegate.createSocket()).apply {
+            bind(java.net.InetSocketAddress(localHost, localPort))
+            connect(java.net.InetSocketAddress(host, port))
+        }
+    override fun createSocket(host: java.net.InetAddress, port: Int): java.net.Socket =
+        protectSocket(delegate.createSocket()).apply { connect(java.net.InetSocketAddress(host, port)) }
+    override fun createSocket(address: java.net.InetAddress, port: Int, localAddress: java.net.InetAddress, localPort: Int): java.net.Socket =
+        protectSocket(delegate.createSocket()).apply {
+            bind(java.net.InetSocketAddress(localAddress, localPort))
+            connect(java.net.InetSocketAddress(address, port))
+        }
+}
 ```
+
+`ProtectedSocketFactory.createSocket()` 是 OkHttp 常用路径；其它 overload 是兼容实现。关键约束是 raw socket 必须在 connect 前调用 `VpnService.protect()`，保留旧 `RealTunnelSocket` 的防自捕获行为。
 
 **Step 3: 实现 connect() 和 WebSocketListener**
 
 ```kotlin
-    suspend fun connect(client: OkHttpClient) {
-        val requestBuilder = Request.Builder().url(url)
-        headers.forEach { (k, v) -> requestBuilder.addHeader(k, v) }
-        val request = requestBuilder.build()
+    suspend fun connect(client: OkHttpClient): FrameSender {
+        val deferred = CompletableDeferred<FrameSender>()
 
-        val deferred = CompletableDeferred<Unit>()
+        val requestBuilder = Request.Builder().url(url)
+        customHeaders.forEach { (k, v) -> requestBuilder.addHeader(k, v) }
+        val request = requestBuilder.build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
-                // 立即发送 AUTH 帧
                 ws.send(ByteString.of(*authPayload))
             }
 
@@ -284,10 +334,15 @@ class TunnelWebSocket(
 
             override fun onMessage(ws: WebSocket, bytes: ByteString) {
                 val frameBytes = bytes.toByteArray()
-                if (!isAuthenticated) {
-                    handleAuthResponse(frameBytes)
-                } else {
+                if (!authenticated) {
+                    handleAuthResponse(frameBytes, deferred)
+                    return
+                }
+                try {
                     onFrame(frameBytes)
+                } catch (t: Throwable) {
+                    ws.close(1002, "bad frame")
+                    onDisconnect(t)
                 }
             }
 
@@ -297,99 +352,73 @@ class TunnelWebSocket(
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                 isOpen = false
-                if (!authCompleted.isCompleted) {
-                    authCompleted.completeExceptionally(IOException("Connection closed before auth"))
+                if (!deferred.isCompleted) {
+                    deferred.completeExceptionally(IOException("Closed before auth: $code $reason"))
                 }
                 onDisconnect(null)
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                 isOpen = false
-                if (!authCompleted.isCompleted) {
-                    authCompleted.completeExceptionally(t)
+                if (!deferred.isCompleted) {
+                    deferred.completeExceptionally(t)
                 }
                 onDisconnect(t)
             }
         })
 
         // 等待认证完成
-        deferred.await() // 实际由 handleAuthResponse 完成
-    }
-```
-
-**注意：** 上面的 `deferred` 是多余的。认证由 `handleAuthResponse` 通过 `authCompleted` 完成，`onAuthSuccess` 回调通知。需要简化为一个 `CompletableDeferred`。重写如下：
-
-```kotlin
-    suspend fun connect(client: OkHttpClient): Result<FrameSender> {
-        val deferred = CompletableDeferred<Result<FrameSender>>()
-
-        val requestBuilder = Request.Builder().url(url)
-        headers.forEach { (k, v) -> requestBuilder.addHeader(k, v) }
-        val request = requestBuilder.build()
-
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(ws: WebSocket, response: Response) {
-                ws.send(ByteString.of(*authPayload))
-            }
-
-            override fun onMessage(ws: WebSocket, text: String) {
-                ws.close(1003, "binary frames required")
-            }
-
-            override fun onMessage(ws: WebSocket, bytes: ByteString) {
-                val frameBytes = bytes.toByteArray()
-                if (!isAuthenticated) {
-                    val result = handleAuthResponse(frameBytes)
-                    if (result != null) {
-                        isOpen = true
-                        onAuthSuccess(this@TunnelWebSocket)
-                        deferred.complete(Result.success(this@TunnelWebSocket))
-                    }
-                } else {
-                    onFrame(frameBytes)
-                }
-            }
-
-            override fun onClosed(ws: WebSocket, code: Int, reason: String) {
-                isOpen = false
-                if (!deferred.isCompleted) {
-                    deferred.complete(Result.failure(IOException("Closed: $code $reason")))
-                }
-                onDisconnect(null)
-            }
-
-            override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                isOpen = false
-                if (!deferred.isCompleted) {
-                    deferred.complete(Result.failure(t))
-                }
-                onDisconnect(t)
-            }
-        })
-
         return deferred.await()
     }
 
-    private fun handleAuthResponse(frameBytes: ByteArray): Unit? {
-        val frame = FrameCodec.decodePayload(frameBytes)
-        return when (frame) {
-            is Frame.AuthOk -> Unit // 认证成功
-            is Frame.AuthFail -> throw TunnelAuthFailedException("Authentication failed")
-            is Frame.Error -> throw TunnelOccupiedException(frame.message)
+    private fun handleAuthResponse(
+        frameBytes: ByteArray,
+        deferred: CompletableDeferred<FrameSender>,
+    ) {
+        val ws = webSocket
+        val frame = try {
+            // WebSocket message carries a complete tunnel frame: length(2) + payload.
+            FrameCodec.decode(frameBytes)
+        } catch (t: Throwable) {
+            ws?.close(1002, "bad auth frame")
+            if (!deferred.isCompleted) deferred.completeExceptionally(TunnelProtocolException(t.message ?: "Bad auth frame"))
+            return
+        }
+
+        when (frame) {
+            is Frame.AuthOk -> {
+                authenticated = true
+                isOpen = true
+                onAuthSuccess(this@TunnelWebSocket)
+                if (!deferred.isCompleted) deferred.complete(this@TunnelWebSocket)
+            }
+            is Frame.AuthFail -> {
+                ws?.close(1008, "auth failed")
+                if (!deferred.isCompleted) deferred.completeExceptionally(TunnelAuthFailedException("Authentication failed"))
+            }
+            is Frame.Error -> {
+                ws?.close(1008, "connection rejected")
+                if (!deferred.isCompleted) deferred.completeExceptionally(TunnelOccupiedException(frame.message))
+            }
             is Frame.Ping -> {
                 webSocket?.send(ByteString.of(*FrameCodec.encode(Frame.Pong(frame.payload))))
-                null // 还没认证完，继续等待
             }
-            else -> throw TunnelProtocolException("Unexpected frame during auth: ${frame::class.simpleName}")
+            else -> {
+                ws?.close(1002, "unexpected auth frame")
+                if (!deferred.isCompleted) {
+                    deferred.completeExceptionally(
+                        TunnelProtocolException("Unexpected frame during auth: ${frame::class.simpleName}")
+                    )
+                }
+            }
         }
     }
 
     override suspend fun sendFrame(encoded: ByteArray): Boolean {
         val ws = webSocket ?: return false
         return sendMutex.withLock {
-            if (!isOpen || ws == null) return@withLock false
+            if (!isOpen) return@withLock false
             ws.send(ByteString.of(*encoded))
-            true
         }
     }
 
@@ -530,17 +559,34 @@ rm android-client/app/src/main/java/com/blockproxy/android/tunnel/SendQueue.kt
 
 **Step 2: 清理相关引用**
 
-检查 `ReverseConnectHandler.kt` 中是否还有 `TunnelSocket` / `TargetSocketFactory` / `RealTargetSocket` 的使用。`RealTargetSocket`（纯 TCP 连接，用于客户端→目标服务器的连接）仍然保留，因为反向 CONNECT 仍然需要连接目标服务器。但需要把 `TunnelSocket` 接口用于目标连接的部分保留，只移除隧道连接的部分。
+检查 `ReverseConnectHandler.kt` 中是否还有 `TunnelSocket` / `TargetSocketFactory` / `RealTargetSocket` 的使用。`RealTargetSocket`（纯 TCP 连接，用于客户端→目标服务器的连接）仍然保留，因为反向 CONNECT 仍然需要连接目标服务器。但它不能再 `implements TunnelSocket`，因为旧 `TunnelSocket` 会随 `TunnelConnection.kt` 删除。
 
 实际上 `TunnelSocket` 接口目前被两个用途共用：
 - 隧道连接（`RealTunnelSocket` — TLS）→ 改为 OkHttp WebSocket，**删除**
-- 目标连接（`RealTargetSocket` — 纯 TCP）→ 保留，用于反向 CONNECT
+- 目标连接（`RealTargetSocket` — 纯 TCP）→ 从旧 `TunnelSocket` 中拆出来，继续用于反向 CONNECT
 
 因此需要：
-1. 把 `TunnelSocket` 重命名或拆分。更简单的做法：`ReverseConnectHandler` 中的目标连接直接用 `java.net.Socket` 或保留 `RealTargetSocket` 作为独立类（不实现 `TunnelSocket` 接口）。
-2. 在 `ReverseConnectHandler` 中把目标连接改为直接用 Socket。
+1. 把旧 `TunnelSocket` 拆分为 tunnel 传输和 target 连接两个概念。
+2. tunnel 传输改为 `FrameSender` / `TunnelWebSocket`。
+3. target 连接保留独立的 `RealTargetSocket` 及其工厂，继续服务反向 CONNECT；不要保留旧 `TunnelSocket` 名称。
 
-**实际方案：** 将 `TunnelSocket` 接口和 `RealTunnelSocket` 一起删除。`RealTargetSocket` 改为独立类，不再实现已删除的接口。`ReverseConnectHandler` 直接使用 `RealTargetSocket`。
+**实际方案：** 将隧道传输侧的 `TunnelSocketFactory` / `RealTunnelSocket` / `TunnelConnection` 删除。目标连接侧不要删除，并做如下迁移：
+
+1. `RealTargetSocket` 改为独立类，不再实现旧 `TunnelSocket`。为保持现有测试注入能力，可以新增 target-only 接口，例如：
+
+```kotlin
+interface TargetSocket {
+    suspend fun connect(host: String, port: Int, timeoutMs: Long)
+    suspend fun read(buffer: ByteArray): Int
+    suspend fun write(bytes: ByteArray)
+    fun close()
+}
+```
+
+2. `RealTargetSocket` 可以实现 `TargetSocket`，但不能实现旧 `TunnelSocket`；继续在 connect 前调用 `protect(socket)`。
+3. `TargetSocketFactory.create()` 返回 `TargetSocket`。
+4. `ReverseConnectHandler` 和测试只依赖 `TargetSocket`，不再依赖旧的 `TunnelSocket`。
+5. `TunnelAuthFailedException` / `TunnelOccupiedException` / `TunnelProtocolException` 从 `TunnelConnection.kt` 迁移到 `TunnelWebSocket.kt`，因为认证阶段异常由 WebSocket 封装触发。
 
 **Step 3: 触摸编译，修复引用**
 
@@ -578,6 +624,7 @@ class TunnelClient(
     private val credentials: TunnelCredentials,
     private val clientScope: CoroutineScope,
     private val targetSocketFactory: TargetSocketFactory,
+    private val protect: ((java.net.Socket) -> Boolean)? = null,
 ) {
     companion object {
         const val INITIAL_BACKOFF_MS = 1_000L
@@ -599,7 +646,10 @@ class TunnelClient(
     private val handler = ReverseConnectHandler(clientScope, targetSocketFactory)
     private val forwardRegistry = ForwardSessionRegistry(clientScope)
 
-    private val okHttpClient = TunnelWebSocket.createOkHttpClient(config.allowInsecure)
+    private val okHttpClient = TunnelWebSocket.createOkHttpClient(
+        allowInsecure = config.allowInsecure,
+        protect = protect,
+    )
     private val secureRandom = SecureRandom()
 
     // WebSocket 状态
@@ -614,8 +664,8 @@ class TunnelClient(
     private var heartbeatJob: Job? = null
     private var rotationJob: Job? = null
 
-    // Forward reqid 分配
-    @Volatile private var forwardReqidCounter = FORWARD_REQID_START
+    private val stateMutex = Mutex()
+    private val heartbeatStates = java.util.concurrent.ConcurrentHashMap<FrameSender, HeartbeatState>()
 
     // ── Public API ───────────────
 
@@ -644,16 +694,17 @@ class TunnelClient(
 
     private suspend fun heartbeatLoop() { ... }
 
-    // ── Forward ─────────────────
-
-    private fun allocateForwardReqid(): Int { ... }
-
     // ── Drain 状态 ──────────────
 
     private fun getDrainState(sender: FrameSender): DrainState { ... }
     private fun hasActiveRequests(sender: FrameSender): Boolean { ... }
     private fun isStillDraining(sender: FrameSender, idleTimeoutS: Long): Boolean { ... }
 }
+
+private data class HeartbeatState(
+    @Volatile var pendingPayload: ByteArray? = null,
+    @Volatile var lastPongAt: Long = System.currentTimeMillis(),
+)
 ```
 
 **关键实现要点（对照 Python client/tunnel_client.py）**:
@@ -662,8 +713,9 @@ class TunnelClient(
 
 2. **`establishConnection()`** (对应 `_establish_connection`): 
    - 若 `config.httpDisguise` → 调用 `performHttpDisguise()`
-   - 构建 `wss://host:port/path` URL
+   - 构建 `wss://host:port/path` URL；生产路径固定使用 `wss://`
    - `TunnelWebSocket.connect(okHttpClient)` → 等待认证完成
+   - 认证成功后为该 sender 初始化 `heartbeatStates[sender]`
    - 返回 `FrameSender`
 
 3. **`performHttpDisguise()`** (对应 `_perform_http_disguise`):
@@ -675,24 +727,30 @@ class TunnelClient(
 4. **`handleFrames()`** (对应 `_handle_requests`):
    - 通过 `TunnelWebSocket.onFrame` 回调接收帧
    - 使用 `Channel<ByteArray>` 桥接回调到协程循环
-   - 分发 FRAME_CONNECT / CONNECT_OK / CONNECT_FAILED / DATA / CLOSE / PONG
+   - 每个 `ByteArray` 必须使用 `FrameCodec.decode(frameBytes)` 解码完整 tunnel frame
+   - 分发 FRAME_CONNECT / CONNECT_OK / CONNECT_FAILED / DATA / CLOSE / PING / PONG
+   - 收到 PING：立即在同一 sender 上发送 `Frame.Pong(frame.payload)`
+   - 收到 PONG：读取 `heartbeatStates[sender].pendingPayload`，payload 匹配时更新 `lastPongAt` 并清空 pending；不匹配时忽略，不要错误更新健康状态
+   - 收到 CONNECT：如果 `sender === drainingWs`，发送 `CONNECT_FAILED` 并拒绝新反向请求；否则交给 `ReverseConnectHandler`
 
 5. **`rotationLoop()`** (对应 `_rotation_loop`):
    - `delay(random(600000, 1800000))` → 调用 `rotationCycle()`
 
 6. **`rotationCycle()`** (对应 `_rotation_cycle`):
    - 建立新候选连接 → `candidateWs`
-   - 旧 `activeWs` → `drainingWs`，新候选 → `activeWs`
+   - 在 `stateMutex` 内原子切换：旧 `activeWs` → `drainingWs`，新候选 → `activeWs`
    - `delay(drain_timeout * 1000)` →
    - 轮询 `isStillDraining(drainingWs, drainIdleTimeoutS)` → 等待排空
-   - 关闭 `drainingWs`
+   - 关闭 `drainingWs`，清理其 heartbeat state 和 session
 
 7. **`heartbeatLoop()`** (对应 `_heartbeat_loop`):
    - `delay(random(15000, 40000))` →
-   - 生成随机 8-40 字节 payload →
-   - `activeWs?.sendFrame(encode(FRAME_PING, payload=payload))` →
-   - 记录 `pendingPingPayload = payload`
-   - 在 `handleFrames` 中收到 PONG 时校验 payload 匹配
+   - 对 `activeWs` 和 `drainingWs` 分别执行：
+     - 如果 `now - heartbeatStates[sender].lastPongAt > heartbeat_timeout`，关闭该 sender
+     - 生成随机 8-40 字节 payload
+     - 记录到该 sender 的 `HeartbeatState.pendingPayload`
+     - `sender.sendFrame(FrameCodec.encode(Frame.Ping(payload)))`
+   - 不使用全局 pending payload，避免 active/draining 同时心跳互相覆盖
 
 8. **Drain 状态** (对应 `_get_ws_drain_state`):
    - 合并 `ReverseConnectHandler.getDrainState()` + `ForwardSessionRegistry.getDrainState()`
@@ -727,10 +785,13 @@ val client = TunnelClient(
     credentials = credentials,
     clientScope = scope,
     targetSocketFactory = targetSocketFactory,
+    protect = protectCallback,
 )
 ```
 
 删除 `tunnelSocketFactory` 相关代码（不再需要 `TunnelSocketFactory` / `RealTunnelSocket`）。
+
+同时更新注释：`protectCallback` 不只用于 direct/target socket，也必须传入 OkHttp tunnel WebSocket 的 protected socket factory，保留旧 TLS tunnel connect 前 `VpnService.protect()` 的行为。
 
 **Step 2: 验证编译**
 
@@ -788,10 +849,64 @@ fun pingWithoutPayload() {
 - `ForwardSessionRegistryTest.kt`：适配新 API
 - 删除 `FrameExtractorTest.kt` 和 `SendQueueTest.kt`
 - 重命名 `TunnelConnectionTest.kt` → `TunnelWebSocketTest.kt`
+- 新增 `ProtectedSocketFactoryTest` 或等价测试：创建 socket 时会调用 protect callback，protect 返回 false 不抛异常但记录 warning
+- 更新 `TunnelProtocolIntegrationTest.kt`：旧 plain TCP server 不再适用，改成 OkHttp MockWebServer WebSocket 或启动真实 Node `tunnel/server.js`
 
-**Step 3: 运行测试**
+**Step 3: 新增协议兼容测试**
+
+至少覆盖：
+
+```kotlin
+@Test
+fun websocketMessageUsesFullTunnelFrame() {
+    val encoded = FrameCodec.encode(Frame.Ping(byteArrayOf(1, 2, 3)))
+    val decoded = FrameCodec.decode(encoded)
+    assertTrue(decoded is Frame.Ping)
+    assertArrayEquals(byteArrayOf(1, 2, 3), (decoded as Frame.Ping).payload)
+}
+```
+
+并增加失败用例：认证阶段如果误用 `decodePayload(encoded)` 应抛错，防止回归到错误解码路径。
+
+**Step 4: 新增 WebSocket 认证测试**
+
+覆盖：
+- server 返回 `AUTH_OK` → `connect()` 返回 sender 且 `isOpen=true`
+- server 返回 `AUTH_FAIL` → `connect()` 抛 `TunnelAuthFailedException`
+- server 返回 `ERROR` → `connect()` 抛 `TunnelOccupiedException`
+- server 返回 malformed frame → `connect()` 抛 `TunnelProtocolException`
+- server 发送文本帧 → Android 关闭连接，code 1003
+
+**Step 5: 新增心跳测试**
+
+覆盖：
+- 收到服务端 `PING(payload)` 后，同一 sender 发送 `PONG(payload)`
+- Android 主动发送 `PING(payload)` 后，收到匹配 `PONG(payload)` 才更新该 sender 的 `lastPongAt`
+- active/draining 同时存在时，两个 sender 的 pending payload 互不覆盖
+- 超过 `heartbeat_timeout` 未收到匹配 PONG 时，只关闭超时的 sender
+
+**Step 6: 新增 rotation/drain 测试**
+
+覆盖：
+- rotation candidate 认证失败时，旧 active 保持可用
+- candidate 认证成功后，新 forward CONNECT 使用新 active
+- 旧 draining 上已有 reverse/forward session 的 DATA/CLOSE 继续路由
+- draining 无活跃请求或 idle timeout 后关闭并清理 session
+- draining 收到新 reverse CONNECT 时返回 CONNECT_FAILED
+
+**Step 7: 运行测试**
 
 运行: `cd android-client && ./gradlew :app:testDebugUnitTest 2>&1 | tail -20`
+
+**Step 8: Android 手工验收**
+
+1. 启动 block-proxy 服务端，启用 WebSocket tunnel server。
+2. 安装 debug APK，配置 serverHost/serverPort/credentials。
+3. 启动 VPN，确认 Android 状态进入 Connected，服务端日志显示 WebSocket client authenticated。
+4. 访问一条 DIRECT 规则目标，确认不走 tunnel。
+5. 访问一条 PROXY 规则目标，确认 forward CONNECT 通过 tunnel。
+6. 在服务端触发 reverse CONNECT，确认 Android 能连接内网目标并回传数据。
+7. 临时缩短 rotation interval，确认新连接认证、旧连接 drain、旧连接关闭全过程无请求中断。
 
 ---
 
