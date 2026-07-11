@@ -1,5 +1,25 @@
-const tls = require('tls');
+const https = require('https');
+const crypto = require('crypto');
+const { WebSocketServer, WebSocket } = require('ws');
 const { FRAME_TYPES, encodeFrame, decodeFrame } = require('./protocol');
+
+const DEFAULT_WS_PATH = '/ws';
+const DEFAULT_HEARTBEAT_MIN = 15;
+const DEFAULT_HEARTBEAT_MAX = 40;
+const DEFAULT_HEARTBEAT_TIMEOUT = 60;
+const DEFAULT_ROTATION_DRAIN_TIMEOUT = 10;
+
+const FAVICON_ICO = Buffer.from([
+  0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x01, 0x01,
+  0x00, 0x00, 0x01, 0x00, 0x20, 0x00, 0x28, 0x00,
+  0x00, 0x00, 0x16, 0x00, 0x00, 0x00, 0x28, 0x00,
+  0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00,
+  0x00, 0x00, 0x01, 0x00, 0x20, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x22, 0x7a,
+  0xa8, 0xff, 0x00, 0x00, 0x00, 0x00
+]);
 
 class TunnelServer {
   constructor(options) {
@@ -7,35 +27,42 @@ class TunnelServer {
     this.cert = options.cert;
     this.key = options.key;
     this.credentials = options.credentials;
+    this.wsPath = options.wsPath || options.tunnel_ws_path || DEFAULT_WS_PATH;
+    this.heartbeatMin = options.heartbeatMin || options.tunnel_heartbeat_min || DEFAULT_HEARTBEAT_MIN;
+    this.heartbeatMax = options.heartbeatMax || options.tunnel_heartbeat_max || DEFAULT_HEARTBEAT_MAX;
+    this.heartbeatTimeout = options.heartbeatTimeout || options.tunnel_heartbeat_timeout || DEFAULT_HEARTBEAT_TIMEOUT;
+    this.rotationDrainTimeout = options.rotationDrainTimeout || options.tunnel_rotation_drain_timeout || DEFAULT_ROTATION_DRAIN_TIMEOUT;
     this.onConnect = options.onConnect || (() => {});
     this.onDisconnect = options.onDisconnect || (() => {});
 
     this._frameHandlers = [];
     this._clientSockets = new Set();
     this._server = null;
-
-    // Per-socket receive buffer: Map<socket, Buffer>
-    this._socketBuffers = new Map();
-
-    // Heartbeat state
-    this._pingTimer = null;
-    this._socketPongTimes = new Map();
+    this._wss = null;
+    this._clientWs = null;
+    this._records = new Map();
+    this._heartbeatTimer = null;
   }
 
   start() {
-    return new Promise((resolve) => {
-      const tlsOptions = {
+    return new Promise((resolve, reject) => {
+      this._server = https.createServer({
         key: this.key,
         cert: this.cert,
         minVersion: 'TLSv1.2',
-        sessionTimeout: 300
-      };
+        sessionTimeout: 300,
+      }, (req, res) => this._handleHttpRequest(req, res));
 
-      this._server = tls.createServer(tlsOptions, (socket) => {
-        this._handleConnection(socket);
+      this._wss = new WebSocketServer({
+        server: this._server,
+        path: this.wsPath,
+        maxPayload: 2 ** 16,
       });
+      this._wss.on('connection', (ws, req) => this._handleWsConnection(ws, req));
 
+      this._server.once('error', reject);
       this._server.listen(this.port, () => {
+        this._server.removeListener('error', reject);
         const localIp = require('../proxy/domain').getLocalIp();
         console.log(`✅ \x1b[32m隧道服务启动，IP ${localIp}, 端口 ${this.port}\x1b[0m`);
         resolve();
@@ -43,186 +70,325 @@ class TunnelServer {
     });
   }
 
-  stop() {
+  async stop() {
     this._stopHeartbeat();
-    for (const socket of this._clientSockets) {
-      socket.destroy();
+
+    const sockets = [...this._records.keys()];
+    for (const ws of sockets) {
+      this._closeWs(ws, 1001, 'server stopping');
     }
+    setTimeout(() => {
+      for (const ws of sockets) {
+        if (ws.readyState !== WebSocket.CLOSED) ws.terminate();
+      }
+    }, 50).unref();
+    this._records.clear();
     this._clientSockets.clear();
-    // Destroy all pending sockets
-    for (const [socket] of this._socketBuffers) {
-      socket.destroy();
-    }
-    this._socketBuffers.clear();
-    if (!this._server) return Promise.resolve();
+    this._clientWs = null;
 
-    const server = this._server;
-    this._server = null;
-    return new Promise((resolve) => {
-      server.close(() => resolve());
-    });
+    const closeWss = this._wss
+      ? new Promise((resolve) => {
+        const wss = this._wss;
+        this._wss = null;
+        const timer = setTimeout(resolve, 500);
+        wss.close(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      })
+      : Promise.resolve();
+
+    const closeServer = this._server
+      ? new Promise((resolve) => {
+        const server = this._server;
+        this._server = null;
+        const timer = setTimeout(resolve, 500);
+        server.close(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      })
+      : Promise.resolve();
+
+    await Promise.all([closeWss, closeServer]);
   }
 
-  _handleConnection(socket) {
-    socket.setNoDelay(true);
-    socket.setKeepAlive(true, 60000);
-
-    // Per-socket buffer
-    this._socketBuffers.set(socket, Buffer.alloc(0));
-
-    socket.on('data', (chunk) => {
-      const buf = this._socketBuffers.get(socket);
-      if (!buf) return;
-      this._socketBuffers.set(socket, Buffer.concat([buf, chunk]));
-      this._processBuffer(socket);
-    });
-
-    socket.on('close', () => {
-      this._socketBuffers.delete(socket);
-      this._socketPongTimes.delete(socket);
-      const wasAuthenticated = this._clientSockets.has(socket);
-      this._clientSockets.delete(socket);
-      if (wasAuthenticated) {
-        console.log(`[Tunnel] Client disconnected (${this._clientSockets.size} remaining)`);
-        this.onDisconnect(socket);
-      }
-      if (this._clientSockets.size === 0) {
-        this._stopHeartbeat();
-      }
-    });
-
-    socket.on('error', (err) => {
-      console.error('[Tunnel] Socket error:', err.message);
-    });
-  }
-
-  _processBuffer(socket) {
-    let buf = this._socketBuffers.get(socket);
-    if (!buf) return;
-
-    while (buf.length >= 2) {
-      const length = buf.readUInt16BE(0);
-      if (buf.length < 2 + length) break;
-
-      const frameData = buf.slice(0, 2 + length);
-      buf = buf.slice(2 + length);
-      this._socketBuffers.set(socket, buf);
-
-      try {
-        const frame = decodeFrame(frameData);
-
-        if (frame.type === FRAME_TYPES.AUTH && !this._clientSockets.has(socket)) {
-          this._handleAuth(socket, frame);
-        } else if (this._clientSockets.has(socket)) {
-          // Per-socket pong tracking
-          if (frame.type === FRAME_TYPES.PONG) {
-            this._socketPongTimes.set(socket, Date.now());
-          }
-          // Forward to handlers with socket reference
-          this._frameHandlers.forEach(handler => handler(frame, socket));
-        }
-      } catch (err) {
-        console.error('[Tunnel] Frame decode error:', err.message);
-      }
-    }
-  }
-
-  _handleAuth(socket, frame) {
-    const { username, password } = frame;
-
-    if (this._clientSockets.size >= 2) {
-      socket.write(encodeFrame({ type: FRAME_TYPES.ERROR, message: 'Tunnel connection limit (2)' }));
-      socket.destroy();
+  _handleHttpRequest(req, res) {
+    if (req.url === '/' || req.url === '/index.html') {
+      const body = '<!doctype html><html><head><title>OK</title></head><body>OK</body></html>';
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'content-length': Buffer.byteLength(body),
+        'cache-control': 'no-store',
+      });
+      res.end(body);
       return;
     }
 
-    if (username === this.credentials.username &&
-        password === this.credentials.password) {
-      this._clientSockets.add(socket);
-      // 为新连接初始化 pong 时间（心跳已启动时）
-      if (this._pingTimer) {
-        this._socketPongTimes.set(socket, Date.now());
+    if (req.url === '/favicon.ico') {
+      res.writeHead(200, {
+        'content-type': 'image/x-icon',
+        'content-length': FAVICON_ICO.length,
+        'cache-control': 'public, max-age=86400',
+      });
+      res.end(FAVICON_ICO);
+      return;
+    }
+
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('Not found');
+  }
+
+  _handleWsConnection(ws, req) {
+    const socket = req.socket;
+    socket.setNoDelay(true);
+    socket.setKeepAlive(true, 60000);
+
+    const record = {
+      ws,
+      authenticated: false,
+      state: 'candidate',
+      remoteAddress: socket.remoteAddress,
+      remotePort: socket.remotePort,
+      connectedAt: Date.now(),
+      pongTime: Date.now(),
+      pendingPingPayload: null,
+      drainTimer: null,
+    };
+    this._records.set(ws, record);
+
+    ws.on('message', (data, isBinary) => {
+      if (!isBinary) {
+        this._closeWs(ws, 1003, 'binary frames required');
+        return;
       }
-      socket.write(encodeFrame({ type: FRAME_TYPES.AUTH_OK }));
-      console.log(`[Tunnel] Client authenticated: ${socket.remoteAddress} (${this._clientSockets.size}/2)`);
-      if (this._clientSockets.size === 1) {
-        this._startHeartbeat();
+      this._handleWsMessage(ws, Buffer.from(data));
+    });
+
+    ws.on('close', () => this._handleWsClose(ws));
+    ws.on('error', (err) => {
+      console.error('[Tunnel] WebSocket error:', err.message);
+    });
+  }
+
+  _handleWsMessage(ws, data) {
+    const record = this._records.get(ws);
+    if (!record) return;
+
+    let frame;
+    try {
+      frame = decodeFrame(data);
+    } catch (err) {
+      console.error('[Tunnel] Frame decode error:', err.message);
+      this._closeWs(ws, 1002, 'bad frame');
+      return;
+    }
+
+    if (!record.authenticated) {
+      if (frame.type !== FRAME_TYPES.AUTH) {
+        this._closeWs(ws, 1008, 'auth required');
+        return;
       }
-      this.onConnect(socket, socket.remoteAddress, socket.remotePort);
-    } else {
-      socket.write(encodeFrame({ type: FRAME_TYPES.AUTH_FAIL }));
-      socket.destroy();
+      this._handleAuth(record, frame);
+      return;
+    }
+
+    if (frame.type === FRAME_TYPES.PONG) {
+      if (!record.pendingPingPayload || frame.payload.equals(record.pendingPingPayload)) {
+        record.pongTime = Date.now();
+        record.pendingPingPayload = null;
+      }
+      return;
+    }
+
+    this._frameHandlers.forEach(handler => handler(frame, ws));
+  }
+
+  _handleAuth(record, frame) {
+    const { ws } = record;
+    const { username, password } = frame;
+
+    if (username !== this.credentials.username || password !== this.credentials.password) {
+      this._sendWsFrame(ws, { type: FRAME_TYPES.AUTH_FAIL }).finally(() => {
+        this._closeWs(ws, 1008, 'auth failed');
+      });
+      return;
+    }
+
+    const counts = this.getConnectionCounts();
+    if (counts.active >= 1 && counts.draining >= 1) {
+      this._sendWsFrame(ws, { type: FRAME_TYPES.ERROR, message: 'Tunnel connection limit (2)' }).finally(() => {
+        this._closeWs(ws, 1008, 'connection limit');
+      });
+      return;
+    }
+
+    record.authenticated = true;
+    record.pongTime = Date.now();
+    this._promoteRecord(record);
+
+    this._sendWsFrame(ws, { type: FRAME_TYPES.AUTH_OK }).then(() => {
+      console.log(`[Tunnel] Client authenticated: ${record.remoteAddress} (${record.state})`);
+      this._startHeartbeat();
+      this.onConnect(ws, record.remoteAddress, record.remotePort);
+    });
+  }
+
+  _promoteRecord(record) {
+    const oldActive = this._clientWs;
+    if (oldActive && oldActive !== record.ws) {
+      const oldRecord = this._records.get(oldActive);
+      if (oldRecord && oldRecord.authenticated) {
+        oldRecord.state = 'draining';
+        if (oldRecord.drainTimer) clearTimeout(oldRecord.drainTimer);
+        oldRecord.drainTimer = setTimeout(() => {
+          if (oldRecord.ws.readyState !== WebSocket.CLOSED) {
+            oldRecord.ws.terminate();
+          }
+        }, Math.max(1, this.rotationDrainTimeout * 1000));
+        oldRecord.drainTimer.unref();
+      }
+    }
+
+    record.state = 'active';
+    this._clientWs = record.ws;
+    this._clientSockets.add(record.ws);
+  }
+
+  _handleWsClose(ws) {
+    const record = this._records.get(ws);
+    if (!record) return;
+
+    this._records.delete(ws);
+    this._clientSockets.delete(ws);
+    if (record.drainTimer) {
+      clearTimeout(record.drainTimer);
+      record.drainTimer = null;
+    }
+    if (this._clientWs === ws) {
+      this._clientWs = null;
+    }
+
+    if (record.authenticated) {
+      console.log(`[Tunnel] Client disconnected (${this._clientSockets.size} remaining)`);
+      this.onDisconnect(ws);
+    }
+
+    if (this._clientSockets.size === 0) {
+      this._stopHeartbeat();
     }
   }
 
   sendFrame(frame, targetSocket) {
-    const data = encodeFrame(frame);
-
     if (targetSocket) {
       if (!this._clientSockets.has(targetSocket)) {
-        return Promise.resolve();
+        return Promise.resolve(false);
       }
-      return this._writeToSocket(targetSocket, data);
+      return this._sendWsFrame(targetSocket, frame);
     }
 
-    const sockets = [...this._clientSockets];
-    if (sockets.length === 0) {
-      throw new Error('No client connected');
+    if (!this._clientWs || !this._clientSockets.has(this._clientWs)) {
+      return Promise.resolve(false);
     }
-    return Promise.all(sockets.map(s => this._writeToSocket(s, data)));
+    return this._sendWsFrame(this._clientWs, frame);
   }
 
-  _writeToSocket(socket, data) {
+  _sendWsFrame(ws, frame) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return Promise.resolve(false);
+    }
+
+    const data = encodeFrame(frame);
     return new Promise((resolve) => {
-      if (socket.write(data)) {
-        resolve();
-      } else {
-        const onDrain = () => { socket.removeListener('close', onClose); resolve(); };
-        const onClose = () => { socket.removeListener('drain', onDrain); resolve(); };
-        socket.once('drain', onDrain);
-        socket.once('close', onClose);
-      }
+      ws.send(data, { binary: true }, (err) => {
+        if (err) {
+          console.warn('[Tunnel] WebSocket send failed:', err.message);
+          resolve(false);
+          return;
+        }
+        resolve(true);
+      });
     });
+  }
+
+  _closeWs(ws, code, reason) {
+    if (!ws) return;
+    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      try {
+        ws.close(code, reason);
+      } catch (err) {
+        ws.terminate();
+      }
+      setTimeout(() => {
+        if (ws.readyState !== WebSocket.CLOSED) ws.terminate();
+      }, 100).unref();
+    }
   }
 
   onFrame(handler) {
     this._frameHandlers.push(handler);
   }
 
-  // --- Heartbeat ---
+  getActiveSocket() {
+    return this._clientWs && this._clientWs.readyState === WebSocket.OPEN ? this._clientWs : null;
+  }
+
+  getConnectionCounts() {
+    const counts = { active: 0, candidate: 0, draining: 0, total: 0 };
+    for (const record of this._records.values()) {
+      if (!record.authenticated) continue;
+      counts.total += 1;
+      if (record.state === 'active') counts.active += 1;
+      if (record.state === 'candidate') counts.candidate += 1;
+      if (record.state === 'draining') counts.draining += 1;
+    }
+    return counts;
+  }
 
   _startHeartbeat() {
+    if (this._heartbeatTimer) return;
+    this._scheduleHeartbeat();
+  }
+
+  _scheduleHeartbeat() {
     this._stopHeartbeat();
-    for (const socket of this._clientSockets) {
-      this._socketPongTimes.set(socket, Date.now());
+    if (this._clientSockets.size === 0) return;
+
+    const minMs = Math.max(1, this.heartbeatMin * 1000);
+    const maxMs = Math.max(minMs, this.heartbeatMax * 1000);
+    const delay = minMs + Math.floor(Math.random() * (maxMs - minMs + 1));
+    this._heartbeatTimer = setTimeout(() => {
+      this._heartbeatTimer = null;
+      this._sendHeartbeat();
+      this._scheduleHeartbeat();
+    }, delay);
+    this._heartbeatTimer.unref();
+  }
+
+  _sendHeartbeat() {
+    const now = Date.now();
+    const timeoutMs = this.heartbeatTimeout * 1000;
+
+    for (const record of this._records.values()) {
+      if (!record.authenticated || (record.state !== 'active' && record.state !== 'draining')) continue;
+      if (now - record.pongTime > timeoutMs) {
+        console.log(`[Tunnel] Heartbeat timeout (${this.heartbeatTimeout}s no valid PONG), closing WS`);
+        this._closeWs(record.ws, 1001, 'heartbeat timeout');
+        continue;
+      }
+
+      const payloadLen = 8 + Math.floor(Math.random() * 33);
+      const payload = crypto.randomBytes(payloadLen);
+      record.pendingPingPayload = payload;
+      this._sendWsFrame(record.ws, { type: FRAME_TYPES.PING, payload }).catch(() => {});
     }
-
-    this._pingTimer = setInterval(() => {
-      if (this._clientSockets.size === 0) { this._stopHeartbeat(); return; }
-
-      const now = Date.now();
-      for (const socket of this._clientSockets) {
-        const lastPong = this._socketPongTimes.get(socket) || 0;
-        if (now - lastPong > 60000) {
-          console.log('[Tunnel] Heartbeat timeout (60s no PONG), destroying socket');
-          socket.destroy();
-        }
-      }
-
-      try {
-        this.sendFrame({ type: FRAME_TYPES.PING }).catch(() => {});
-      } catch (e) {
-        // ignore
-      }
-    }, 30000);
   }
 
   _stopHeartbeat() {
-    if (this._pingTimer) {
-      clearInterval(this._pingTimer);
-      this._pingTimer = null;
+    if (this._heartbeatTimer) {
+      clearTimeout(this._heartbeatTimer);
+      this._heartbeatTimer = null;
     }
-    this._socketPongTimes.clear();
   }
 }
 

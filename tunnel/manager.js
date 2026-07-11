@@ -8,7 +8,6 @@ class TunnelManager {
     this._tunnelDomains = config.tunnel_domains || [];
     this._proxyPort = config.proxy_port || 8001;
     this._reqidCounter = 0;
-    this._rrCounter = 0;
     this._activeRequests = new Map();
     this._connected = false;
     this._clientAddress = null;
@@ -40,10 +39,6 @@ class TunnelManager {
 
     const socket = this._selectSocket();
     if (!socket) return createErrorStream('tunnel-disconnected');
-
-    // 调试日志：显示选择了哪个连接
-    const socketId = [...this._server._clientSockets].indexOf(socket);
-    console.log(`[Tunnel] Forward ${host}:${port} (reqid will be allocated) -> connection ${socketId + 1}/${this._server._clientSockets.size}`);
 
     const reqid = this._allocateReqid();
     const stream = new TunnelDuplex(this, reqid);
@@ -84,10 +79,11 @@ class TunnelManager {
   }
 
   _selectSocket() {
-    const sockets = [...this._server._clientSockets];
-    if (sockets.length === 0) return null;
-    this._rrCounter++;
-    return sockets[this._rrCounter % sockets.length];
+    if (typeof this._server.getActiveSocket === 'function') {
+      return this._server.getActiveSocket();
+    }
+    const sockets = [...(this._server._clientSockets || [])];
+    return sockets[0] || null;
   }
 
   _allocateReqid() {
@@ -163,7 +159,7 @@ class TunnelManager {
       return;
     }
 
-    console.log(`[Tunnel] Forward CONNECT ${reqid}: ${targetHost}:${targetPort} (connection ${[...this._server._clientSockets].indexOf(socket) + 1}/${this._server._clientSockets.size})`);
+    console.log(`[Tunnel] Forward CONNECT ${reqid}: ${targetHost}:${targetPort}`);
 
     const stream = new TunnelDuplex(this, reqid);
     const entry = {
@@ -291,11 +287,17 @@ class TunnelManager {
   }
 
   getStatus() {
+    const counts = typeof this._server.getConnectionCounts === 'function'
+      ? this._server.getConnectionCounts()
+      : { total: (this._server._clientSockets || new Set()).size };
     return {
       connected: this._connected,
       clientAddress: this._clientAddress,
       activeRequests: this._activeRequests.size,
-      connections: this._server._clientSockets.size
+      connections: counts.total,
+      activeConnections: counts.active || 0,
+      candidateConnections: counts.candidate || 0,
+      drainingConnections: counts.draining || 0
     };
   }
 
@@ -317,8 +319,8 @@ class TunnelManager {
           this._activeRequests.delete(reqid);
         }
       }
-      // 根据剩余连接数更新状态
-      this._connected = this._server._clientSockets.size > 0;
+      const activeSocket = this._selectSocket();
+      this._connected = Boolean(activeSocket);
       if (!this._connected) {
         this._clientAddress = null;
       }

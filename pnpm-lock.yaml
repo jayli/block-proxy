@@ -51,8 +51,8 @@ importers:
         specifier: ^2.1.4
         version: 2.1.4
       ws:
-        specifier: ^5.1.0
-        version: 5.2.5
+        specifier: ^8.16.0
+        version: 8.18.3
     devDependencies:
       '@craco/craco':
         specifier: ^7.1.0
@@ -1777,9 +1777,6 @@ packages:
   async-function@1.0.0:
     resolution: {integrity: sha512-hsU18Ae8CDTR6Kgu9DYf0EbCr/a5iGL0rytQDobUcdpYOKokk8LEjVphnXkDkgpi0wYVsqrXuP0bZxJaTqdgoA==}
     engines: {node: '>= 0.4'}
-
-  async-limiter@1.0.1:
-    resolution: {integrity: sha512-csOlWGAcRFJaI6m+F2WKdnMKr4HhdhFVBk0H/QbJFMCr+uO2kwohwXQPxw/9OCxp05r5ghVBFSyioixx3gfkNQ==}
 
   async-task-mgr@1.1.0:
     resolution: {integrity: sha512-EJq1CfHr/b9pcdV1jV8jtg6/Hfti8cVZPIDYTjYbjD79M2AY/JnjY/Zf+hmRcr4fU1Bpy5Odr7EiXQt85YnCdA==}
@@ -5900,17 +5897,6 @@ packages:
   write-file-atomic@3.0.3:
     resolution: {integrity: sha512-AvHcyZ5JnSfq3ioSyjrBkH9yW4m7Ayk8/9My/DD9onKeu/94fwrMocemO2QAJFAlnnDN+ZDS+ZjAR5ua1/PV/Q==}
 
-  ws@5.2.5:
-    resolution: {integrity: sha512-G0gACQIjFmv7NqpaOAXEpe9nEtRYD6ZCy2Ip/B4EzR08qEwnf/wYJoQd3cjosPdnJsHkeh0j2tzOaIBZIOC1yA==}
-    peerDependencies:
-      bufferutil: ^4.0.1
-      utf-8-validate: ^5.0.2
-    peerDependenciesMeta:
-      bufferutil:
-        optional: true
-      utf-8-validate:
-        optional: true
-
   ws@7.5.11:
     resolution: {integrity: sha512-zS54Oen9bITtp7kp2XM3AydrCIq1D+HwJOuH+c+e4LfpL/lotP5osijd+UoMnxwAam1GN8R4KtLAyIrIcBNpiA==}
     engines: {node: '>=8.3.0'}
@@ -8178,8 +8164,6 @@ snapshots:
   ast-types-flow@0.0.8: {}
 
   async-function@1.0.0: {}
-
-  async-limiter@1.0.1: {}
 
   async-task-mgr@1.1.0: {}
 
@@ -13206,10 +13190,6 @@ snapshots:
       is-typedarray: 1.0.0
       signal-exit: 3.0.7
       typedarray-to-buffer: 3.1.5
-
-  ws@5.2.5:
-    dependencies:
-      async-limiter: 1.0.1
 
   ws@7.5.11: {}
 

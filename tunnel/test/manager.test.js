@@ -6,13 +6,34 @@ const TunnelManager = require('../manager');
 function createMockServer() {
   const handlers = [];
   const sentFrames = [];
+  const socketA = { name: 'active-a' };
+  const socketB = { name: 'active-b' };
+  const sockets = new Set([socketA]);
+  let activeSocket = socketA;
+
   return {
     onFrame: (h) => handlers.push(h),
-    sendFrame: (frame) => { sentFrames.push(frame); },
-    _emit: (frame, socket = {}) => handlers.forEach(h => h(frame, socket)),
+    sendFrame: (frame, socket) => {
+      sentFrames.push({ frame, socket });
+      return Promise.resolve(true);
+    },
+    getActiveSocket: () => activeSocket,
+    getConnectionCounts: () => ({
+      active: activeSocket ? 1 : 0,
+      candidate: 0,
+      draining: Math.max(0, sockets.size - (activeSocket ? 1 : 0)),
+      total: sockets.size,
+    }),
+    _setActiveSocket: (socket) => {
+      activeSocket = socket;
+      if (socket) sockets.add(socket);
+    },
+    _emit: (frame, socket = socketA) => handlers.forEach(h => h(frame, socket)),
     _handlers: handlers,
     _sentFrames: sentFrames,
-    _clientSockets: new Set([{}])
+    _clientSockets: sockets,
+    _socketA: socketA,
+    _socketB: socketB,
   };
 }
 
@@ -49,8 +70,9 @@ describe('TunnelManager.isAvailable', () => {
   });
 
   it('should be true after setConnected(true)', () => {
-    const manager = new TunnelManager(createMockServer(), { tunnel_domains: [] });
-    manager.setConnected(true, '127.0.0.1:12345');
+    const server = createMockServer();
+    const manager = new TunnelManager(server, { tunnel_domains: [] });
+    manager.setConnected(server._socketA, true, '127.0.0.1:12345');
     assert.equal(manager.isAvailable(), true);
   });
 });
@@ -59,7 +81,7 @@ describe('TunnelManager.forward', () => {
   it('should support multiple concurrent reverse connections', async () => {
     const server = createMockServer();
     const manager = new TunnelManager(server, { tunnel_domains: ['a.com'] });
-    manager.setConnected(true);
+    manager.setConnected(server._socketA, true);
 
     const stream1 = manager.forward('a.com', 443, () => {});
     assert.ok(stream1, 'First forward should return stream');
@@ -87,7 +109,6 @@ describe('TunnelManager.forward', () => {
       tunnel_domains: ['a.com'],
       proxy_port: 65535
     });
-    const socket = [...server._clientSockets][0];
 
     server._emit({
       type: 0x01,
@@ -95,11 +116,87 @@ describe('TunnelManager.forward', () => {
       atyp: 0x03,
       addr: 'a.com',
       port: 443
-    }, socket);
+    }, server._socketA);
 
     assert.deepEqual(server._sentFrames, [
-      { type: 0x81, reqid: 0x8001 }
+      { frame: { type: 0x81, reqid: 0x8001 }, socket: server._socketA }
     ]);
     assert.equal(manager.getStatus().activeRequests, 0);
+  });
+
+  it('selects the current active socket for new reverse forwards', () => {
+    const server = createMockServer();
+    const manager = new TunnelManager(server, { tunnel_domains: [] });
+    manager.setConnected(server._socketA, true);
+
+    const stream1 = manager.forward('first.test', 443, () => {});
+    server._setActiveSocket(server._socketB);
+    const stream2 = manager.forward('second.test', 443, () => {});
+
+    assert.equal(server._sentFrames[0].socket, server._socketA);
+    assert.equal(server._sentFrames[1].socket, server._socketB);
+    stream1.destroy();
+    stream2.destroy();
+  });
+
+  it('stores selected socket and sends existing DATA/CLOSE to the bound socket', async () => {
+    const server = createMockServer();
+    const manager = new TunnelManager(server, { tunnel_domains: [] });
+    manager.setConnected(server._socketA, true);
+
+    const stream = manager.forward('bound.test', 443, () => {});
+    const reqid = server._sentFrames[0].frame.reqid;
+
+    server._setActiveSocket(server._socketB);
+    await manager._sendData(reqid, Buffer.from('hello'));
+    manager._sendClose(reqid);
+
+    assert.equal(server._sentFrames[1].socket, server._socketA);
+    assert.equal(server._sentFrames[1].frame.type, 0x02);
+    assert.equal(server._sentFrames[2].socket, server._socketA);
+    assert.equal(server._sentFrames[2].frame.type, 0x03);
+    stream.destroy();
+  });
+
+  it('disconnect of one socket clears only entries bound to that socket', () => {
+    const server = createMockServer();
+    const manager = new TunnelManager(server, { tunnel_domains: [] });
+    manager.setConnected(server._socketA, true);
+
+    const streamA = manager.forward('a.test', 443, () => {});
+    server._setActiveSocket(server._socketB);
+    const streamB = manager.forward('b.test', 443, () => {});
+
+    manager.setConnected(server._socketA, false);
+
+    assert.equal(manager.getStatus().activeRequests, 1);
+    const [entry] = manager._activeRequests.values();
+    assert.equal(entry.socket, server._socketB);
+    streamA.destroy();
+    streamB.destroy();
+  });
+
+  it('is unavailable when no active socket exists even if a draining socket remains', () => {
+    const server = createMockServer();
+    const manager = new TunnelManager(server, { tunnel_domains: [] });
+    manager.setConnected(server._socketA, true);
+    server._setActiveSocket(null);
+
+    manager.setConnected(server._socketA, false);
+
+    assert.equal(manager.isAvailable(), false);
+  });
+
+  it('reports active and draining connection counts from the server', () => {
+    const server = createMockServer();
+    const manager = new TunnelManager(server, { tunnel_domains: [] });
+    manager.setConnected(server._socketA, true, 'client');
+    server._setActiveSocket(server._socketB);
+
+    const status = manager.getStatus();
+
+    assert.equal(status.connections, 2);
+    assert.equal(status.activeConnections, 1);
+    assert.equal(status.drainingConnections, 1);
   });
 });
