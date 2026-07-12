@@ -1,6 +1,6 @@
 {
   "name": "block-proxy",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "description": "Small-scale network mitm proxy filter",
   "bin": {
     "block-proxy": "bin/start.js"
