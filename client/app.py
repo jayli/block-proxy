@@ -603,7 +603,7 @@ class AppController(NSObject):
             "项目：block-proxy\n"
             "作者：lijing00333\n"
             "地址：https://github.com/jayli/block-proxy\n"
-            "版本：v0.1.3"
+            "版本：v0.1.4"
         )
         alert.addButtonWithTitle_("好")
         alert.runModal()

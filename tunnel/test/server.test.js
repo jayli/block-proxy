@@ -1,56 +1,140 @@
 const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const tls = require('tls');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const { WebSocket } = require('ws');
 const TunnelServer = require('../server');
 const { FRAME_TYPES, encodeFrame, decodeFrame } = require('../protocol');
 
-let portCounter = 18004;
+let portCounter = 18004 + (process.pid % 1000);
 function nextPort() { return portCounter++; }
 
 const cert = fs.readFileSync(path.join(__dirname, '../../cert/rootCA.crt'));
 const key = fs.readFileSync(path.join(__dirname, '../../cert/rootCA.key'));
 
+function getHttps(port, requestPath) {
+  return new Promise((resolve, reject) => {
+    const req = https.get({
+      hostname: 'localhost',
+      port,
+      path: requestPath,
+      rejectUnauthorized: false,
+    }, (res) => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve({
+        statusCode: res.statusCode,
+        headers: res.headers,
+        body: Buffer.concat(chunks),
+      }));
+    });
+    req.setTimeout(1000, () => req.destroy(new Error('HTTPS request timeout')));
+    req.on('error', reject);
+  });
+}
+
 function connectClient(port) {
   return new Promise((resolve, reject) => {
-    const socket = tls.connect(port, 'localhost', { rejectUnauthorized: false }, () => {
-      resolve(socket);
+    const ws = new WebSocket(`wss://localhost:${port}/ws`, {
+      rejectUnauthorized: false,
     });
-    socket.on('error', reject);
+    ws.once('open', () => resolve(ws));
+    ws.once('error', reject);
+    setTimeout(() => reject(new Error('WebSocket connect timeout')), 1000);
   });
 }
 
-function readFrame(socket) {
+function readFrame(ws) {
   return new Promise((resolve, reject) => {
-    let buf = Buffer.alloc(0);
-    const onData = (chunk) => {
-      buf = Buffer.concat([buf, chunk]);
-      if (buf.length >= 2) {
-        const len = buf.readUInt16BE(0);
-        if (buf.length >= 2 + len) {
-          socket.removeListener('data', onData);
-          try {
-            resolve(decodeFrame(buf));
-          } catch (e) {
-            reject(e);
-          }
-        }
+    const timer = setTimeout(() => reject(new Error('readFrame timeout')), 5000);
+    const onMessage = (chunk) => {
+      clearTimeout(timer);
+      ws.removeListener('message', onMessage);
+      try {
+        resolve(decodeFrame(Buffer.from(chunk)));
+      } catch (e) {
+        reject(e);
       }
     };
-    socket.on('data', onData);
-    setTimeout(() => reject(new Error('readFrame timeout')), 5000);
+    ws.on('message', onMessage);
   });
 }
 
-describe('TunnelServer', () => {
+function waitForClose(ws) {
+  return new Promise((resolve, reject) => {
+    if (ws.readyState === WebSocket.CLOSED) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => reject(new Error('WebSocket close timeout')), 1000);
+    ws.once('close', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+async function authenticate(ws, username = 'admin', password = 'secret') {
+  const pending = readFrame(ws);
+  ws.send(encodeFrame({
+    type: FRAME_TYPES.AUTH,
+    username,
+    password
+  }));
+  return pending;
+}
+
+function sendAuth(ws, username = 'admin', password = 'secret') {
+  ws.send(encodeFrame({
+    type: FRAME_TYPES.AUTH,
+    username,
+    password
+  }));
+}
+
+function closeWs(ws) {
+  if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+    ws.close();
+  }
+}
+
+async function expectPortReusable(port) {
+  const probe = new TunnelServer({
+    port,
+    cert, key,
+    credentials: { username: 'admin', password: 'secret' }
+  });
+  await probe.start();
+  await probe.stop();
+}
+
+async function readUntil(ws, predicate) {
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    const frame = await readFrame(ws);
+    if (predicate(frame)) return frame;
+  }
+  throw new Error('matching frame timeout');
+}
+
+async function waitForCondition(predicate, timeout = 1000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise(r => setTimeout(r, 10));
+  }
+  throw new Error('condition timeout');
+}
+
+describe('TunnelServer HTTP disguise', () => {
   let server;
 
   afterEach(async () => {
     if (server) { await server.stop(); server = null; }
   });
 
-  it('should authenticate client and send AUTH_OK', async () => {
+  it('GET / returns a plausible site homepage', async () => {
     const port = nextPort();
     server = new TunnelServer({
       port,
@@ -59,19 +143,102 @@ describe('TunnelServer', () => {
     });
     await server.start();
 
-    const socket = await connectClient(port);
-    socket.write(encodeFrame({
-      type: FRAME_TYPES.AUTH,
-      username: 'admin',
-      password: 'secret'
-    }));
+    const res = await getHttps(port, '/');
+    assert.equal(res.statusCode, 200);
+    assert.match(res.headers['content-type'], /text\/html/);
+    assert.match(res.headers['cache-control'], /no-cache|no-store|max-age/i);
+    assert.ok(Number(res.headers['content-length']) > 0);
+    const body = res.body.toString('utf8');
+    assert.match(body, /<!doctype html>/i);
+    assert.match(body, /Northstar Digital/i);
+    assert.match(body, /Insights/i);
+    assert.match(body, /<style>/i);
+    assert.doesNotMatch(body, /<title>OK<\/title>|<body>OK<\/body>/i);
+    assert.doesNotMatch(body, /tunnel|websocket|proxy/i);
+  });
 
-    const response = await readFrame(socket);
+  it('GET /index.html returns the same plausible homepage', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' }
+    });
+    await server.start();
+
+    const res = await getHttps(port, '/index.html');
+    assert.equal(res.statusCode, 200);
+    assert.match(res.headers['content-type'], /text\/html/);
+    assert.match(res.body.toString('utf8'), /Northstar Digital/i);
+  });
+
+  it('GET unknown path is not disguised', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' }
+    });
+    await server.start();
+
+    const res = await getHttps(port, '/products/2026/report.html');
+    assert.equal(res.statusCode, 404);
+    assert.match(res.headers['content-type'], /text\/plain/);
+    assert.equal(res.body.toString('utf8'), 'Not found');
+  });
+});
+
+describe('TunnelServer WebSocket', () => {
+  let server;
+
+  afterEach(async () => {
+    if (server) { await server.stop(); server = null; }
+  });
+
+  it('authenticates client and sends AUTH_OK over /ws', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' }
+    });
+    await server.start();
+
+    const ws = await connectClient(port);
+    const response = await authenticate(ws);
     assert.equal(response.type, FRAME_TYPES.AUTH_OK);
-    socket.destroy();
+    closeWs(ws);
   });
 
-  it('should accept second client (dual mode) and reject third', async () => {
+  it('accepts a maximum-sized DATA frame over WebSocket', async () => {
+    const port = nextPort();
+    let receivedFrame = null;
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' }
+    });
+    server.onFrame((frame) => { receivedFrame = frame; });
+    await server.start();
+
+    const ws = await connectClient(port);
+    assert.equal((await authenticate(ws)).type, FRAME_TYPES.AUTH_OK);
+
+    const maxData = Buffer.alloc(65535 - 3, 0x61);
+    ws.send(encodeFrame({
+      type: FRAME_TYPES.DATA,
+      reqid: 7,
+      data: maxData,
+    }));
+
+    await waitForCondition(() => receivedFrame !== null, 1000);
+    assert.equal(receivedFrame.type, FRAME_TYPES.DATA);
+    assert.equal(receivedFrame.reqid, 7);
+    assert.equal(receivedFrame.data.length, maxData.length);
+    closeWs(ws);
+  });
+
+  it('rejects bad auth', async () => {
     const port = nextPort();
     server = new TunnelServer({
       port,
@@ -80,43 +247,72 @@ describe('TunnelServer', () => {
     });
     await server.start();
 
-    // First client connects and authenticates
-    const socket1 = await connectClient(port);
-    socket1.write(encodeFrame({
-      type: FRAME_TYPES.AUTH,
-      username: 'admin',
-      password: 'secret'
-    }));
-    const authResp1 = await readFrame(socket1);
-    assert.equal(authResp1.type, FRAME_TYPES.AUTH_OK);
-
-    // Second client connects — should be accepted (dual mode)
-    const socket2 = await connectClient(port);
-    socket2.write(encodeFrame({
-      type: FRAME_TYPES.AUTH,
-      username: 'admin',
-      password: 'secret'
-    }));
-    const authResp2 = await readFrame(socket2);
-    assert.equal(authResp2.type, FRAME_TYPES.AUTH_OK);
-
-    // Third client connects — should be rejected (limit is 2)
-    const socket3 = await connectClient(port);
-    socket3.write(encodeFrame({
-      type: FRAME_TYPES.AUTH,
-      username: 'admin',
-      password: 'secret'
-    }));
-    const errorResp = await readFrame(socket3);
-    assert.equal(errorResp.type, FRAME_TYPES.ERROR);
-    assert.match(errorResp.message, /limit/i);
-
-    socket1.destroy();
-    socket2.destroy();
-    socket3.destroy();
+    const ws = await connectClient(port);
+    const response = await authenticate(ws, 'admin', 'bad');
+    assert.equal(response.type, FRAME_TYPES.AUTH_FAIL);
+    await waitForClose(ws);
   });
 
-  it('should call onConnect after successful auth', async () => {
+  it('closes unauthenticated clients that send non-auth frames', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' }
+    });
+    await server.start();
+
+    const ws = await connectClient(port);
+    ws.send(encodeFrame({ type: FRAME_TYPES.PING }));
+    await waitForClose(ws);
+  });
+
+  it('sends random heartbeat PING payload and accepts matching PONG', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+      heartbeatMin: 0.01,
+      heartbeatMax: 0.02,
+      heartbeatTimeout: 1,
+    });
+    await server.start();
+
+    const ws = await connectClient(port);
+    const response = await authenticate(ws);
+    assert.equal(response.type, FRAME_TYPES.AUTH_OK);
+
+    const ping = await readUntil(ws, frame => frame.type === FRAME_TYPES.PING);
+    assert.ok(ping.payload.length >= 8);
+    ws.send(encodeFrame({ type: FRAME_TYPES.PONG, payload: ping.payload }));
+    await new Promise(r => setTimeout(r, 50));
+    assert.equal(ws.readyState, WebSocket.OPEN);
+    closeWs(ws);
+  });
+
+  it('stop releases the listening port', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' }
+    });
+    await server.start();
+    await server.stop();
+    server = null;
+    await expectPortReusable(port);
+  });
+});
+
+describe('TunnelServer callbacks', () => {
+  let server;
+
+  afterEach(async () => {
+    if (server) { await server.stop(); server = null; }
+  });
+
+  it('calls onConnect after successful auth', async () => {
     const port = nextPort();
     let connectedSocket = null;
     let connectedAddr = null;
@@ -131,23 +327,16 @@ describe('TunnelServer', () => {
     });
     await server.start();
 
-    const socket = await connectClient(port);
-    socket.write(encodeFrame({
-      type: FRAME_TYPES.AUTH,
-      username: 'admin',
-      password: 'secret'
-    }));
-    await readFrame(socket);
+    const ws = await connectClient(port);
+    await authenticate(ws);
 
-    // Give onConnect a tick to fire
     await new Promise(r => setTimeout(r, 50));
     assert.ok(connectedSocket, 'onConnect should have been called with socket');
     assert.ok(connectedAddr, 'onConnect should have been called with addr');
-
-    socket.destroy();
+    closeWs(ws);
   });
 
-  it('should call onDisconnect when client closes', async () => {
+  it('calls onDisconnect when client closes', async () => {
     const port = nextPort();
     let disconnected = false;
     server = new TunnelServer({
@@ -158,16 +347,145 @@ describe('TunnelServer', () => {
     });
     await server.start();
 
-    const socket = await connectClient(port);
-    socket.write(encodeFrame({
-      type: FRAME_TYPES.AUTH,
-      username: 'admin',
-      password: 'secret'
-    }));
-    await readFrame(socket);
+    const ws = await connectClient(port);
+    await authenticate(ws);
 
-    socket.destroy();
+    closeWs(ws);
     await new Promise(r => setTimeout(r, 100));
     assert.ok(disconnected, 'onDisconnect should have been called');
+  });
+});
+
+describe('TunnelServer rotation state', () => {
+  let server;
+
+  afterEach(async () => {
+    if (server) { await server.stop(); server = null; }
+  });
+
+  it('promotes a second authenticated WS to active and drains the old active', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+      rotationDrainTimeout: 0.05,
+    });
+    await server.start();
+
+    const ws1 = await connectClient(port);
+    assert.equal((await authenticate(ws1)).type, FRAME_TYPES.AUTH_OK);
+    assert.deepEqual(server.getConnectionCounts(), {
+      active: 1, candidate: 0, draining: 0, total: 1
+    });
+    const firstActive = server.getActiveSocket();
+
+    const ws2 = await connectClient(port);
+    sendAuth(ws2);
+    await waitForCondition(() => server.getConnectionCounts().draining === 1);
+    const counts = server.getConnectionCounts();
+    assert.equal(counts.active, 1);
+    assert.equal(counts.draining, 1);
+    assert.equal(counts.total, 2);
+    assert.notEqual(server.getActiveSocket(), firstActive);
+
+    await waitForCondition(() => server.getConnectionCounts().draining === 0);
+    assert.equal(server.getConnectionCounts().draining, 0);
+    closeWs(ws1);
+    closeWs(ws2);
+  });
+
+  it('rejects a third authenticated WS while active and draining already exist', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+      rotationDrainTimeout: 1,
+    });
+    await server.start();
+
+    const ws1 = await connectClient(port);
+    assert.equal((await authenticate(ws1)).type, FRAME_TYPES.AUTH_OK);
+    const ws2 = await connectClient(port);
+    assert.equal((await authenticate(ws2)).type, FRAME_TYPES.AUTH_OK);
+
+    const ws3 = await connectClient(port);
+    const response = await authenticate(ws3);
+    assert.equal(response.type, FRAME_TYPES.ERROR);
+    assert.match(response.message, /limit/i);
+
+    closeWs(ws1);
+    closeWs(ws2);
+    closeWs(ws3);
+  });
+
+  it('keeps draining WS open after timeout while bound requests remain', async () => {
+    const port = nextPort();
+    let oldWs;
+    let activeRequests = 1;
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+      rotationDrainTimeout: 0.05,
+    });
+    server.setActiveRequestChecker((socket) => socket === oldWs ? activeRequests : 0);
+    await server.start();
+
+    const ws1 = await connectClient(port);
+    assert.equal((await authenticate(ws1)).type, FRAME_TYPES.AUTH_OK);
+    oldWs = server.getActiveSocket();
+
+    const ws2 = await connectClient(port);
+    assert.equal((await authenticate(ws2)).type, FRAME_TYPES.AUTH_OK);
+    await waitForCondition(() => server.getConnectionCounts().draining === 1);
+
+    await new Promise(r => setTimeout(r, 120));
+    assert.equal(server.getConnectionCounts().draining, 1);
+    assert.notEqual(ws1.readyState, WebSocket.CLOSED);
+
+    activeRequests = 0;
+    await waitForCondition(() => server.getConnectionCounts().draining === 0);
+    assert.equal(server.getConnectionCounts().draining, 0);
+
+    closeWs(ws1);
+    closeWs(ws2);
+  });
+
+  it('closes draining WS after bound requests become idle', async () => {
+    const port = nextPort();
+    let oldWs;
+    let lastActivityAt = Date.now();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+      rotationDrainTimeout: 0.05,
+      rotationDrainIdleTimeout: 0.1,
+    });
+    server.setActiveRequestChecker((socket) => socket === oldWs
+      ? { activeCount: 1, lastActivityAt }
+      : { activeCount: 0, lastActivityAt: 0 });
+    await server.start();
+
+    const ws1 = await connectClient(port);
+    assert.equal((await authenticate(ws1)).type, FRAME_TYPES.AUTH_OK);
+    oldWs = server.getActiveSocket();
+
+    const ws2 = await connectClient(port);
+    assert.equal((await authenticate(ws2)).type, FRAME_TYPES.AUTH_OK);
+    await waitForCondition(() => server.getConnectionCounts().draining === 1);
+
+    lastActivityAt = Date.now();
+    await new Promise(r => setTimeout(r, 80));
+    assert.equal(server.getConnectionCounts().draining, 1);
+    assert.notEqual(ws1.readyState, WebSocket.CLOSED);
+
+    lastActivityAt = Date.now() - 1000;
+    await waitForCondition(() => server.getConnectionCounts().draining === 0, 1500);
+
+    closeWs(ws1);
+    closeWs(ws2);
   });
 });

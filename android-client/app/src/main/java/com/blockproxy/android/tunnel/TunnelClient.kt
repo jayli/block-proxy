@@ -1,439 +1,464 @@
 package com.blockproxy.android.tunnel
 
+import android.util.Log
 import com.blockproxy.android.config.ServerConfig
 import com.blockproxy.android.config.TunnelCredentials
 import com.blockproxy.android.status.TunnelStatus
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.io.IOException
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.random.Random
+import kotlin.random.nextLong
 
-/**
- * Factory for creating [TunnelSocket] instances used by [TunnelClient]
- * to connect to the tunnel server.
- *
- * Production code creates real TLS sockets; tests inject fakes.
- */
-interface TunnelSocketFactory {
-    fun create(): TunnelSocket
-}
+private const val TAG = "TunnelClient"
 
-/**
- * Manages up to [MAX_CONNECTIONS] simultaneous tunnel connections with
- * automatic reconnection and dual-connection replenishment.
- *
- * Reconnect model:
- * - First connection success → Connected
- * - Second connection attempted asynchronously (up to [MAX_CONNECTIONS])
- * - Any disconnect → close sessions for that connection, attempt replenishment
- * - All connections lost → full reconnect with exponential backoff (1s, 2s, 4s, ... 60s cap)
- * - AUTH_FAIL on primary → AuthFailed (permanent, stops retrying)
- * - Auth-stage ERROR on primary → Occupied (permanent, stops retrying)
- * - Post-auth ERROR → logged and ignored (connection stays alive, handled by TunnelConnection)
- *
- * Replenishment model (dual → single degradation):
- * - Wait 1s before first attempt
- * - At most 3 attempts with waits of 2s, 4s between failures
- * - If all 3 fail → keep single connection, stop replenishing
- * - If remaining connection also disconnects → enter full reconnect
- */
 class TunnelClient(
     private val config: ServerConfig,
     private val credentials: TunnelCredentials,
-    private val socketFactory: TunnelSocketFactory,
     private val targetSocketFactory: TargetSocketFactory,
     private val clientScope: CoroutineScope,
-    private val idleTimeoutMs: Long = TunnelConnection.DEFAULT_IDLE_TIMEOUT_MS,
+    private val protect: ((java.net.Socket) -> Boolean)? = null,
 ) {
     companion object {
-        const val MAX_CONNECTIONS = 2
         const val INITIAL_BACKOFF_MS = 1_000L
         const val MAX_BACKOFF_MS = 60_000L
-        const val REPLENISH_INITIAL_DELAY_MS = 1_000L
-        const val REPLENISH_MAX_ATTEMPTS = 3
+        private const val DEFAULT_ROTATION_MIN_MS = 600_000L   // 10 min
+        private const val DEFAULT_ROTATION_MAX_MS = 1_800_000L // 30 min
+        private const val DEFAULT_DRAIN_TIMEOUT_MS = 10_000L   // 10 s
+        private const val DEFAULT_DRAIN_IDLE_TIMEOUT_MS = 20_000L // 20 s
     }
 
-    private val _status = MutableStateFlow(TunnelStatus.Disconnected)
+    private val _status = MutableStateFlow<TunnelStatus>(TunnelStatus.Disconnected)
     val status: StateFlow<TunnelStatus> = _status.asStateFlow()
 
     private val handler = ReverseConnectHandler(clientScope, targetSocketFactory)
     private val forwardRegistry = ForwardSessionRegistry(clientScope)
 
-    private val connectionsMutex = Mutex()
-    private val connections = mutableListOf<TunnelConnection>()
+    private val okHttpClient = TunnelWebSocket.createOkHttpClient(
+        allowInsecure = config.allowInsecure,
+        protect = protect,
+    )
 
-    @Volatile
-    private var stopped = true
+    // WebSocket state
+    @Volatile private var activeWs: FrameSender? = null
+    @Volatile private var candidateWs: FrameSender? = null
+    @Volatile private var drainingWs: FrameSender? = null
 
-    private var reconnectJob: Job? = null
-    private var replenishJob: Job? = null
+    @Volatile private var stopped = true
+    @Volatile private var connected = false
 
-    @Volatile
-    private var isReplenishing = false
+    private var mainJob: Job? = null
+    private var rotationJob: Job? = null
 
-    @Volatile
-    private var consecutiveFailures = 0
+    private val stateMutex = Mutex()
 
-    // ── Public API ──────────────────────────────────────────────────
+    // Per-sender frame channels: bridge OkHttp callback → coroutine loop
+    private val frameChannels = ConcurrentHashMap<FrameSender, Channel<ByteArray>>()
+    // Per-sender read jobs for cancellation
+    private val senderReadJobs = ConcurrentHashMap<FrameSender, Job>()
+
+    // ── Public API ──────────────────────────────────────────────────────
+
+    fun isConnected(): Boolean = connected
 
     fun start() {
-        if (!stopped) return  // Already started — guard against double-start
+        if (!stopped) return
         stopped = false
-        reconnectJob = clientScope.launch { mainLoop() }
-    }
-
-    /**
-     * Opens a forward CONNECT session to the specified host and port.
-     *
-     * This method is called by LocalSocksServer to establish a tunnel for
-     * client-initiated connections. The session will use one of the active
-     * tunnel connections (round-robin selection).
-     *
-     * @param host Target hostname or IP address
-     * @param port Target port number
-     * @return ForwardSession representing the tunnel connection
-     * @throws IOException if no connections are available or connection fails
-     */
-    suspend fun openForwardSession(host: String, port: Int): ForwardSession {
-        val conns = connectionsMutex.withLock { connections.toList() }
-        if (conns.isEmpty()) {
-            throw IOException("No tunnel connections available")
-        }
-        return forwardRegistry.open(host, port, conns)
+        _status.value = TunnelStatus.Connecting
+        mainJob = clientScope.launch { mainLoop() }
     }
 
     suspend fun stop(timeoutMs: Long = 5_000L) {
         stopped = true
+        mainJob?.cancel()
+        mainJob = null
 
-        // Cancel reconnect loop
-        reconnectJob?.cancel()
-        try { reconnectJob?.join() } catch (_: CancellationException) {}
-        reconnectJob = null
-
-        // Cancel replenishment
-        replenishJob?.cancel()
-        try { replenishJob?.join() } catch (_: CancellationException) {}
-        replenishJob = null
-        isReplenishing = false
-
-        // Stop forward sessions before closing connections
-        forwardRegistry.stop()
-
-        // Close all connections (with timeout to avoid hanging on stuck I/O)
-        kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
-            connectionsMutex.withLock {
-                for (conn in connections.toList()) {
-                    handler.closeSessionsFor(conn)
-                    conn.close()
-                }
-                connections.clear()
-            }
+        // Close all active/draining/candidate senders
+        for (sender in listOfNotNull(activeWs, candidateWs, drainingWs)) {
+            closeSender(sender)
         }
+        activeWs = null
+        candidateWs = null
+        drainingWs = null
 
+        // Close any remaining channels/jobs (safety net)
+        for ((_, ch) in frameChannels) {
+            ch.close()
+        }
+        for ((_, job) in senderReadJobs) {
+            job.cancel()
+        }
+        frameChannels.clear()
+        senderReadJobs.clear()
+
+        forwardRegistry.stop()
         _status.value = TunnelStatus.Disconnected
     }
 
-    // ── Main loop ───────────────────────────────────────────────────
+    suspend fun openForwardSession(host: String, port: Int): ForwardSession {
+        val sender = activeWs
+            ?: throw IllegalStateException("No active tunnel connection")
+        return forwardRegistry.open(host, port, sender)
+    }
+
+    /** Measures tunnel RTT in milliseconds. Returns null on failure. */
+    suspend fun measureLatency(): Long? {
+        val sender = activeWs ?: return null
+        val start = System.currentTimeMillis()
+        val session = try {
+            forwardRegistry.open("127.0.0.1", 80, sender)
+        } catch (_: Exception) {
+            return null
+        }
+        val elapsed = System.currentTimeMillis() - start
+        try { session.sendClose() } catch (_: Exception) {}
+        return elapsed
+    }
+
+    // ── Main reconnect loop ─────────────────────────────────────────────
 
     private suspend fun mainLoop() {
-        // Establish first connection
-        try {
-            _status.value = TunnelStatus.Connecting
-            val first = establishConnection()
-            addConnection(first)
-            _status.value = TunnelStatus.Connected
-            consecutiveFailures = 0
-            replenishConnection()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: TunnelAuthFailedException) {
-            _status.value = TunnelStatus.AuthFailed
-            // Permanent: stop retrying
-        } catch (e: TunnelOccupiedException) {
-            _status.value = TunnelStatus.Occupied
-            // Permanent: stop retrying
-        } catch (_: Exception) {
-            _status.value = TunnelStatus.Reconnecting
-            startReconnectLoop()
-        }
-    }
+        var backoff = INITIAL_BACKOFF_MS.toLong()
+        var terminalStatus: TunnelStatus? = null
 
-    private suspend fun startReconnectLoop() {
         while (!stopped) {
-            val backoff = calculateBackoff()
-            try {
-                kotlinx.coroutines.delay(backoff)
-            } catch (e: CancellationException) {
-                throw e
-            }
-
             try {
                 _status.value = TunnelStatus.Connecting
-                val conn = establishConnection()
-                addConnection(conn)
-                _status.value = TunnelStatus.Connected
-                consecutiveFailures = 0
-                replenishConnection()
-                return
+                establishAndServe()
+                backoff = INITIAL_BACKOFF_MS.toLong()
+            } catch (e: TunnelAuthFailedException) {
+                terminalStatus = TunnelStatus.AuthFailed
+                _status.value = TunnelStatus.AuthFailed
+                Log.e(TAG, "Tunnel authentication failed", e)
+                break
+            } catch (e: TunnelOccupiedException) {
+                terminalStatus = TunnelStatus.Occupied
+                _status.value = TunnelStatus.Occupied
+                Log.e(TAG, "Tunnel occupied", e)
+                break
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: TunnelAuthFailedException) {
-                _status.value = TunnelStatus.AuthFailed
-                return  // Permanent: stop retrying
-            } catch (e: TunnelOccupiedException) {
-                _status.value = TunnelStatus.Occupied
-                return  // Permanent: stop retrying
-            } catch (_: Exception) {
-                consecutiveFailures++
+            } catch (e: Exception) {
+                Log.w(TAG, "Tunnel connection failed: ${e.message}")
                 _status.value = TunnelStatus.Reconnecting
+                try { delay(backoff) } catch (_: CancellationException) { break }
+                backoff = min(backoff * 2, MAX_BACKOFF_MS)
             }
+        }
+
+        if (terminalStatus == null) {
+            _status.value = TunnelStatus.Disconnected
         }
     }
 
-    private fun calculateBackoff(): Long {
-        val backoff = INITIAL_BACKOFF_MS * (1L shl consecutiveFailures.coerceAtMost(6))
-        return backoff.coerceAtMost(MAX_BACKOFF_MS)
+    // ── Connection lifecycle ────────────────────────────────────────────
+
+    private suspend fun establishAndServe() {
+        val sender = establishConnection()
+
+        // Channel was pre-created by establishConnection() and registered in onAuthSuccess
+        val frameChannel = frameChannels[sender]
+            ?: throw IllegalStateException("Frame channel not registered for sender")
+
+        // Start rotation first, then set as active atomically via stateMutex
+        rotationJob = clientScope.launch { rotationLoop() }
+
+        stateMutex.withLock {
+            activeWs?.let { old ->
+                Log.w(TAG, "Replacing existing active WS during establish")
+                drainingWs = old
+            }
+            activeWs = sender
+            candidateWs = null
+        }
+
+        connected = true
+        _status.value = TunnelStatus.Connected
+
+        // Start frame handling for this sender
+        val readJob = clientScope.launch { handleFrames(sender, frameChannel) }
+        senderReadJobs[sender] = readJob
+
+        // Auto-cleanup when this sender's read job completes (normal disconnection or cancellation)
+        clientScope.launch {
+            readJob.join()
+            Log.i(TAG, "handleFrames exited for sender, closing sender")
+            closeSender(sender)
+        }
+
+        // Wait until stopped, or until the active connection is lost and needs reconnecting.
+        // When rotation replaces this sender, closeSender() sets drainingWs=null but
+        // activeWs is set to the candidate — so activeWs stays non-null and we keep waiting.
+        // When the active sender genuinely disconnects, closeSender() sets activeWs=null
+        // and this loop exits, triggering a reconnect in mainLoop().
+        try {
+            while (clientScope.isActive && !stopped && activeWs != null) {
+                delay(500)
+            }
+            Log.i(TAG, "Poll loop exited: stopped=$stopped, activeWs=$activeWs, isActive=${clientScope.isActive}")
+        } finally {
+            connected = false
+            rotationJob?.cancel()
+            rotationJob = null
+        }
     }
 
-    // ── Connection establishment ────────────────────────────────────
+    private suspend fun establishConnection(): FrameSender {
+        val addr = config.serverHost
+        val port = config.serverPort
 
-    /**
-     * Creates a socket, connects it, performs authentication, and returns
-     * the authenticated [TunnelConnection].
-     *
-     * @throws TunnelAuthFailedException if the server responds with AUTH_FAIL
-     * @throws TunnelOccupiedException if the server responds with ERROR during auth
-     * @throws Exception for any other connection or protocol failure
-     * @throws CancellationException if the coroutine scope is cancelled
-     */
-    private suspend fun establishConnection(): TunnelConnection {
-        val socket = socketFactory.create()
+        Log.i(TAG, "Connecting to tunnel $addr:$port")
 
-        val authCompleted = CompletableDeferred<Unit>()
+        // HTTP disguise
+        if (config.httpDisguise) {
+            performHttpDisguise(addr, port)
+        }
 
-        // Use a nullable var for self-reference: the lambdas are invoked
-        // only after the constructor returns and connRef is assigned.
-        var connRef: TunnelConnection? = null
+        // WebSocket URL
+        val wsPath = config.wsPath.let { if (it.startsWith("/")) it else "/$it" }
+        val wsUrl = "wss://$addr:$port$wsPath"
 
-        val conn = TunnelConnection(
-            id = "tunnel-${System.identityHashCode(socket)}",
-            socket = socket,
-            username = credentials.username,
-            password = credentials.password,
-            scope = clientScope,
-            idleTimeoutMs = idleTimeoutMs,
-            onFrame = { frame ->
-                when {
-                    frame is Frame.AuthOk -> {
-                        authCompleted.complete(Unit)
-                    }
-                    // Server-initiated reverse CONNECT
-                    frame is Frame.Connect -> {
-                        val c = connRef
-                        if (c != null) {
-                            clientScope.launch { handler.handleFrame(c, frame) }
-                        }
-                    }
-                    // Forward session responses (client-initiated)
-                    frame is Frame.ConnectOk || frame is Frame.ConnectFailed -> {
-                        forwardRegistry.handleFrame(frame)
-                    }
-                    // Data/Close: route based on reqid range
-                    frame is Frame.Data || frame is Frame.Close -> {
-                        val reqid = when (frame) {
-                            is Frame.Data -> frame.reqid
-                            is Frame.Close -> frame.reqid
-                            else -> -1
-                        }
-                        if (forwardRegistry.isForwardReqid(reqid)) {
-                            forwardRegistry.handleFrame(frame)
-                        } else {
-                            val c = connRef
-                            if (c != null) {
-                                clientScope.launch { handler.handleFrame(c, frame) }
-                            }
-                        }
-                    }
-                    // Ping, Pong, Unknown, etc. — ignore (TunnelConnection
-                    // handles PING→PONG internally)
-                }
+        // Encode AUTH payload
+        val authPayload = FrameCodec.encode(Frame.Auth(credentials.username, credentials.password))
+
+        // Pre-create frame channel — registered in onAuthSuccess before any post-auth frame arrives.
+        // OkHttp serializes onMessage callbacks on a single thread, so by the time the first
+        // post-auth onFrame fires, the channel is already registered.
+        val frameChannel = Channel<ByteArray>(Channel.UNLIMITED)
+
+        val tunnelWs = TunnelWebSocket(
+            url = wsUrl,
+            authPayload = authPayload,
+            customHeaders = config.customHeaders,
+            onAuthSuccess = { sender ->
+                frameChannels[sender] = frameChannel
             },
-            onDisconnect = { error ->
-                // During the authentication phase, complete authCompleted so that
-                // establishConnection() resumes.  After authentication the
-                // connection is already in the registry and the deferred is
-                // already completed, so these completeExceptionally calls are
-                // no-ops (CompletableDeferred ignores duplicate completions).
-                when (error) {
-                    is TunnelAuthFailedException ->
-                        authCompleted.completeExceptionally(error)
-                    is TunnelOccupiedException ->
-                        authCompleted.completeExceptionally(error)
-                    is TunnelProtocolException ->
-                        authCompleted.completeExceptionally(error)
-                    null ->
-                        authCompleted.completeExceptionally(
-                            IOException("Connection closed during authentication"))
-                    else ->
-                        authCompleted.completeExceptionally(error)
-                }
-                val c = connRef
-                if (c != null) {
-                    handleDisconnect(c, error)
-                }
+            onFrame = { sender, frameBytes ->
+                frameChannels[sender]?.trySend(frameBytes)
+            },
+            onDisconnect = { sender, error ->
+                frameChannels[sender]?.close()
             },
         )
-        connRef = conn
+
+        return try {
+            tunnelWs.connect(okHttpClient)
+        } catch (e: Exception) {
+            frameChannel.close()
+            throw e
+        }
+    }
+
+    private suspend fun performHttpDisguise(addr: String, port: Int) {
+        val base = "https://$addr:$port"
+        val disguiseClient = okHttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(5))
+            .readTimeout(java.time.Duration.ofSeconds(5))
+            .build()
 
         try {
-            conn.connect(config.serverHost, config.serverPort)
-            authCompleted.await()
-            return conn
-        } catch (e: CancellationException) {
-            try { conn.close() } catch (_: Exception) {}
-            throw e
-        } catch (e: TunnelAuthFailedException) {
-            try { conn.close() } catch (_: Exception) {}
-            throw e
-        } catch (e: TunnelOccupiedException) {
-            try { conn.close() } catch (_: Exception) {}
-            throw e
-        } catch (e: Exception) {
-            try { conn.close() } catch (_: Exception) {}
-            throw e
-        }
-    }
-
-    // ── Connection registry ─────────────────────────────────────────
-
-    private suspend fun addConnection(conn: TunnelConnection) {
-        connectionsMutex.withLock {
-            connections.add(conn)
-        }
-    }
-
-    private suspend fun removeConnection(conn: TunnelConnection): Pair<Boolean, List<TunnelConnection>> {
-        return connectionsMutex.withLock {
-            val removed = connections.remove(conn)
-            removed to connections.toList()
-        }
-    }
-
-    // ── Disconnect handling ─────────────────────────────────────────
-
-    private fun handleDisconnect(conn: TunnelConnection, error: Throwable?) {
-        if (stopped) return
-
-        // Permanent auth failures during active connections:
-        // These are unusual (auth happens during connect), but handle them.
-        if (error is TunnelAuthFailedException || error is TunnelOccupiedException) {
-            _status.value = if (error is TunnelAuthFailedException)
-                TunnelStatus.AuthFailed else TunnelStatus.Occupied
-            clientScope.launch {
-                handler.closeSessionsFor(conn)
-                forwardRegistry.closeSessionsFor(conn)
-                removeConnection(conn)
+            withContext(Dispatchers.IO) {
+                disguiseClient.newCall(Request.Builder().url(base + "/").build()).execute().close()
             }
+            delay(Random.nextLong(500, 2000))
+            withContext(Dispatchers.IO) {
+                disguiseClient.newCall(Request.Builder().url(base + "/favicon.ico").build()).execute().close()
+            }
+            delay(Random.nextLong(500, 2000))
+        } catch (_: Exception) {
+            // HTTP disguise best-effort — continue regardless
+            Log.d(TAG, "HTTP disguise request failed (non-fatal)")
+        }
+    }
+
+    // ── Frame handling ──────────────────────────────────────────────────
+
+    private suspend fun handleFrames(sender: FrameSender, channel: Channel<ByteArray>) {
+        try {
+            for (frameBytes in channel) {
+                val frame = try {
+                    FrameCodec.decode(frameBytes)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Failed to decode frame: ${t.message}")
+                    continue
+                }
+
+                when (frame) {
+                    is Frame.Ping -> {
+                        // Server heartbeat: reply with same payload as PONG
+                        try {
+                            sender.sendFrame(FrameCodec.encode(Frame.Pong(frame.payload)))
+                        } catch (_: Exception) {}
+                    }
+                    is Frame.Pong -> { /* server response to its own PING, no client-side tracking */ }
+                    is Frame.Connect -> {
+                        if (sender === drainingWs) {
+                            // Reject new reverse requests on draining connection
+                            try {
+                                sender.sendFrame(FrameCodec.encode(Frame.ConnectFailed(frame.reqid)))
+                            } catch (_: Exception) {}
+                        } else {
+                            handler.handleFrame(sender, frame)
+                        }
+                    }
+                    is Frame.ConnectOk -> {
+                        if (forwardRegistry.isForwardReqid(frame.reqid)) {
+                            forwardRegistry.handleFrame(frame)
+                        } else {
+                            handler.handleFrame(sender, frame)
+                        }
+                    }
+                    is Frame.ConnectFailed -> {
+                        if (forwardRegistry.isForwardReqid(frame.reqid)) {
+                            forwardRegistry.handleFrame(frame)
+                        } else {
+                            handler.handleFrame(sender, frame)
+                        }
+                    }
+                    is Frame.Data -> {
+                        if (forwardRegistry.isForwardReqid(frame.reqid)) {
+                            forwardRegistry.handleFrame(frame)
+                        } else {
+                            handler.handleFrame(sender, frame)
+                        }
+                    }
+                    is Frame.Close -> {
+                        if (forwardRegistry.isForwardReqid(frame.reqid)) {
+                            forwardRegistry.handleFrame(frame)
+                        } else {
+                            handler.handleFrame(sender, frame)
+                        }
+                    }
+                    else -> { /* ignore */ }
+                }
+            }
+        } catch (_: CancellationException) {
+            // Expected on stop
+        }
+    }
+
+    // ── Connection rotation ─────────────────────────────────────────────
+
+    private suspend fun rotationLoop() {
+        while (clientScope.isActive && !stopped) {
+            val interval = Random.nextLong(DEFAULT_ROTATION_MIN_MS, DEFAULT_ROTATION_MAX_MS)
+            try { delay(interval) } catch (_: CancellationException) { break }
+            if (stopped) break
+            try {
+                rotationCycle()
+            } catch (e: CancellationException) {
+                break
+            } catch (e: Exception) {
+                Log.w(TAG, "Rotation cycle failed: ${e.message}")
+            }
+        }
+    }
+
+    private suspend fun rotationCycle() {
+        val oldWs = activeWs ?: return
+        if (!oldWs.isOpen) return
+
+        // Establish candidate connection (channel pre-created and registered in onAuthSuccess)
+        val candidate = try {
+            establishConnection()
+        } catch (e: Exception) {
+            Log.w(TAG, "Rotation candidate failed: ${e.message}")
             return
         }
 
-        clientScope.launch {
-            // Close sessions owned by this connection
-            handler.closeSessionsFor(conn)
-            forwardRegistry.closeSessionsFor(conn)
-
-            // Remove from registry and check if it was actually registered.
-            // Connections that failed during authentication are never added
-            // to the registry; their lifecycle is managed by establishConnection.
-            val (wasRegistered, remaining) = removeConnection(conn)
-            if (!wasRegistered) return@launch
-
-            if (remaining.isNotEmpty()) {
-                // At least one connection still alive → try replenishment
-                // All replenishment launch logic under mutex to avoid race
-                connectionsMutex.withLock {
-                    if (replenishJob?.isActive != true && !isReplenishing) {
-                        replenishJob = clientScope.launch { doReplenishment() }
-                    }
-                }
-            } else {
-                // All connections lost → full reconnect
-                _status.value = TunnelStatus.Reconnecting
-                consecutiveFailures = 0
-                connectionsMutex.withLock {
-                    replenishJob?.cancel()
-                    replenishJob = null
-                    isReplenishing = false
-                }
-                reconnectJob = clientScope.launch { startReconnectLoop() }
+        val candidateChannel = frameChannels[candidate]
+            ?: run {
+                Log.w(TAG, "Rotation candidate channel not registered")
+                try { candidate.close(1000, "no channel") } catch (_: Exception) {}
+                return
             }
-        }
-    }
 
-    // ── Replenishment ───────────────────────────────────────────────
+        // Start frame handling for candidate with auto-cleanup
+        val candidateReadJob = clientScope.launch { handleFrames(candidate, candidateChannel) }
+        senderReadJobs[candidate] = candidateReadJob
 
-    private fun replenishConnection() {
-        // Launch under mutex to coordinate with handleDisconnect
         clientScope.launch {
-            connectionsMutex.withLock {
-                if (replenishJob?.isActive != true && !isReplenishing) {
-                    replenishJob = clientScope.launch { doReplenishment() }
-                }
-            }
+            candidateReadJob.join()
+            closeSender(candidate)
         }
-    }
 
-    private suspend fun doReplenishment() {
-        isReplenishing = true
+        // Atomic switch: old → draining, candidate → active
+        stateMutex.withLock {
+            candidateWs = null
+            // If a previous draining ws is still lingering, close it now
+            drainingWs?.let { prior ->
+                clientScope.launch { closeSender(prior) }
+            }
+            drainingWs = oldWs
+            activeWs = candidate
+        }
+
+        Log.i(TAG, "Rotation: new active WS, old draining")
+
+        // Wait drain timeout, then poll until idle
         try {
-            // Wait 1s before first attempt
-            kotlinx.coroutines.delay(REPLENISH_INITIAL_DELAY_MS)
-
-            for (attempt in 1..REPLENISH_MAX_ATTEMPTS) {
-                if (stopped) return
-
-                try {
-                    val conn = establishConnection()
-                    addConnection(conn)
-                    _status.value = TunnelStatus.Connected
-                    return  // Success
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: TunnelAuthFailedException) {
-                    // Permanent auth error for secondary connection:
-                    // keep the existing connection alive, stop replenishing.
-                    return
-                } catch (_: TunnelOccupiedException) {
-                    // Permanent occupied error for secondary connection:
-                    // keep the existing connection alive, stop replenishing.
-                    return
-                } catch (_: Exception) {
-                    // Connection error — fall through to retry logic
-                }
-
-                // If no connections remain, abort replenishment.
-                // The disconnect handler will start the full reconnect loop.
-                val count = connectionsMutex.withLock { connections.size }
-                if (count == 0) return
-
-                // Wait before next attempt: 2s after 1st failure, 4s after 2nd
-                if (attempt < REPLENISH_MAX_ATTEMPTS) {
-                    val waitMs = (1L shl attempt) * 1000L  // 2s, 4s
-                    kotlinx.coroutines.delay(waitMs)
+            delay(DEFAULT_DRAIN_TIMEOUT_MS)
+            while (isStillDraining(oldWs, DEFAULT_DRAIN_IDLE_TIMEOUT_MS)) {
+                delay(1000)
+                if (stopped) break
+            }
+        } catch (_: CancellationException) {
+            // Continue to cleanup
+        } finally {
+            stateMutex.withLock {
+                if (drainingWs === oldWs) {
+                    drainingWs = null
                 }
             }
-            // All 3 attempts exhausted → keep single connection, stop replenishing
-        } catch (e: CancellationException) {
-            throw e
-        } finally {
-            isReplenishing = false
+            closeSender(oldWs)
         }
+    }
+
+    // ── Drain helpers ──────────────────────────────────────────────────
+
+    private fun getDrainState(sender: FrameSender): DrainState {
+        val rev = handler.getDrainState(sender)
+        val fwd = forwardRegistry.getDrainState(sender)
+        return DrainState(
+            activeCount = rev.activeCount + fwd.activeCount,
+            lastActivityAt = max(rev.lastActivityAt, fwd.lastActivityAt),
+        )
+    }
+
+    private fun isStillDraining(sender: FrameSender, idleTimeoutMs: Long): Boolean {
+        val state = getDrainState(sender)
+        if (state.activeCount <= 0) return false
+        return (System.currentTimeMillis() - state.lastActivityAt) < idleTimeoutMs
+    }
+
+    private suspend fun closeSender(sender: FrameSender) {
+        senderReadJobs.remove(sender)?.cancel()
+        frameChannels.remove(sender)?.close()
+        handler.closeSessionsFor(sender)
+        forwardRegistry.closeSessionsFor(sender)
+
+        stateMutex.withLock {
+            if (activeWs === sender) activeWs = null
+            if (drainingWs === sender) drainingWs = null
+            if (candidateWs === sender) candidateWs = null
+        }
+
+        try { sender.close(1000, "done") } catch (_: Exception) {}
     }
 }

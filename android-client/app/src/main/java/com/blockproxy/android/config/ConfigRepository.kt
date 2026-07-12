@@ -75,6 +75,8 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             serverPort = prefs[KEY_PORT] ?: ServerConfig.DEFAULT_PORT,
             useTls = prefs[KEY_USE_TLS] ?: true,
             allowInsecure = prefs[KEY_ALLOW_INSECURE] ?: true,
+            wsPath = prefs[KEY_WS_PATH] ?: "/ws",
+            httpDisguise = prefs[KEY_HTTP_DISGUISE] ?: true,
         )
     }
 
@@ -84,6 +86,8 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             prefs[KEY_PORT] = config.serverPort
             prefs[KEY_USE_TLS] = config.useTls
             prefs[KEY_ALLOW_INSECURE] = config.allowInsecure
+            prefs[KEY_WS_PATH] = config.wsPath
+            prefs[KEY_HTTP_DISGUISE] = config.httpDisguise
         }
     }
 
@@ -96,5 +100,7 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
         val KEY_PORT = intPreferencesKey("server_port")
         val KEY_USE_TLS = booleanPreferencesKey("use_tls")
         val KEY_ALLOW_INSECURE = booleanPreferencesKey("allow_insecure")
+        val KEY_WS_PATH = stringPreferencesKey("ws_path")
+        val KEY_HTTP_DISGUISE = booleanPreferencesKey("http_disguise")
     }
 }

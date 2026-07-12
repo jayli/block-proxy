@@ -79,6 +79,25 @@ class TestConfig:
         assert data["routing"]["proxy_rules"] == []
         assert data["routing"]["default"] == "proxy"
 
+    def test_tunnel_http_disguise_enabled_by_default(self):
+        data = self.config.load()
+        assert data["tunnel"]["http_disguise"] is True
+
+    def test_old_tunnel_config_gets_http_disguise_default(self):
+        old = {
+            "server": {
+                "protocol": "tunnel", "address": "example.com", "port": 8002,
+                "username": "", "password": "", "tls": True, "allowInsecure": True,
+            },
+            "local": {"socks_port": 1080, "http_port": 1087, "udp": True},
+            "mode": "global",
+            "tunnel": {"enabled": True, "server_address": "example.com", "server_port": 8003},
+        }
+        with open(self.config_path, "w") as f:
+            json.dump(old, f)
+        data = self.config.load()
+        assert data["tunnel"]["http_disguise"] is True
+
     def test_old_config_gets_routing_defaults(self):
         old = {
             "server": {

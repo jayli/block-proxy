@@ -11,7 +11,7 @@ class FrameCodecTest {
     fun `encode Ping`() {
         assertArrayEquals(
             byteArrayOf(0x00, 0x01, 0x10),
-            FrameCodec.encode(Frame.Ping)
+            FrameCodec.encode(Frame.Ping(byteArrayOf()))
         )
     }
 
@@ -19,7 +19,7 @@ class FrameCodecTest {
     fun `encode Pong`() {
         assertArrayEquals(
             byteArrayOf(0x00, 0x01, 0x11),
-            FrameCodec.encode(Frame.Pong)
+            FrameCodec.encode(Frame.Pong(byteArrayOf()))
         )
     }
 
@@ -242,16 +242,20 @@ class FrameCodecTest {
 
     // ========== Fixed-length frames with trailing bytes ==========
 
-    @Test(expected = IllegalArgumentException::class)
-    fun `Ping with trailing bytes throws`() {
-        val invalid = byteArrayOf(0x00, 0x02, 0x10, 0x00)
-        FrameCodec.decode(invalid)
+    @Test
+    fun `Ping with payload decodes correctly`() {
+        val encoded = byteArrayOf(0x00, 0x02, 0x10, 0x00)
+        val decoded = FrameCodec.decode(encoded)
+        assertTrue(decoded is Frame.Ping)
+        assertArrayEquals(byteArrayOf(0x00), (decoded as Frame.Ping).payload)
     }
 
-    @Test(expected = IllegalArgumentException::class)
-    fun `Pong with trailing bytes throws`() {
-        val invalid = byteArrayOf(0x00, 0x02, 0x11, 0x00)
-        FrameCodec.decode(invalid)
+    @Test
+    fun `Pong with payload decodes correctly`() {
+        val encoded = byteArrayOf(0x00, 0x02, 0x11, 0x00)
+        val decoded = FrameCodec.decode(encoded)
+        assertTrue(decoded is Frame.Pong)
+        assertArrayEquals(byteArrayOf(0x00), (decoded as Frame.Pong).payload)
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -340,6 +344,7 @@ class FrameCodecTest {
     fun `decodePayload works without length prefix`() {
         val payload = byteArrayOf(0x10) // Just the type byte for Ping
         val decoded = FrameCodec.decodePayload(payload)
-        assertEquals(Frame.Ping, decoded)
+        assertTrue(decoded is Frame.Ping)
+        assertEquals(0, (decoded as Frame.Ping).payload.size)
     }
 }

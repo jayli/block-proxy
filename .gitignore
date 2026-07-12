@@ -23,6 +23,9 @@ cert/socks5_tls.crt
 cert/tunnel_tls.key
 cert/tunnel_tls.crt
 
+# yui.cool 证书（私钥绝对不能提交）
+cert/yui_cool/privkey.pem
+
 # MITM certificates cache (runtime generated)
 /certificates/
 

@@ -24,8 +24,20 @@ object FrameCodec {
 
     private fun encodePayload(frame: Frame): ByteArray {
         return when (frame) {
-            is Frame.Ping -> byteArrayOf(FrameType.PING.code.toByte())
-            is Frame.Pong -> byteArrayOf(FrameType.PONG.code.toByte())
+            is Frame.Ping -> {
+                val p = frame.payload
+                val result = ByteArray(1 + p.size)
+                result[0] = FrameType.PING.code.toByte()
+                System.arraycopy(p, 0, result, 1, p.size)
+                result
+            }
+            is Frame.Pong -> {
+                val p = frame.payload
+                val result = ByteArray(1 + p.size)
+                result[0] = FrameType.PONG.code.toByte()
+                System.arraycopy(p, 0, result, 1, p.size)
+                result
+            }
             is Frame.AuthOk -> byteArrayOf(FrameType.AUTH_OK.code.toByte())
             is Frame.AuthFail -> byteArrayOf(FrameType.AUTH_FAIL.code.toByte())
 
@@ -171,17 +183,11 @@ object FrameCodec {
 
         return when (type) {
             FrameType.PING.code -> {
-                if (payload.size != 1) {
-                    throw IllegalArgumentException("Ping frame has trailing bytes: ${payload.size} != 1")
-                }
-                Frame.Ping
+                Frame.Ping(payload.copyOfRange(1, payload.size))
             }
 
             FrameType.PONG.code -> {
-                if (payload.size != 1) {
-                    throw IllegalArgumentException("Pong frame has trailing bytes: ${payload.size} != 1")
-                }
-                Frame.Pong
+                Frame.Pong(payload.copyOfRange(1, payload.size))
             }
 
             FrameType.AUTH_OK.code -> {

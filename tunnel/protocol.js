@@ -90,7 +90,12 @@ function encodeFrame(frame) {
     }
 
     case FRAME_TYPES.PING:
-    case FRAME_TYPES.PONG:
+    case FRAME_TYPES.PONG: {
+      const extraPayload = frame.payload || Buffer.alloc(0);
+      payload = Buffer.concat([Buffer.from([frame.type]), extraPayload]);
+      break;
+    }
+
     case FRAME_TYPES.AUTH_OK:
     case FRAME_TYPES.AUTH_FAIL: {
       payload = Buffer.from([frame.type]);
@@ -165,7 +170,10 @@ function decodeFrame(buffer) {
     }
 
     case FRAME_TYPES.PING:
-    case FRAME_TYPES.PONG:
+    case FRAME_TYPES.PONG: {
+      return { type, payload: payload.slice(offset), bytesRead: 2 + length };
+    }
+
     case FRAME_TYPES.AUTH_OK:
     case FRAME_TYPES.AUTH_FAIL: {
       return { type, bytesRead: 2 + length };

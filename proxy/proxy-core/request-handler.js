@@ -598,7 +598,13 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
           });
 
           try {
-            cltSocket.write('HTTP/' + req.httpVersion + ' 200 OK\r\n\r\n', 'UTF-8', (writeErr) => {
+            // 检查是否为隧道域名，如果是则注入 X-Tunnel-Relay header
+            const isTunnel = reqHandlerCtx.isTunnelDomain && reqHandlerCtx.isTunnelDomain(host);
+            const connectResponse = isTunnel
+              ? 'HTTP/' + req.httpVersion + ' 200 OK\r\nX-Tunnel-Relay: 1\r\n\r\n'
+              : 'HTTP/' + req.httpVersion + ' 200 OK\r\n\r\n';
+
+            cltSocket.write(connectResponse, 'UTF-8', (writeErr) => {
               if (writeErr) {
                 if (writeErr.code === 'EPIPE' || writeErr.code === 'ECONNRESET') {
                   logUtil.printLog(`Write failed due to client disconnect (EPIPE/ECONNRESET) for ${req.url}`, logUtil.T_DEBUG);
@@ -859,6 +865,7 @@ class RequestHandler {
    * @param {number} config.httpServerPort
    * @param {boolean} config.wsIntercept
    * @param {function} config.customConnect - optional custom CONNECT handler (for tunnel domains)
+   * @param {function} config.isTunnelDomain - optional function to check if host is a tunnel domain
    * @param {number} config.timeout
    * @param {object} rule - user rule callbacks
    */
@@ -869,6 +876,7 @@ class RequestHandler {
     this.httpServerPort = '';
     this.wsIntercept = false;
     this.customConnect = null;
+    this.isTunnelDomain = null;
     this.timeout = 0;
 
     if (config.forceProxyHttps) {
@@ -886,6 +894,11 @@ class RequestHandler {
     // Fix: pass customConnect into RequestHandler (fork gap)
     if (config.customConnect) {
       this.customConnect = config.customConnect;
+    }
+
+    // Pass isTunnelDomain check function for tunnel relay header injection
+    if (config.isTunnelDomain) {
+      this.isTunnelDomain = config.isTunnelDomain;
     }
 
     if (config.timeout) {

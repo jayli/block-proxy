@@ -31,13 +31,28 @@ const TunnelManager = require('../tunnel/manager');
 let ruleRegistry = mitmRegistry.createRegistry({ config: {} });
 let cliRulePath = null;
 
-const { ensureTempCert } = require('../cert/generator');
-
 // Tunnel module-level variables
 let tunnelServer = null;
 let tunnelManager = null;
-const tunnelCertFile = path.join(__dirname, '../cert/tunnel_tls.crt');
-const tunnelKeyFile = path.join(__dirname, '../cert/tunnel_tls.key');
+
+// Tunnel TLS 证书路径
+function getTunnelCertPaths() {
+  // 优先使用命令行参数指定的路径
+  if (process.env.TUNNEL_PUBKEY && process.env.TUNNEL_PRIVKEY) {
+    return {
+      cert: process.env.TUNNEL_PUBKEY,
+      key: process.env.TUNNEL_PRIVKEY,
+      type: '命令行指定'
+    };
+  }
+
+  // 默认复用 SOCKS5 证书
+  return {
+    cert: path.join(__dirname, '../cert/socks5_tls.crt'),
+    key: path.join(__dirname, '../cert/socks5_tls.key'),
+    type: '复用 SOCKS5 证书 (socks5_tls.crt/key)'
+  };
+}
 
 // 启用全局 keep-alive，使 AnyProxy 内部转发也复用连接
 http.globalAgent.keepAlive = true;
@@ -228,6 +243,8 @@ async function loadConfig() {
     express_port: expressPort,
     enable_tunnel: "1",
     tunnel_port: 8003,
+    tunnel_rotation_drain_timeout: 10,
+    tunnel_rotation_drain_idle_timeout: 20,
     tunnel_domains: [],
     rule_modules: {},
     devices: []
@@ -291,6 +308,8 @@ async function loadConfig() {
 
       config.enable_tunnel = loadedConfig.enable_tunnel || "1";
       config.tunnel_port = loadedConfig.tunnel_port || 8003;
+      config.tunnel_rotation_drain_timeout = loadedConfig.tunnel_rotation_drain_timeout || 10;
+      config.tunnel_rotation_drain_idle_timeout = loadedConfig.tunnel_rotation_drain_idle_timeout || 20;
       config.tunnel_domains = loadedConfig.tunnel_domains || [];
 
       config.rule_modules = loadedConfig.rule_modules || {};
@@ -335,6 +354,8 @@ async function loadConfig() {
         mitm_debug_log: mitm_debug_log,
         enable_tunnel: "1",
         tunnel_port: 8003,
+        tunnel_rotation_drain_timeout: 10,
+        tunnel_rotation_drain_idle_timeout: 20,
         tunnel_domains: [],
         rule_modules: {},
         vpn_proxy: ""
@@ -1036,19 +1057,28 @@ function passRequestWithHttpAgent(requestDetail, isHttps) {
 async function initTunnel(config) {
   await closeTunnel();
 
-  // 确保 ECC P-256 临时 TLS 证书存在（首次启动自动生成，之后跳过）
-  await ensureTempCert('tunnel_tls', tunnelKeyFile, tunnelCertFile);
-
   const enableTunnel = config.enable_tunnel || "1";
   const tunnelPort = config.tunnel_port || 8003;
   if (enableTunnel !== "1") return;
 
-  if (!fs.existsSync(tunnelCertFile) || !fs.existsSync(tunnelKeyFile)) {
-    throw new Error(`Tunnel TLS cert/key missing: cert=${tunnelCertFile}, key=${tunnelKeyFile}`);
+  // 获取证书路径
+  const certPaths = getTunnelCertPaths();
+
+  // 如果使用默认 SOCKS5 证书且不存在，则生成
+  if (!process.env.TUNNEL_PUBKEY) {
+    if (!fs.existsSync(certPaths.cert) || !fs.existsSync(certPaths.key)) {
+      const { ensureTempCert } = require('../cert/generator');
+      await ensureTempCert('socks5_tls', certPaths.key, certPaths.cert);
+    }
   }
 
-  const tunnelCert = fs.readFileSync(tunnelCertFile);
-  const tunnelKey = fs.readFileSync(tunnelKeyFile);
+  if (!fs.existsSync(certPaths.cert) || !fs.existsSync(certPaths.key)) {
+    throw new Error(`Tunnel TLS 证书缺失: ${certPaths.cert} 或 ${certPaths.key}`);
+  }
+
+  console.log(`[Tunnel] 使用证书: ${certPaths.type}`);
+  const tunnelCert = fs.readFileSync(certPaths.cert);
+  const tunnelKey = fs.readFileSync(certPaths.key);
 
   tunnelServer = new TunnelServer({
     port: tunnelPort,
@@ -1058,6 +1088,8 @@ async function initTunnel(config) {
       username: config.auth_username,
       password: config.auth_password
     },
+    tunnel_rotation_drain_timeout: config.tunnel_rotation_drain_timeout,
+    tunnel_rotation_drain_idle_timeout: config.tunnel_rotation_drain_idle_timeout,
     onConnect: (socket, addr, port) => {
       tunnelManager.setConnected(socket, true, `${addr}:${port}`);
       console.log(`[Tunnel] Client connected: ${addr}:${port}`);
@@ -1069,6 +1101,7 @@ async function initTunnel(config) {
   });
 
   tunnelManager = new TunnelManager(tunnelServer, config);
+  tunnelServer.setActiveRequestChecker((socket) => tunnelManager.getSocketDrainState(socket));
   await tunnelServer.start();
   console.log(`[Tunnel] Server started on port ${tunnelPort}`);
 }
@@ -1090,6 +1123,9 @@ function getAnyProxyOptions() {
         return tunnelManager.forward(host, port, callback);
       }
       return null;
+    },
+    isTunnelDomain: (host) => {
+      return tunnelManager && tunnelManager.matchesTunnelDomain(host);
     },
     rule: {
       responseRules: getResponseRules(),

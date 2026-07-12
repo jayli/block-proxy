@@ -28,6 +28,7 @@ DEFAULT_CONFIG = {
         "enabled": False,
         "server_address": "",
         "server_port": 8003,
+        "http_disguise": True,
     },
 }
 

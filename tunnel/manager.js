@@ -8,7 +8,6 @@ class TunnelManager {
     this._tunnelDomains = config.tunnel_domains || [];
     this._proxyPort = config.proxy_port || 8001;
     this._reqidCounter = 0;
-    this._rrCounter = 0;
     this._activeRequests = new Map();
     this._connected = false;
     this._clientAddress = null;
@@ -41,16 +40,12 @@ class TunnelManager {
     const socket = this._selectSocket();
     if (!socket) return createErrorStream('tunnel-disconnected');
 
-    // 调试日志：显示选择了哪个连接
-    const socketId = [...this._server._clientSockets].indexOf(socket);
-    console.log(`[Tunnel] Forward ${host}:${port} (reqid will be allocated) -> connection ${socketId + 1}/${this._server._clientSockets.size}`);
-
     const reqid = this._allocateReqid();
     const stream = new TunnelDuplex(this, reqid);
 
     this._activeRequests.set(reqid, {
       reqid, stream, confirmed: false, timeout: null, direction: 'reverse',
-      socket
+      socket, lastActivityAt: Date.now()
     });
     const entry = this._activeRequests.get(reqid);
 
@@ -84,10 +79,11 @@ class TunnelManager {
   }
 
   _selectSocket() {
-    const sockets = [...this._server._clientSockets];
-    if (sockets.length === 0) return null;
-    this._rrCounter++;
-    return sockets[this._rrCounter % sockets.length];
+    if (typeof this._server.getActiveSocket === 'function') {
+      return this._server.getActiveSocket();
+    }
+    const sockets = [...(this._server._clientSockets || [])];
+    return sockets[0] || null;
   }
 
   _allocateReqid() {
@@ -109,12 +105,14 @@ class TunnelManager {
 
     switch (frame.type) {
       case FRAME_TYPES.CONNECT_OK: {
+        entry.lastActivityAt = Date.now();
         entry.confirmed = true;
         entry.stream.emit('tunnel-connect-ok');
         break;
       }
 
       case FRAME_TYPES.DATA: {
+        entry.lastActivityAt = Date.now();
         if (entry.direction === 'forward' && entry._anyproxySocket) {
           const canContinue = entry._anyproxySocket.write(frame.data);
           if (!canContinue) {
@@ -131,6 +129,7 @@ class TunnelManager {
       }
 
       case FRAME_TYPES.CLOSE: {
+        entry.lastActivityAt = Date.now();
         if (entry.direction === 'forward' && entry._anyproxySocket) {
           entry._anyproxySocket.destroy();
         }
@@ -142,6 +141,7 @@ class TunnelManager {
       }
 
       case FRAME_TYPES.CONNECT_FAILED: {
+        entry.lastActivityAt = Date.now();
         if (entry.direction === 'forward' && entry._anyproxySocket) {
           entry._anyproxySocket.destroy();
         }
@@ -163,13 +163,13 @@ class TunnelManager {
       return;
     }
 
-    console.log(`[Tunnel] Forward CONNECT ${reqid}: ${targetHost}:${targetPort} (connection ${[...this._server._clientSockets].indexOf(socket) + 1}/${this._server._clientSockets.size})`);
+    console.log(`[Tunnel] Forward CONNECT ${reqid}: ${targetHost}:${targetPort}`);
 
     const stream = new TunnelDuplex(this, reqid);
     const entry = {
       reqid, stream, confirmed: false, timeout: null,
       direction: 'forward', _anyproxySocket: null,
-      socket
+      socket, lastActivityAt: Date.now()
     };
     this._activeRequests.set(reqid, entry);
 
@@ -198,6 +198,7 @@ class TunnelManager {
     let responseBuffer = Buffer.alloc(0);
     anyproxySocket.on('data', (data) => {
       if (!entry.confirmed) {
+        entry.lastActivityAt = Date.now();
         responseBuffer = Buffer.concat([responseBuffer, data]);
         const headerEnd = responseBuffer.indexOf('\r\n\r\n');
         if (headerEnd === -1) return;
@@ -223,6 +224,7 @@ class TunnelManager {
       }
 
       // Relay data from AnyProxy to client
+      entry.lastActivityAt = Date.now();
       this._sendDataToClient(reqid, data, entry.socket).catch(() => {});
     });
 
@@ -245,6 +247,8 @@ class TunnelManager {
   }
 
   async _sendDataToClient(reqid, data, socket) {
+    const entry = this._activeRequests.get(reqid);
+    if (entry) entry.lastActivityAt = Date.now();
     for (let offset = 0; offset < data.length; offset += MAX_DATA_CHUNK) {
       await this._server.sendFrame({
         type: FRAME_TYPES.DATA,
@@ -256,6 +260,8 @@ class TunnelManager {
   }
 
   _sendCloseToClient(reqid, socket) {
+    const entry = this._activeRequests.get(reqid);
+    if (entry) entry.lastActivityAt = Date.now();
     this._server.sendFrame({ type: FRAME_TYPES.CLOSE, reqid }, socket);
   }
 
@@ -269,6 +275,7 @@ class TunnelManager {
   async _sendData(reqid, data) {
     const entry = this._activeRequests.get(reqid);
     if (!entry) return;
+    entry.lastActivityAt = Date.now();
     for (let offset = 0; offset < data.length; offset += MAX_DATA_CHUNK) {
       await this._server.sendFrame({
         type: FRAME_TYPES.DATA,
@@ -282,6 +289,7 @@ class TunnelManager {
   _sendClose(reqid) {
     const entry = this._activeRequests.get(reqid);
     if (!entry) return;
+    entry.lastActivityAt = Date.now();
     this._server.sendFrame({ type: FRAME_TYPES.CLOSE, reqid }, entry.socket);
     this._clearActiveRequest(reqid);
   }
@@ -291,12 +299,37 @@ class TunnelManager {
   }
 
   getStatus() {
+    const counts = typeof this._server.getConnectionCounts === 'function'
+      ? this._server.getConnectionCounts()
+      : { total: (this._server._clientSockets || new Set()).size };
     return {
       connected: this._connected,
       clientAddress: this._clientAddress,
       activeRequests: this._activeRequests.size,
-      connections: this._server._clientSockets.size
+      connections: counts.total,
+      activeConnections: counts.active || 0,
+      candidateConnections: counts.candidate || 0,
+      drainingConnections: counts.draining || 0
     };
+  }
+
+  getSocketActiveRequestCount(socket) {
+    let count = 0;
+    for (const entry of this._activeRequests.values()) {
+      if (entry.socket === socket) count++;
+    }
+    return count;
+  }
+
+  getSocketDrainState(socket) {
+    let activeCount = 0;
+    let lastActivityAt = 0;
+    for (const entry of this._activeRequests.values()) {
+      if (entry.socket !== socket) continue;
+      activeCount++;
+      lastActivityAt = Math.max(lastActivityAt, entry.lastActivityAt || Date.now());
+    }
+    return { activeCount, lastActivityAt };
   }
 
   setConnected(socket, connected, clientAddress) {
@@ -317,8 +350,8 @@ class TunnelManager {
           this._activeRequests.delete(reqid);
         }
       }
-      // 根据剩余连接数更新状态
-      this._connected = this._server._clientSockets.size > 0;
+      const activeSocket = this._selectSocket();
+      this._connected = Boolean(activeSocket);
       if (!this._connected) {
         this._clientAddress = null;
       }
@@ -331,6 +364,7 @@ class TunnelDuplex extends Duplex {
     super({ highWaterMark: 65536 });
     this._manager = manager;
     this._reqid = reqid;
+    this.isTunnelStream = true;
   }
 
   _read() {

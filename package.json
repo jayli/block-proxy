@@ -1,6 +1,6 @@
 {
   "name": "block-proxy",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "description": "Small-scale network mitm proxy filter",
   "bin": {
     "block-proxy": "bin/start.js"
@@ -8,19 +8,19 @@
   "dependencies": {
     "axios": "^1.13.2",
     "co": "^4.6.0",
-    "node-easy-cert": "^1.0.0",
-    "ws": "^5.1.0",
     "commander": "^14.0.2",
     "express": "^5.1.0",
     "http-proxy-agent": "^7.0.2",
     "https-proxy-agent": "^7.0.6",
+    "node-easy-cert": "^1.0.0",
     "ping": "^1.0.0",
     "qrcode": "^1.5.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-scripts": "5.0.1",
     "selfsigned": "^5.5.0",
-    "web-vitals": "^2.1.4"
+    "web-vitals": "^2.1.4",
+    "ws": "^8.16.0"
   },
   "repository": {
     "type": "git",
@@ -47,7 +47,7 @@
     "test:proxy": "node test/run.js",
     "test:android": "cd android-client && ./gradlew :app:testDebugUnitTest",
     "test:android:emulator": "cd android-client && unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy && ./gradlew :app:connectedDebugAndroidTest",
-    "android:build": "cd android-client && ./gradlew :app:assembleDebug && cp app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/BlockProxyClient-android.apk",
+    "android:build": "cd android-client && ./gradlew :app:assembleDebug",
     "android:install": "~/Library/Android/sdk/platform-tools/adb install -r android-client/app/build/outputs/apk/debug/BlockProxyClient-android.apk",
     "android:start": "~/Library/Android/sdk/platform-tools/adb shell am start -n com.blockproxy.android/.MainActivity",
     "android:logcat": "~/Library/Android/sdk/platform-tools/adb logcat | grep -E 'BlockProxy|Tunnel|AndroidRuntime'",

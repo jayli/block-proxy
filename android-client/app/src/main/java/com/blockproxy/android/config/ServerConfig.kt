@@ -14,6 +14,10 @@ data class ServerConfig(
     val serverPort: Int = DEFAULT_PORT,
     val useTls: Boolean = true,
     val allowInsecure: Boolean = true,
+    // WebSocket tunnel 新增
+    val wsPath: String = "/ws",
+    val httpDisguise: Boolean = true,
+    val customHeaders: Map<String, String> = emptyMap(),
 ) {
     companion object {
         /** Default tunnel server port (matches block-proxy tunnel server). */

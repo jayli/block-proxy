@@ -97,6 +97,21 @@ describe('Protocol encodeFrame/decodeFrame', () => {
     }
   });
 
+  it('PING supports optional payload', () => {
+    const payload = Buffer.from('abc');
+    const frame = encodeFrame({ type: FRAME_TYPES.PING, payload });
+    const decoded = decodeFrame(frame);
+    assert.equal(decoded.type, FRAME_TYPES.PING);
+    assert.deepEqual(decoded.payload, payload);
+  });
+
+  it('PONG without payload decodes to empty buffer', () => {
+    const frame = encodeFrame({ type: FRAME_TYPES.PONG });
+    const decoded = decodeFrame(frame);
+    assert.equal(decoded.type, FRAME_TYPES.PONG);
+    assert.deepEqual(decoded.payload, Buffer.alloc(0));
+  });
+
   it('should roundtrip ERROR frame with message', () => {
     const frame = { type: FRAME_TYPES.ERROR, message: 'Tunnel port occupied' };
     const buf = encodeFrame(frame);

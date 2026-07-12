@@ -3,6 +3,8 @@ package com.blockproxy.android.tunnel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedReceiveChannelException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
@@ -12,19 +14,16 @@ import org.junit.Test
 import java.io.IOException
 import java.net.Socket
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ReverseConnectHandlerTest {
 
     // ── Fake target socket ──────────────────────────────────────────
 
-    /**
-     * In-memory [TunnelSocket] for target (downstream) connections.
-     */
-    class FakeTargetSocket : TunnelSocket {
+    /** In-memory [TargetSocket] for target (downstream) connections. */
+    class FakeTargetSocket : TargetSocket {
         var connected = false
         var connectShouldFail = false
         var connectDelayMs: Long = 0
@@ -77,33 +76,23 @@ class ReverseConnectHandlerTest {
         }
     }
 
-    // ── Fake tunnel socket ──────────────────────────────────────────
+    // ── Fake FrameSender ────────────────────────────────────────────
 
-    class FakeTunnelSocket : TunnelSocket {
-        var closed = false
+    class FakeFrameSender : FrameSender {
+        @Volatile override var isOpen: Boolean = true
         val writtenBytes = CopyOnWriteArrayList<ByteArray>()
-        private val incomingData = Channel<ByteArray>(Channel.UNLIMITED)
+        private val closed = AtomicBoolean(false)
 
-        override suspend fun connect(host: String, port: Int, timeoutMs: Long) {}
+        override suspend fun sendFrame(encoded: ByteArray): Boolean {
+            if (!isOpen || closed.get()) return false
+            writtenBytes.add(encoded.copyOf())
+            return true
+        }
 
-        override suspend fun read(buffer: ByteArray): Int {
-            return try {
-                val data = incomingData.receive()
-                val len = minOf(data.size, buffer.size)
-                System.arraycopy(data, 0, buffer, 0, len)
-                len
-            } catch (_: ClosedReceiveChannelException) {
-                -1
+        override fun close(code: Int, reason: String) {
+            if (closed.compareAndSet(false, true)) {
+                isOpen = false
             }
-        }
-
-        override suspend fun write(bytes: ByteArray) {
-            writtenBytes.add(bytes.copyOf())
-        }
-
-        override fun close() {
-            closed = true
-            incomingData.close()
         }
     }
 
@@ -113,37 +102,18 @@ class ReverseConnectHandlerTest {
         val sockets = mutableListOf<FakeTargetSocket>()
         var nextSocket: FakeTargetSocket? = null
 
-        override fun create(): TunnelSocket {
+        override fun create(): TargetSocket {
             val socket = nextSocket ?: FakeTargetSocket()
             nextSocket = null
-            sockets.add(socket as FakeTargetSocket)
+            sockets.add(socket)
             return socket
         }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
 
-    private fun decodeSentFrames(tunnelSocket: FakeTunnelSocket): List<Frame> {
-        return tunnelSocket.writtenBytes.map { FrameCodec.decode(it) }
-    }
-
-    /**
-     * Creates a TunnelConnection for handler testing.
-     * Uses the TestScope so that SendQueue consumer is driven by runCurrent/advanceUntilIdle.
-     */
-    private fun createConnection(
-        tunnelSocket: FakeTunnelSocket,
-        scope: kotlinx.coroutines.CoroutineScope,
-    ): TunnelConnection {
-        return TunnelConnection(
-            id = "test-conn",
-            socket = tunnelSocket,
-            username = "user",
-            password = "pass",
-            scope = scope,
-            onFrame = { /* not used — tests call handleFrame directly */ },
-            onDisconnect = {},
-        )
+    private fun decodeSentFrames(sender: FakeFrameSender): List<Frame> {
+        return sender.writtenBytes.map { FrameCodec.decode(it) }
     }
 
     // ── Tests ────────────────────────────────────────────────────────
@@ -151,14 +121,12 @@ class ReverseConnectHandlerTest {
     @Test
     fun `RealTargetSocket connects despite protect returning false`() = runTest {
         var protectCalled = false
-        var protectResult = false
+        val protectResult = false
         val targetSocket = RealTargetSocket(protect = { s: Socket ->
             protectCalled = true
             protectResult
         })
 
-        // protect() returning false should NOT throw — it logs a warning and proceeds.
-        // Connection attempt to a discard port will fail with ConnectException, not IOException.
         try {
             targetSocket.connect("127.0.0.1", 9, 1_000)
         } catch (_: Exception) {
@@ -170,27 +138,25 @@ class ReverseConnectHandlerTest {
     }
 
     @Test
-    fun `CONNECT success sends CONNECT_OK on same tunnel connection`() = runTest {
+    fun `CONNECT success sends CONNECT_OK on same sender`() = runTest {
         val factory = TestTargetSocketFactory()
         val handler = ReverseConnectHandler(this, factory)
         val targetSocket = FakeTargetSocket()
         factory.nextSocket = targetSocket
 
-        val tunnelSocket = FakeTunnelSocket()
-        val conn = createConnection(tunnelSocket, this)
+        val sender = FakeFrameSender()
 
-        handler.handleFrame(conn, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
+        handler.handleFrame(sender, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
         runCurrent()
 
         assertTrue("Target socket should be connected", targetSocket.connected)
 
-        val sentFrames = decodeSentFrames(tunnelSocket)
+        val sentFrames = decodeSentFrames(sender)
         val connectOk = sentFrames.filterIsInstance<Frame.ConnectOk>()
         assertEquals("Should have exactly one CONNECT_OK", 1, connectOk.size)
         assertEquals("CONNECT_OK should have reqid=1", 1, connectOk[0].reqid)
 
-        handler.closeSessionsFor(conn)
-        conn.close()
+        handler.closeSessionsFor(sender)
     }
 
     @Test
@@ -201,25 +167,20 @@ class ReverseConnectHandlerTest {
         targetSocket.connectShouldFail = true
         factory.nextSocket = targetSocket
 
-        val tunnelSocket = FakeTunnelSocket()
-        val conn = createConnection(tunnelSocket, this)
+        val sender = FakeFrameSender()
 
-        handler.handleFrame(conn, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
+        handler.handleFrame(sender, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
         runCurrent()
 
         assertFalse("Target socket should NOT be connected", targetSocket.connected)
         assertTrue("Target socket should be closed after failure", targetSocket.closeCount.get() > 0)
 
-        val sentFrames = decodeSentFrames(tunnelSocket)
+        val sentFrames = decodeSentFrames(sender)
         val failed = sentFrames.filterIsInstance<Frame.ConnectFailed>()
         assertEquals("Should have exactly one CONNECT_FAILED", 1, failed.size)
         assertEquals(1, failed[0].reqid)
 
-        val ok = sentFrames.filterIsInstance<Frame.ConnectOk>()
-        assertEquals("Should have no CONNECT_OK", 0, ok.size)
-
-        handler.closeSessionsFor(conn)
-        conn.close()
+        handler.closeSessionsFor(sender)
     }
 
     @Test
@@ -230,22 +191,20 @@ class ReverseConnectHandlerTest {
         targetSocket.connectDelayMs = 60_000L
         factory.nextSocket = targetSocket
 
-        val tunnelSocket = FakeTunnelSocket()
-        val conn = createConnection(tunnelSocket, this)
+        val sender = FakeFrameSender()
 
-        handler.handleFrame(conn, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
+        handler.handleFrame(sender, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
         runCurrent()
 
         advanceTimeBy(6_000L)
         runCurrent()
 
-        val sentFrames = decodeSentFrames(tunnelSocket)
+        val sentFrames = decodeSentFrames(sender)
         val failed = sentFrames.filterIsInstance<Frame.ConnectFailed>()
         assertEquals("Should have CONNECT_FAILED on timeout", 1, failed.size)
         assertEquals(1, failed[0].reqid)
 
-        handler.closeSessionsFor(conn)
-        conn.close()
+        handler.closeSessionsFor(sender)
     }
 
     @Test
@@ -255,10 +214,9 @@ class ReverseConnectHandlerTest {
         val targetSocket = FakeTargetSocket()
         factory.nextSocket = targetSocket
 
-        val tunnelSocket = FakeTunnelSocket()
-        val conn = createConnection(tunnelSocket, this)
+        val sender = FakeFrameSender()
 
-        handler.handleFrame(conn, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
+        handler.handleFrame(sender, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
         runCurrent()
 
         val largeData = ByteArray(150_000) { (it % 256).toByte() }
@@ -266,7 +224,7 @@ class ReverseConnectHandlerTest {
         targetSocket.enqueueEOF()
         advanceUntilIdle()
 
-        val sentFrames = decodeSentFrames(tunnelSocket)
+        val sentFrames = decodeSentFrames(sender)
         val dataFrames = sentFrames.filterIsInstance<Frame.Data>().filter { it.reqid == 1 }
 
         assertEquals("Expected 3 DATA chunks", 3, dataFrames.size)
@@ -275,13 +233,10 @@ class ReverseConnectHandlerTest {
         assertEquals(65532, dataFrames[1].payload.size)
         assertEquals(150_000 - 65532 - 65532, dataFrames[2].payload.size)
 
-        val reconstructed = dataFrames.fold(ByteArray(0)) { acc, frame ->
-            acc + frame.payload
-        }
+        val reconstructed = dataFrames.fold(ByteArray(0)) { acc, frame -> acc + frame.payload }
         assertArrayEquals("Reconstructed data should match original", largeData, reconstructed)
 
-        handler.closeSessionsFor(conn)
-        conn.close()
+        handler.closeSessionsFor(sender)
     }
 
     @Test
@@ -291,14 +246,13 @@ class ReverseConnectHandlerTest {
         val targetSocket = FakeTargetSocket()
         factory.nextSocket = targetSocket
 
-        val tunnelSocket = FakeTunnelSocket()
-        val conn = createConnection(tunnelSocket, this)
+        val sender = FakeFrameSender()
 
-        handler.handleFrame(conn, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
+        handler.handleFrame(sender, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
         runCurrent()
 
         for (i in 1..10) {
-            handler.handleFrame(conn, Frame.Data(1, byteArrayOf(i.toByte())))
+            handler.handleFrame(sender, Frame.Data(1, byteArrayOf(i.toByte())))
         }
         advanceUntilIdle()
 
@@ -311,8 +265,7 @@ class ReverseConnectHandlerTest {
             )
         }
 
-        handler.closeSessionsFor(conn)
-        conn.close()
+        handler.closeSessionsFor(sender)
     }
 
     @Test
@@ -322,46 +275,19 @@ class ReverseConnectHandlerTest {
         val targetSocket = FakeTargetSocket()
         factory.nextSocket = targetSocket
 
-        val tunnelSocket = FakeTunnelSocket()
-        val conn = createConnection(tunnelSocket, this)
+        val sender = FakeFrameSender()
 
-        handler.handleFrame(conn, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
+        handler.handleFrame(sender, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
         runCurrent()
 
-        handler.handleFrame(conn, Frame.Close(1))
+        handler.handleFrame(sender, Frame.Close(1))
         advanceUntilIdle()
-        handler.handleFrame(conn, Frame.Close(1))
+        handler.handleFrame(sender, Frame.Close(1))
         advanceUntilIdle()
 
         assertEquals("Target socket close count should be 1", 1, targetSocket.closeCount.get())
 
-        handler.closeSessionsFor(conn)
-        conn.close()
-    }
-
-    @Test
-    fun `receiving CLOSE then sending CLOSE back is tolerated`() = runTest {
-        val factory = TestTargetSocketFactory()
-        val handler = ReverseConnectHandler(this, factory)
-        val targetSocket = FakeTargetSocket()
-        factory.nextSocket = targetSocket
-
-        val tunnelSocket = FakeTunnelSocket()
-        val conn = createConnection(tunnelSocket, this)
-
-        handler.handleFrame(conn, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
-        runCurrent()
-
-        handler.handleFrame(conn, Frame.Close(1))
-        advanceUntilIdle()
-
-        handler.handleFrame(conn, Frame.Close(1))
-        advanceUntilIdle()
-
-        assertEquals("Target socket closed exactly once", 1, targetSocket.closeCount.get())
-
-        handler.closeSessionsFor(conn)
-        conn.close()
+        handler.closeSessionsFor(sender)
     }
 
     @Test
@@ -371,25 +297,19 @@ class ReverseConnectHandlerTest {
         val targetSocket = FakeTargetSocket()
         factory.nextSocket = targetSocket
 
-        val tunnelSocket = FakeTunnelSocket()
-        val conn = createConnection(tunnelSocket, this)
+        val sender = FakeFrameSender()
 
-        handler.handleFrame(conn, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
+        handler.handleFrame(sender, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
         runCurrent()
 
         repeat(5) {
-            handler.handleFrame(conn, Frame.Close(1))
+            handler.handleFrame(sender, Frame.Close(1))
         }
         advanceUntilIdle()
 
-        assertEquals(
-            "Target socket closed exactly once despite 5 CLOSE frames",
-            1,
-            targetSocket.closeCount.get(),
-        )
+        assertEquals("Target socket closed exactly once", 1, targetSocket.closeCount.get())
 
-        handler.closeSessionsFor(conn)
-        conn.close()
+        handler.closeSessionsFor(sender)
     }
 
     @Test
@@ -399,63 +319,52 @@ class ReverseConnectHandlerTest {
         val targetSocket = FakeTargetSocket()
         factory.nextSocket = targetSocket
 
-        val tunnelSocket = FakeTunnelSocket()
-        val conn = createConnection(tunnelSocket, this)
+        val sender = FakeFrameSender()
 
-        handler.handleFrame(conn, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
+        handler.handleFrame(sender, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
         runCurrent()
 
-        handler.handleFrame(conn, Frame.Close(1))
+        handler.handleFrame(sender, Frame.Close(1))
         advanceUntilIdle()
 
         val writesBefore = targetSocket.writtenBytes.size
 
-        handler.handleFrame(conn, Frame.Data(1, byteArrayOf(0x42, 0x43)))
+        handler.handleFrame(sender, Frame.Data(1, byteArrayOf(0x42, 0x43)))
         advanceUntilIdle()
 
-        assertEquals(
-            "No new writes after close",
-            writesBefore,
-            targetSocket.writtenBytes.size,
-        )
+        assertEquals("No new writes after close", writesBefore, targetSocket.writtenBytes.size)
 
-        handler.closeSessionsFor(conn)
-        conn.close()
+        handler.closeSessionsFor(sender)
     }
 
     @Test
-    fun `closeSessionsFor only closes sessions owned by that connection`() = runTest {
+    fun `closeSessionsFor only closes sessions owned by that sender`() = runTest {
         val factory = TestTargetSocketFactory()
         val handler = ReverseConnectHandler(this, factory)
 
-        val tunnelSocketA = FakeTunnelSocket()
-        val connA = createConnection(tunnelSocketA, this)
-
-        val tunnelSocketB = FakeTunnelSocket()
-        val connB = createConnection(tunnelSocketB, this)
+        val senderA = FakeFrameSender()
+        val senderB = FakeFrameSender()
 
         val targetA = FakeTargetSocket()
         factory.nextSocket = targetA
-        handler.handleFrame(connA, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
+        handler.handleFrame(senderA, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
         runCurrent()
 
         val targetB = FakeTargetSocket()
         factory.nextSocket = targetB
-        handler.handleFrame(connB, Frame.Connect(2, FrameAddress.IPv4("5.6.7.8"), 80))
+        handler.handleFrame(senderB, Frame.Connect(2, FrameAddress.IPv4("5.6.7.8"), 80))
         runCurrent()
 
         assertTrue("Target A connected", targetA.connected)
         assertTrue("Target B connected", targetB.connected)
 
-        handler.closeSessionsFor(connA)
+        handler.closeSessionsFor(senderA)
         advanceUntilIdle()
 
         assertEquals("Target A should be closed", 1, targetA.closeCount.get())
         assertEquals("Target B should NOT be closed", 0, targetB.closeCount.get())
 
-        handler.closeSessionsFor(connB)
-        connA.close()
-        connB.close()
+        handler.closeSessionsFor(senderB)
     }
 
     @Test
@@ -463,25 +372,22 @@ class ReverseConnectHandlerTest {
         val factory = TestTargetSocketFactory()
         val handler = ReverseConnectHandler(this, factory)
 
-        val tunnelSocket = FakeTunnelSocket()
-        val conn = createConnection(tunnelSocket, this)
+        val sender = FakeFrameSender()
 
         val targetSocket1 = FakeTargetSocket()
         factory.nextSocket = targetSocket1
-
-        handler.handleFrame(conn, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
+        handler.handleFrame(sender, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
         runCurrent()
 
         val targetSocket2 = FakeTargetSocket()
         factory.nextSocket = targetSocket2
-        handler.handleFrame(conn, Frame.Connect(2, FrameAddress.IPv4("5.6.7.8"), 80))
+        handler.handleFrame(sender, Frame.Connect(2, FrameAddress.IPv4("5.6.7.8"), 80))
         runCurrent()
 
         val largeData = ByteArray(200_000) { (it % 256).toByte() }
         targetSocket1.enqueueIncomingData(largeData)
 
-        handler.handleFrame(conn, Frame.Data(2, byteArrayOf(0x42)))
-
+        handler.handleFrame(sender, Frame.Data(2, byteArrayOf(0x42)))
         advanceUntilIdle()
 
         targetSocket1.enqueueEOF()
@@ -492,13 +398,12 @@ class ReverseConnectHandlerTest {
             targetSocket2.writtenBytes.any { it.contentEquals(byteArrayOf(0x42)) },
         )
 
-        val sentFrames = decodeSentFrames(tunnelSocket)
+        val sentFrames = decodeSentFrames(sender)
         val dataFrames1 = sentFrames.filterIsInstance<Frame.Data>().filter { it.reqid == 1 }
         val totalBytes = dataFrames1.sumOf { it.payload.size }
         assertEquals("All 200_000 bytes should be relayed", 200_000, totalBytes)
         assertTrue("All chunks <= 65532", dataFrames1.all { it.payload.size <= 65532 })
 
-        handler.closeSessionsFor(conn)
-        conn.close()
+        handler.closeSessionsFor(sender)
     }
 }

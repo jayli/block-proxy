@@ -19,8 +19,16 @@ sealed class Frame {
     data class Close(val reqid: Int) : Frame()
     data class ConnectOk(val reqid: Int) : Frame()
     data class ConnectFailed(val reqid: Int) : Frame()
-    data object Ping : Frame()
-    data object Pong : Frame()
+    data class Ping(val payload: ByteArray) : Frame() {
+        override fun equals(other: Any?): Boolean =
+            other is Ping && payload.contentEquals(other.payload)
+        override fun hashCode(): Int = payload.contentHashCode()
+    }
+    data class Pong(val payload: ByteArray) : Frame() {
+        override fun equals(other: Any?): Boolean =
+            other is Pong && payload.contentEquals(other.payload)
+        override fun hashCode(): Int = payload.contentHashCode()
+    }
     data class Auth(val username: String, val password: String) : Frame()
     data object AuthOk : Frame()
     data object AuthFail : Frame()

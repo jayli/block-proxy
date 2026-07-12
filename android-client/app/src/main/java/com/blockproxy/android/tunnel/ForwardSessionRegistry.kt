@@ -52,7 +52,6 @@ class ForwardSessionRegistry(
     private val sessions = ConcurrentHashMap<Int, ForwardSession>()
     private val allocMutex = Mutex()
     private var nextReqid = reqidMin
-    private val rrIndex = java.util.concurrent.atomic.AtomicInteger(0)
 
     // ── Public query API ─────────────────────────────────────────────
 
@@ -65,45 +64,29 @@ class ForwardSessionRegistry(
     // ── Open ─────────────────────────────────────────────────────────
 
     /**
-     * Opens a new forward session to [host]:[port] over one of the given
-     * [connections].
+     * Opens a new forward session to [host]:[port] over the given [sender].
      *
      * 1. Allocates a forward reqid.
-     * 2. Selects a connection via round-robin.
-     * 3. Sends a CONNECT frame.
-     * 4. Waits for CONNECT_OK / CONNECT_FAILED (with timeout).
-     * 5. Returns the [ForwardSession] on success, throws [IOException] on
+     * 2. Sends a CONNECT frame.
+     * 3. Waits for CONNECT_OK / CONNECT_FAILED (with timeout).
+     * 4. Returns the [ForwardSession] on success, throws [IOException] on
      *    failure or timeout.
      *
-     * Threading model: The session is registered in [sessions] BEFORE the
-     * CONNECT frame is sent. This creates a brief window where a ConnectOk
-     * could arrive before send() completes. This is safe because:
-     * - TunnelConnection's receive loop only processes frames after send() returns
-     * - The session's openResult is a CompletableDeferred that can be completed
-     *   from any thread
-     * - If send() throws, we clean up the registration before propagating the exception
-     *
-     * @throws IOException if no connections are available, CONNECT fails,
-     *                     or the timeout fires.
+     * @throws IOException if CONNECT fails or the timeout fires.
      */
     suspend fun open(
         host: String,
         port: Int,
-        connections: List<TunnelConnection>,
+        sender: FrameSender,
     ): ForwardSession {
-        if (connections.isEmpty()) {
-            throw IOException("No tunnel connections available")
-        }
-
         val reqid = allocateReqid()
-        val conn = selectConnection(connections)
 
         val openResult = CompletableDeferred<Unit>()
         val session = ForwardSession(
             reqid = reqid,
             host = host,
             port = port,
-            connection = conn,
+            sender = sender,
             openResult = openResult,
             inboundCapacity = inboundCapacity,
             onEnd = { s -> sessions.remove(s.reqid, s) },
@@ -111,11 +94,11 @@ class ForwardSessionRegistry(
         sessions[reqid] = session
 
         // Send CONNECT frame
-        android.util.Log.i("ForwardSession", "Sending CONNECT reqid=$reqid host=$host port=$port")
         try {
-            conn.send(Frame.Connect(reqid, hostToAddress(host), port))
+            sender.sendFrame(
+                FrameCodec.encode(Frame.Connect(reqid, hostToAddress(host), port))
+            )
         } catch (e: Exception) {
-            android.util.Log.e("ForwardSession", "Failed to send CONNECT frame", e)
             sessions.remove(reqid, session)
             throw e
         }
@@ -152,12 +135,10 @@ class ForwardSessionRegistry(
     fun handleFrame(frame: Frame) {
         when (frame) {
             is Frame.ConnectOk -> {
-                android.util.Log.i("ForwardSession", "CONNECT_OK reqid=${frame.reqid}")
                 val session = sessions[frame.reqid] ?: return
                 session.openResult.complete(Unit)
             }
             is Frame.ConnectFailed -> {
-                android.util.Log.e("ForwardSession", "CONNECT_FAILED reqid=${frame.reqid} host=${sessions[frame.reqid]?.host}:${sessions[frame.reqid]?.port}")
                 val session = sessions.remove(frame.reqid) ?: return
                 session.openResult.completeExceptionally(
                     IOException("Forward CONNECT failed for reqid ${frame.reqid}")
@@ -179,14 +160,14 @@ class ForwardSessionRegistry(
     // ── Connection cleanup ───────────────────────────────────────────
 
     /**
-     * Closes all forward sessions bound to the given [connection].
+     * Closes all forward sessions bound to the given [sender].
      *
-     * Called when a tunnel connection disconnects.  Pending opens are failed
+     * Called when a WebSocket connection disconnects. Pending opens are failed
      * with an IOException so the caller can retry on another connection.
      */
-    fun closeSessionsFor(connection: TunnelConnection) {
+    fun closeSessionsFor(sender: FrameSender) {
         val toClose = sessions.entries
-            .filter { it.value.connection === connection }
+            .filter { it.value.sender === sender }
             .map { it.key to it.value }
 
         for ((reqid, session) in toClose) {
@@ -215,6 +196,24 @@ class ForwardSessionRegistry(
             )
             session.close()
         }
+    }
+
+    // ── Drain state ──────────────────────────────────────────────────
+
+    /**
+     * Returns the drain state for the given [sender]: number of active requests
+     * and the most recent activity timestamp.
+     */
+    fun getDrainState(sender: FrameSender): DrainState {
+        var activeCount = 0
+        var lastActivityAt = 0L
+        for (session in sessions.values) {
+            if (session.sender === sender) {
+                activeCount++
+                lastActivityAt = maxOf(lastActivityAt, session.lastActivityAt)
+            }
+        }
+        return DrainState(activeCount, lastActivityAt)
     }
 
     // ── Internal ─────────────────────────────────────────────────────
@@ -246,15 +245,6 @@ class ForwardSessionRegistry(
     }
 
     /**
-     * Selects a connection using round-robin.
-     * Caller must ensure [connections] is non-empty.
-     */
-    private fun selectConnection(connections: List<TunnelConnection>): TunnelConnection {
-        val idx = (rrIndex.getAndIncrement() and Int.MAX_VALUE) % connections.size
-        return connections[idx]
-    }
-
-    /**
      * Converts a host string to the appropriate [FrameAddress].
      * IPv4 addresses (dotted decimal) become [FrameAddress.IPv4];
      * everything else becomes [FrameAddress.Domain].
@@ -269,3 +259,6 @@ class ForwardSessionRegistry(
 
     private val IPV4_REGEX = Regex("^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$")
 }
+
+/** Drain state for a WebSocket connection: number of active requests and last activity timestamp. */
+data class DrainState(val activeCount: Int, val lastActivityAt: Long)
