@@ -97,7 +97,6 @@ npm run proxy     # 仅启动代理，不开后台面板
 | HTTP | HTTP 代理直连服务端 8001 端口 |
 | 隧道 | 隧道代理 |
 
-客户端使用 Nuitka 编译为原生 macOS .app，绕过企业安全软件对 xray-core 等二进制的拦截。内置零依赖 protobuf 解析器读取 Xray/V2Ray 格式的 geoip.dat/geosite.dat。
 
 ## 更多文档
 
