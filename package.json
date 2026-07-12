@@ -19,6 +19,7 @@
     "react-dom": "^19.2.0",
     "react-scripts": "5.0.1",
     "selfsigned": "^5.5.0",
+    "socks-proxy-agent": "^8.0.5",
     "web-vitals": "^2.1.4",
     "ws": "^8.16.0"
   },

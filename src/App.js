@@ -69,6 +69,9 @@ function App() {
     auth_password: "",
     login_username: "",
     login_password: "",
+    chain_proxy_enabled: "0",
+    chain_proxy_type: "http",
+    chain_proxy_address: "",
   });
 
   const [newHost, setNewHost] = useState('');
@@ -817,6 +820,37 @@ function App() {
               <option value="0">关闭（纯隧道转发，不拦截，零证书错误）</option>
             </select>
           </div>
+          <div className="setting-row">
+            <label>下游链式代理:</label>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={config.chain_proxy_enabled === "1"}
+                onChange={(e) => setConfig({...config, chain_proxy_enabled: e.target.checked ? "1" : "0"})}
+              />
+              <span className="switch-slider"></span>
+            </label>
+            <select
+              value={config.chain_proxy_type || "http"}
+              onChange={(e) => setConfig({...config, chain_proxy_type: e.target.value})}
+              style={{ marginLeft: '12px', width: '100px' }}
+              disabled={config.chain_proxy_enabled !== "1"}
+            >
+              <option value="http">HTTP</option>
+              <option value="socks5">SOCKS5</option>
+            </select>
+            <input
+              type="text"
+              value={config.chain_proxy_address || ""}
+              onChange={(e) => setConfig({...config, chain_proxy_address: e.target.value || ""})}
+              placeholder="username:password@host:port 或 host:port"
+              disabled={config.chain_proxy_enabled !== "1"}
+              style={{ width: '320px', marginLeft: '8px' }}
+            />
+          </div>
+          <div className="help-text" style={{ marginTop: '-4px', marginBottom: '8px', marginLeft: '140px' }}>
+            开启后所有代理流量将转发至指定下游代理，隧道域名除外
+          </div>
           <div className="rule-module-block">
             <div className="rule-module-header">
               <h3>Rule 逻辑区块</h3>
@@ -1176,6 +1210,14 @@ function App() {
             <b>HTTPS MITM 解密：</b>
             <span>{
               (config.enable_mitm || "1") === "1" ? "开启（需安装证书，支持 URL 路径过滤 + 广告重写）" : "关闭（纯隧道转发，不拦截）"
+            }</span>
+          </p>
+          <p>
+            <b>下游链式代理：</b>
+            <span>{
+              (config.chain_proxy_enabled || "0") === "1" && config.chain_proxy_address
+                ? `${config.chain_proxy_type?.toUpperCase() || 'HTTP'} → ${config.chain_proxy_address}`
+                : "未启用"
             }</span>
           </p>
           <p>

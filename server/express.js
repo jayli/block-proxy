@@ -243,9 +243,87 @@ const REQUIRED_FIELDS = [
   { key: 'devices',          type: 'array',   label: '设备列表' },
   { key: 'rule_modules',     type: 'object',  label: '规则模块' },
   { key: 'enable_tunnel',   type: 'string', label: '隧道开关' },
-  { key: 'tunnel_port',     type: 'number', label: '隧道端口' },
-  { key: 'tunnel_domains',  type: 'array',  label: '隧道域名列表' },
+  { key: 'tunnel_port',          type: 'number', label: '隧道端口' },
+  { key: 'tunnel_domains',       type: 'array',  label: '隧道域名列表' },
+  { key: 'chain_proxy_enabled',  type: 'string', label: '链式代理开关' },
+  { key: 'chain_proxy_type',     type: 'string', label: '链式代理类型' },
+  { key: 'chain_proxy_address',  type: 'string', label: '链式代理地址' },
 ];
+
+function validateImportedConfig(newConfig) {
+  if (!newConfig || typeof newConfig !== 'object' || Array.isArray(newConfig)) {
+    return {
+      ok: false,
+      config: newConfig,
+      details: ['配置文件必须是 JSON 对象'],
+    };
+  }
+
+  const details = [];
+
+  // 兼容老旧配置：补全新增字段的默认值
+  if (!('enable_tunnel' in newConfig)) newConfig.enable_tunnel = "1";
+  if (!('tunnel_port' in newConfig)) newConfig.tunnel_port = 8003;
+  if (!('tunnel_domains' in newConfig)) newConfig.tunnel_domains = [];
+  if (!('chain_proxy_enabled' in newConfig)) newConfig.chain_proxy_enabled = "0";
+  if (!('chain_proxy_type' in newConfig)) newConfig.chain_proxy_type = "http";
+  if (!('chain_proxy_address' in newConfig)) newConfig.chain_proxy_address = "";
+
+  // 校验每个必需字段
+  for (const field of REQUIRED_FIELDS) {
+    if (!(field.key in newConfig)) {
+      details.push(`缺少字段: ${field.label} (${field.key})`);
+      continue;
+    }
+
+    const value = newConfig[field.key];
+    let actualType;
+    if (Array.isArray(value)) {
+      actualType = 'array';
+    } else if (value === null) {
+      actualType = 'null';
+    } else {
+      actualType = typeof value;
+    }
+
+    if (actualType !== field.type) {
+      details.push(`字段 ${field.label} (${field.key}) 类型错误: 期望 ${field.type}, 实际 ${actualType}`);
+      continue;
+    }
+
+    if (['enable_mitm', 'enable_socks5', 'enable_express', 'socks5_tls', 'enable_tunnel', 'chain_proxy_enabled'].includes(field.key)) {
+      if (value !== '0' && value !== '1') {
+        details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是 "0" 或 "1"`);
+      }
+    }
+
+    if (['proxy_port', 'socks5_port', 'tunnel_port'].includes(field.key)) {
+      if (!Number.isInteger(value) || value <= 0 || value > 65535) {
+        details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是 1-65535 的整数`);
+      }
+    }
+
+    if (field.key === 'tunnel_domains') {
+      if (!value.every(item => typeof item === 'string')) {
+        details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是字符串数组`);
+      }
+    }
+  }
+
+  if (!['http', 'socks5'].includes(newConfig.chain_proxy_type)) {
+    details.push('字段 链式代理类型 (chain_proxy_type) 值无效: 必须是 "http" 或 "socks5"');
+  }
+
+  if (newConfig.chain_proxy_enabled === '1' && newConfig.chain_proxy_address.trim() === '') {
+    details.push('字段 链式代理地址 (chain_proxy_address) 值无效: 启用链式代理时不能为空');
+  }
+
+  return {
+    ok: details.length === 0,
+    config: newConfig,
+    details,
+  };
+}
 
 app.post('/api/config/import', async (req, res) => {
   try {
@@ -257,65 +335,12 @@ app.post('/api/config/import', async (req, res) => {
       try {
         const newConfig = JSON.parse(body);
 
-        // 必须是有效对象（非 null/数组）
-        if (!newConfig || typeof newConfig !== 'object' || Array.isArray(newConfig)) {
+        const validation = validateImportedConfig(newConfig);
+        if (!validation.ok) {
           return res.status(400).json({
             error: '配置格式不完整',
-            details: ['配置文件必须是 JSON 对象']
+            details: validation.details
           });
-        }
-
-        const details = [];
-
-        // 兼容老旧配置：补全新增字段的默认值
-        if (!('enable_tunnel' in newConfig)) newConfig.enable_tunnel = "1";
-        if (!('tunnel_port' in newConfig)) newConfig.tunnel_port = 8003;
-        if (!('tunnel_domains' in newConfig)) newConfig.tunnel_domains = [];
-
-        // 校验每个必需字段
-        for (const field of REQUIRED_FIELDS) {
-          if (!(field.key in newConfig)) {
-            details.push(`缺少字段: ${field.label} (${field.key})`);
-            continue;
-          }
-
-          const value = newConfig[field.key];
-          let actualType;
-          if (Array.isArray(value)) {
-            actualType = 'array';
-          } else if (value === null) {
-            actualType = 'null';
-          } else {
-            actualType = typeof value;
-          }
-
-          if (actualType !== field.type) {
-            details.push(`字段 ${field.label} (${field.key}) 类型错误: 期望 ${field.type}, 实际 ${actualType}`);
-            continue;
-          }
-
-          // 特殊值校验
-          if (['enable_mitm', 'enable_socks5', 'enable_express', 'socks5_tls', 'enable_tunnel'].includes(field.key)) {
-            if (value !== '0' && value !== '1') {
-              details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是 "0" 或 "1"`);
-            }
-          }
-
-          if (['proxy_port', 'socks5_port', 'tunnel_port'].includes(field.key)) {
-            if (!Number.isInteger(value) || value <= 0 || value > 65535) {
-              details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是 1-65535 的整数`);
-            }
-          }
-
-          if (field.key === 'tunnel_domains') {
-            if (!value.every(item => typeof item === 'string')) {
-              details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是字符串数组`);
-            }
-          }
-        }
-
-        if (details.length > 0) {
-          return res.status(400).json({ error: '配置格式不完整', details });
         }
 
         // 兼容老旧配置：补全新增字段的默认值
@@ -483,5 +508,8 @@ module.exports = {
       var localIp = domain.getLocalIp();
       console.log(`✅ \x1b[32m后台配置面板启动 → http://${localIp}:${PORT}\x1b[0m`);
     });
+  },
+  _test: {
+    validateImportedConfig,
   }
 };

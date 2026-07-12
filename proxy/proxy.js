@@ -19,6 +19,7 @@ const { URL } = require('url');
 const axios = require('axios');
 const { HttpProxyAgent } = require('http-proxy-agent');
 const { HttpsProxyAgent } = require('https-proxy-agent');
+const { SocksProxyAgent } = require('socks-proxy-agent');
 const _request = require("./http.js").request;
 const uaFilter = require("./mitm/uaFilter.js");
 const attacker = require('./attacker.js');
@@ -90,6 +91,10 @@ var socks5_tls = "1";
 
 var enable_mitm = "1"; // "0", "1"，是否对 HTTPS 启用 MITM 解密（关闭后纯隧道转发，不拦截）
 var mitm_debug_log = "0"; // "0", "1"，是否输出 MITM 调试日志（[DEBUG-REQ] 等）
+var chain_proxy_enabled = "0"; // "0", "1"，是否启用下游链式代理
+var chain_proxy_type = "http"; // "http" 或 "socks5"
+var chain_proxy_address = ""; // 上游代理地址，格式: username:password@host:port 或 host:port
+const chainProxyAgentCache = new Map();
 // 域名判断，区分浏览器和 App
 var filtered_mitm_domains = [
   ...uaFilter.filtered_mitm_domains
@@ -247,7 +252,10 @@ async function loadConfig() {
     tunnel_rotation_drain_idle_timeout: 20,
     tunnel_domains: [],
     rule_modules: {},
-    devices: []
+    devices: [],
+    chain_proxy_enabled: chain_proxy_enabled,
+    chain_proxy_type: chain_proxy_type,
+    chain_proxy_address: chain_proxy_address,
   };
 
   try {
@@ -306,6 +314,16 @@ async function loadConfig() {
       mitm_debug_log = loadedConfig.mitm_debug_log || "0"; // 默认关闭
       config.mitm_debug_log = mitm_debug_log;
 
+      chain_proxy_enabled = loadedConfig.chain_proxy_enabled || "0";
+      config.chain_proxy_enabled = chain_proxy_enabled;
+      
+      chain_proxy_type = loadedConfig.chain_proxy_type || "http";
+      config.chain_proxy_type = chain_proxy_type;
+      
+      chain_proxy_address = loadedConfig.chain_proxy_address || "";
+      config.chain_proxy_address = chain_proxy_address;
+      clearChainProxyAgentCache();
+
       config.enable_tunnel = loadedConfig.enable_tunnel || "1";
       config.tunnel_port = loadedConfig.tunnel_port || 8003;
       config.tunnel_rotation_drain_timeout = loadedConfig.tunnel_rotation_drain_timeout || 10;
@@ -352,6 +370,9 @@ async function loadConfig() {
         socks5_tls: socks5_tls,
         enable_mitm: enable_mitm,
         mitm_debug_log: mitm_debug_log,
+        chain_proxy_enabled: chain_proxy_enabled,
+        chain_proxy_type: chain_proxy_type,
+        chain_proxy_address: chain_proxy_address,
         enable_tunnel: "1",
         tunnel_port: 8003,
         tunnel_rotation_drain_timeout: 10,
@@ -648,6 +669,10 @@ function startProxyServer() {
     proxyServerInstance.on('ready', () => {
       console.log(`✅ \x1b[32mHTTP 代理服务启动，IP: ${localIp}, 端口: ${proxyPort}\x1b[0m`);
 
+      if (chain_proxy_enabled === "1" && chain_proxy_address) {
+        console.log(`🔗 链式代理已启用: ${chain_proxy_type.toUpperCase()} → ${chain_proxy_address}`);
+      }
+
       // customConnect 已正确传入 proxy-core/request-handler，隧道域名 CONNECT 由核心处理。
       // 不再需要 ready 之后接管 connect 事件。
       runHealthCheckAndPrewarm({ block_hosts: blockHosts }).catch(e => {
@@ -726,6 +751,228 @@ function parseAddress(str) {
     throw new Error('Invalid port');
   }
   return { ip, port };
+}
+
+function parseChainProxyAddress(address) {
+  if (!address || typeof address !== 'string') {
+    return null;
+  }
+  let username = '', password = '', hostPart = address;
+  if (address.includes('@')) {
+    const atIndex = address.lastIndexOf('@');
+    const authPart = address.substring(0, atIndex);
+    hostPart = address.substring(atIndex + 1);
+    const colonIndex = authPart.indexOf(':');
+    if (colonIndex !== -1) {
+      username = authPart.substring(0, colonIndex);
+      password = authPart.substring(colonIndex + 1);
+    } else {
+      username = authPart;
+    }
+  }
+  const lastColon = hostPart.lastIndexOf(':');
+  if (lastColon === -1) {
+    return null;
+  }
+  const host = hostPart.substring(0, lastColon);
+  const port = parseInt(hostPart.substring(lastColon + 1), 10);
+  if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) {
+    return null;
+  }
+  return { username, password, host, port };
+}
+
+function connectViaChainProxy(targetHost, targetPort, chainConfig) {
+  return new Promise((resolve, reject) => {
+    const { host, port, username, password, type } = chainConfig;
+    const upstream = net.connect(port, host, () => {
+      if (type === 'socks5') {
+        socks5Connect(upstream, targetHost, targetPort, username, password, resolve, reject);
+      } else {
+        httpConnect(upstream, targetHost, targetPort, username, password, resolve, reject);
+      }
+    });
+    upstream.on('error', reject);
+    upstream.setTimeout(15000, () => {
+      upstream.destroy(new Error('Chain proxy connect timeout'));
+    });
+  });
+}
+
+function httpConnect(socket, targetHost, targetPort, username, password, resolve, reject) {
+  let lines = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n`;
+  if (username) {
+    const auth = Buffer.from(`${username}:${password}`).toString('base64');
+    lines += `Proxy-Authorization: Basic ${auth}\r\n`;
+  }
+  lines += '\r\n';
+  let buffer = '';
+  const onData = (data) => {
+    buffer += data.toString();
+    const headerEnd = buffer.indexOf('\r\n\r\n');
+    if (headerEnd === -1) return;
+    socket.removeListener('data', onData);
+    const statusLine = buffer.substring(0, buffer.indexOf('\r\n'));
+    const statusCode = parseInt(statusLine.split(' ')[1], 10);
+    if (statusCode === 200) {
+      if (buffer.length > headerEnd + 4) {
+        const rest = buffer.substring(headerEnd + 4);
+        socket.unshift(Buffer.from(rest));
+      }
+      socket.setTimeout(0);
+      resolve(socket);
+    } else {
+      socket.destroy(new Error(`Chain proxy CONNECT failed: ${statusCode}`));
+    }
+  };
+  socket.on('data', onData);
+  socket.write(lines);
+}
+
+function socks5Connect(socket, targetHost, targetPort, username, password, resolve, reject) {
+  if (Buffer.byteLength(username) > 255 || Buffer.byteLength(password) > 255) {
+    socket.destroy(new Error('SOCKS5 username/password too long'));
+    return;
+  }
+
+  let handshakeStep = 0;
+  let buffer = Buffer.alloc(0);
+  const onData = (data) => {
+    buffer = Buffer.concat([buffer, data]);
+    if (handshakeStep === 0) {
+      if (buffer.length < 2) return;
+      if (buffer[0] !== 0x05 || buffer[1] === 0xFF) {
+        socket.destroy(new Error('SOCKS5 handshake rejected'));
+        return;
+      }
+      if (buffer[1] === 0x02) {
+        const usernameBytes = Buffer.from(username, 'utf8');
+        const passwordBytes = Buffer.from(password, 'utf8');
+        const authBytes = Buffer.alloc(3 + usernameBytes.length + passwordBytes.length);
+        authBytes[0] = 0x01;
+        authBytes[1] = usernameBytes.length;
+        usernameBytes.copy(authBytes, 2);
+        authBytes[2 + usernameBytes.length] = passwordBytes.length;
+        passwordBytes.copy(authBytes, 3 + usernameBytes.length);
+        socket.write(authBytes);
+        buffer = Buffer.alloc(0);
+        handshakeStep = 1;
+        return;
+      }
+      handshakeStep = 2;
+      buffer = Buffer.alloc(0);
+      sendSocks5Request();
+      return;
+    }
+    if (handshakeStep === 1) {
+      if (buffer.length < 2) return;
+      if (buffer[0] !== 0x01 || buffer[1] !== 0x00) {
+        socket.destroy(new Error('SOCKS5 auth failed'));
+        return;
+      }
+      handshakeStep = 2;
+      buffer = Buffer.alloc(0);
+      sendSocks5Request();
+      return;
+    }
+    if (handshakeStep === 2) {
+      const responseLength = getSocks5ConnectResponseLength(buffer);
+      if (responseLength === null) return;
+      if (responseLength === -1) {
+        socket.destroy(new Error('SOCKS5 CONNECT response has invalid address type'));
+        return;
+      }
+      if (buffer[0] !== 0x05 || buffer[1] !== 0x00) {
+        socket.destroy(new Error(`SOCKS5 CONNECT failed: 0x${buffer[1].toString(16)}`));
+        return;
+      }
+      socket.removeListener('data', onData);
+      if (buffer.length > responseLength) {
+        socket.unshift(buffer.subarray(responseLength));
+      }
+      socket.setTimeout(0);
+      resolve(socket);
+    }
+  };
+  function sendSocks5Request() {
+    const hostBytes = Buffer.from(targetHost, 'utf8');
+    if (hostBytes.length > 255) {
+      socket.destroy(new Error('SOCKS5 target host is too long'));
+      return;
+    }
+    const req = Buffer.alloc(7 + hostBytes.length);
+    req[0] = 0x05; req[1] = 0x01; req[2] = 0x00; req[3] = 0x03;
+    req[4] = hostBytes.length;
+    hostBytes.copy(req, 5);
+    req[5 + hostBytes.length] = (targetPort >> 8) & 0xFF;
+    req[6 + hostBytes.length] = targetPort & 0xFF;
+    socket.write(req);
+  }
+  socket.on('data', onData);
+  const greeting = username
+    ? Buffer.from([0x05, 0x02, 0x00, 0x02])
+    : Buffer.from([0x05, 0x01, 0x00]);
+  socket.write(greeting);
+}
+
+function getSocks5ConnectResponseLength(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4) {
+    return null;
+  }
+
+  const atyp = buffer[3];
+  if (atyp === 0x01) {
+    return buffer.length >= 10 ? 10 : null;
+  }
+  if (atyp === 0x03) {
+    if (buffer.length < 5) return null;
+    const domainLength = buffer[4];
+    const responseLength = 5 + domainLength + 2;
+    return buffer.length >= responseLength ? responseLength : null;
+  }
+  if (atyp === 0x04) {
+    return buffer.length >= 22 ? 22 : null;
+  }
+  return -1;
+}
+
+function getChainProxyAgent(isHttps, chainConfig) {
+  const { username, password, host, port, type } = chainConfig;
+  const normalizedType = type === 'socks5' ? 'socks5' : 'http';
+  const cacheKey = JSON.stringify({
+    isHttps: !!isHttps,
+    type: normalizedType,
+    username,
+    password,
+    host,
+    port,
+  });
+  if (chainProxyAgentCache.has(cacheKey)) {
+    return chainProxyAgentCache.get(cacheKey);
+  }
+
+  const auth = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : '';
+  const agentOptions = { keepAlive: true, rejectUnauthorized: false };
+  let agent;
+  if (normalizedType === 'socks5') {
+    agent = new SocksProxyAgent(`socks5://${auth}${host}:${port}`, agentOptions);
+  } else {
+    const agentUrl = `http://${auth}${host}:${port}`;
+    agent = isHttps
+      ? new HttpsProxyAgent(agentUrl, agentOptions)
+      : new HttpProxyAgent(agentUrl, agentOptions);
+  }
+  chainProxyAgentCache.set(cacheKey, agent);
+  return agent;
+}
+
+function clearChainProxyAgentCache() {
+  for (const agent of chainProxyAgentCache.values()) {
+    if (agent && typeof agent.destroy === 'function') {
+      agent.destroy();
+    }
+  }
+  chainProxyAgentCache.clear();
 }
 
 /**
@@ -1045,11 +1292,19 @@ function getProxyAuthConfig() {
 }
 
 function passRequestWithHttpAgent(requestDetail, isHttps) {
+  let agent = isHttps ? httpsAgent : httpAgent;
+  if (chain_proxy_enabled === "1" && chain_proxy_address) {
+    const chainConfig = parseChainProxyAddress(chain_proxy_address);
+    if (chainConfig) {
+      chainConfig.type = chain_proxy_type;
+      agent = getChainProxyAgent(isHttps, chainConfig);
+    }
+  }
   return {
     ...requestDetail,
     requestOptions: {
       ...requestDetail.requestOptions,
-      agent: isHttps ? httpsAgent : httpAgent,
+      agent,
     }
   };
 }
@@ -1080,7 +1335,8 @@ async function initTunnel(config) {
   const tunnelCert = fs.readFileSync(certPaths.cert);
   const tunnelKey = fs.readFileSync(certPaths.key);
 
-  tunnelServer = new TunnelServer({
+  let nextTunnelManager = null;
+  const nextTunnelServer = new TunnelServer({
     port: tunnelPort,
     cert: tunnelCert,
     key: tunnelKey,
@@ -1091,26 +1347,33 @@ async function initTunnel(config) {
     tunnel_rotation_drain_timeout: config.tunnel_rotation_drain_timeout,
     tunnel_rotation_drain_idle_timeout: config.tunnel_rotation_drain_idle_timeout,
     onConnect: (socket, addr, port) => {
-      tunnelManager.setConnected(socket, true, `${addr}:${port}`);
+      if (nextTunnelManager) {
+        nextTunnelManager.setConnected(socket, true, `${addr}:${port}`);
+      }
       console.log(`[Tunnel] Client connected: ${addr}:${port}`);
     },
     onDisconnect: (socket) => {
-      tunnelManager.setConnected(socket, false);
+      if (nextTunnelManager) {
+        nextTunnelManager.setConnected(socket, false);
+      }
       console.log('[Tunnel] Client disconnected');
     }
   });
 
-  tunnelManager = new TunnelManager(tunnelServer, config);
-  tunnelServer.setActiveRequestChecker((socket) => tunnelManager.getSocketDrainState(socket));
-  await tunnelServer.start();
+  nextTunnelManager = new TunnelManager(nextTunnelServer, config);
+  nextTunnelServer.setActiveRequestChecker((socket) => nextTunnelManager.getSocketDrainState(socket));
+  tunnelServer = nextTunnelServer;
+  tunnelManager = nextTunnelManager;
+  await nextTunnelServer.start();
   console.log(`[Tunnel] Server started on port ${tunnelPort}`);
 }
 
 async function closeTunnel() {
   if (tunnelServer) {
-    await tunnelServer.stop();
+    const currentTunnelServer = tunnelServer;
     tunnelServer = null;
     tunnelManager = null;
+    await currentTunnelServer.stop();
   }
 }
 
@@ -1118,9 +1381,23 @@ function getAnyProxyOptions() {
   return {
     port: proxyPort,
     mitmDebugLog: mitm_debug_log === "1",
-    customConnect: (host, port, callback) => {
+    customConnect: async (host, port, callback) => {
       if (tunnelManager && tunnelManager.matchesTunnelDomain(host)) {
         return tunnelManager.forward(host, port, callback);
+      }
+      if (chain_proxy_enabled === "1" && chain_proxy_address) {
+        try {
+          const chainConfig = parseChainProxyAddress(chain_proxy_address);
+          if (chainConfig) {
+            chainConfig.type = chain_proxy_type;
+            const conn = await connectViaChainProxy(host, port, chainConfig);
+            callback();
+            return conn;
+          }
+        } catch (e) {
+          console.error('[ChainProxy] CONNECT failed:', host, port, e.message);
+          throw e;
+        }
       }
       return null;
     },
@@ -1714,5 +1991,16 @@ module.exports._test = {
   ensureRootCA,
   initCertLifecycle,
   runHealthCheckAndPrewarm,
-  getCertificateFingerprint
+  getCertificateFingerprint,
+  parseChainProxyAddress,
+  getChainProxyAgent,
+  clearChainProxyAgentCache,
+  getSocks5ConnectResponseLength,
+  getAnyProxyOptions,
+  setChainProxyConfigForTest(nextConfig) {
+    chain_proxy_enabled = nextConfig.enabled;
+    chain_proxy_type = nextConfig.type;
+    chain_proxy_address = nextConfig.address;
+    clearChainProxyAgentCache();
+  }
 };

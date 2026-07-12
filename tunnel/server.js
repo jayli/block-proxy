@@ -64,8 +64,15 @@ class TunnelServer {
 
   async stop() {
     this._stopHeartbeat();
+    this._drainCheckCallback = null;
 
     const sockets = [...this._records.keys()];
+    for (const record of this._records.values()) {
+      if (record.drainTimer) {
+        clearTimeout(record.drainTimer);
+        record.drainTimer = null;
+      }
+    }
     for (const ws of sockets) {
       this._closeWs(ws, 1001, 'server stopping');
     }

@@ -488,4 +488,34 @@ describe('TunnelServer rotation state', () => {
     closeWs(ws1);
     closeWs(ws2);
   });
+
+  it('does not run drain checker after server stop', async () => {
+    const port = nextPort();
+    let drainChecks = 0;
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+      rotationDrainTimeout: 0.05,
+    });
+    server.setActiveRequestChecker(() => {
+      drainChecks += 1;
+      return 1;
+    });
+    await server.start();
+
+    const ws1 = await connectClient(port);
+    assert.equal((await authenticate(ws1)).type, FRAME_TYPES.AUTH_OK);
+    const ws2 = await connectClient(port);
+    assert.equal((await authenticate(ws2)).type, FRAME_TYPES.AUTH_OK);
+    await waitForCondition(() => server.getConnectionCounts().draining === 1);
+
+    await server.stop();
+    server = null;
+    await new Promise(r => setTimeout(r, 120));
+
+    assert.equal(drainChecks, 0);
+    closeWs(ws1);
+    closeWs(ws2);
+  });
 });

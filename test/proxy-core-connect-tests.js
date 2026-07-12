@@ -28,6 +28,18 @@ class FakeClientSocket extends Duplex {
   }
 }
 
+class TrackingHttpAgent extends http.Agent {
+  constructor() {
+    super({ keepAlive: false });
+    this.createConnectionCalls = 0;
+  }
+
+  createConnection(options, callback) {
+    this.createConnectionCalls += 1;
+    return super.createConnection(options, callback);
+  }
+}
+
 function waitFor(predicate, timeoutMs = 500) {
   const start = Date.now();
   return new Promise((resolve, reject) => {
@@ -44,6 +56,48 @@ function waitFor(predicate, timeoutMs = 500) {
     }
     tick();
   });
+}
+
+async function testConnectHandlerSupportsAsyncCustomConnect() {
+  const connectTargets = [];
+  const handler = new RequestHandler({
+    httpServerPort: 18888,
+    wsIntercept: true,
+    forceProxyHttps: false,
+    dangerouslyIgnoreUnauthorized: false,
+    customConnect(host, port, callback) {
+      connectTargets.push({ host, port });
+      return new Promise((resolve) => {
+        const stream = new PassThrough();
+        process.nextTick(() => {
+          callback();
+          resolve(stream);
+        });
+      });
+    },
+  }, {
+    *beforeDealHttpsRequest() {
+      return null;
+    },
+  });
+
+  const req = {
+    url: 'example.com:443',
+    httpVersion: '1.1',
+    method: 'CONNECT',
+  };
+  const socket = new FakeClientSocket();
+  const head = Buffer.from('GET /chat HTTP/1.1\r\nHost: example.com\r\n\r\n');
+
+  handler.connectReqHandler(req, socket, head);
+
+  await waitFor(() => connectTargets.length > 0);
+  await waitFor(() => socket.clientWrites.length > 0);
+  assert.deepEqual(connectTargets[0], {
+    host: 'localhost',
+    port: 18888,
+  });
+  assert.match(Buffer.concat(socket.clientWrites).toString('utf8'), /^HTTP\/1\.1 200 /);
 }
 
 async function testConnectHeadWebSocketUsesLocalProxy() {
@@ -134,6 +188,63 @@ async function testFetchRemoteResponseHonorsTimeout() {
   }
 }
 
+async function testFetchRemoteResponseUsesProvidedAgent() {
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/plain',
+      'Content-Length': '2',
+    });
+    res.end('ok');
+  });
+  const agent = new TrackingHttpAgent();
+
+  try {
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = server.address().port;
+    const response = await RequestHandler._test.fetchRemoteResponse('http', {
+      hostname: '127.0.0.1',
+      port,
+      path: '/',
+      method: 'GET',
+      headers: {},
+      agent,
+    }, '', {
+      chunkSizeThreshold: 1024,
+      timeout: 1000,
+    });
+
+    assert.strictEqual(response.statusCode, 200);
+    assert.strictEqual(response.body.toString('utf8'), 'ok');
+    assert.strictEqual(agent.createConnectionCalls, 1);
+  } finally {
+    agent.destroy();
+    await new Promise(resolve => server.close(resolve));
+  }
+}
+
+async function testChainProxyConnectFailureDoesNotFallbackDirect() {
+  const unusedPort = await util.getFreePort();
+  LocalProxy._test.setChainProxyConfigForTest({
+    enabled: '1',
+    type: 'http',
+    address: `127.0.0.1:${unusedPort}`,
+  });
+
+  try {
+    const options = LocalProxy._test.getAnyProxyOptions();
+    await assert.rejects(
+      options.customConnect('example.test', 443, () => {}),
+      /ECONNREFUSED|Chain proxy/i
+    );
+  } finally {
+    LocalProxy._test.setChainProxyConfigForTest({
+      enabled: '0',
+      type: 'http',
+      address: '',
+    });
+  }
+}
+
 function testRequestHandlerStoresTimeoutConfig() {
   const handler = new RequestHandler({
     httpServerPort: 18888,
@@ -156,6 +267,62 @@ function testProxyServerPassesTimeoutToRequestHandler() {
   assert.strictEqual(proxy.requestHandler.timeout, 4321);
 }
 
+function testChainProxyAddressParserValidatesInput() {
+  const parsed = LocalProxy._test.parseChainProxyAddress('user:pass@example.test:1080');
+
+  assert.deepStrictEqual(parsed, {
+    username: 'user',
+    password: 'pass',
+    host: 'example.test',
+    port: 1080,
+  });
+  assert.strictEqual(LocalProxy._test.parseChainProxyAddress('example.test'), null);
+  assert.strictEqual(LocalProxy._test.parseChainProxyAddress('example.test:not-a-port'), null);
+  assert.strictEqual(LocalProxy._test.parseChainProxyAddress('example.test:70000'), null);
+}
+
+function testChainProxyAgentCacheReusesAgents() {
+  LocalProxy._test.clearChainProxyAgentCache();
+
+  const config = {
+    type: 'http',
+    username: 'user',
+    password: 'pass',
+    host: 'example.test',
+    port: 8080,
+  };
+  const first = LocalProxy._test.getChainProxyAgent(false, config);
+  const second = LocalProxy._test.getChainProxyAgent(false, config);
+  const third = LocalProxy._test.getChainProxyAgent(true, config);
+
+  assert.strictEqual(first, second);
+  assert.notStrictEqual(first, third);
+  LocalProxy._test.clearChainProxyAgentCache();
+}
+
+function testSocks5ConnectResponseLengthParser() {
+  assert.strictEqual(
+    LocalProxy._test.getSocks5ConnectResponseLength(Buffer.from([0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0x01, 0xbb])),
+    10
+  );
+  assert.strictEqual(
+    LocalProxy._test.getSocks5ConnectResponseLength(Buffer.from([0x05, 0x00, 0x00, 0x03, 4, 0x74, 0x65])),
+    null
+  );
+  assert.strictEqual(
+    LocalProxy._test.getSocks5ConnectResponseLength(Buffer.from([0x05, 0x00, 0x00, 0x03, 4, 0x74, 0x65, 0x73, 0x74, 0x01, 0xbb])),
+    11
+  );
+  assert.strictEqual(
+    LocalProxy._test.getSocks5ConnectResponseLength(Buffer.from([0x05, 0x00, 0x00, 0x04, ...Buffer.alloc(16), 0x01, 0xbb])),
+    22
+  );
+  assert.strictEqual(
+    LocalProxy._test.getSocks5ConnectResponseLength(Buffer.from([0x05, 0x00, 0x00, 0x09, 0, 0])),
+    -1
+  );
+}
+
 function testEnsureRootCAReplacesMismatchedCache() {
   const tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'block-proxy-ca-'));
   const certDir = path.join(tmpDir, 'certificates');
@@ -172,8 +339,8 @@ function testEnsureRootCAReplacesMismatchedCache() {
 
   fs.copyFileSync(path.join(__dirname, '../cert/rootCA.crt'), srcCrt);
   fs.copyFileSync(path.join(__dirname, '../cert/rootCA.key'), srcKey);
-  fs.writeFileSync(targetCrt, fs.readFileSync(path.join(__dirname, '../cert/tunnel_tls.crt')));
-  fs.writeFileSync(targetKey, fs.readFileSync(path.join(__dirname, '../cert/tunnel_tls.key')));
+  fs.writeFileSync(targetCrt, fs.readFileSync(path.join(__dirname, '../cert/socks5_tls.crt')));
+  fs.writeFileSync(targetKey, fs.readFileSync(path.join(__dirname, '../cert/socks5_tls.key')));
   fs.writeFileSync(staleDomainCrt, 'stale cert');
   fs.writeFileSync(staleDomainKey, 'stale key');
 
@@ -291,14 +458,26 @@ async function run() {
   console.log('PASS testWsReqInfoRejectsMissingHostHeader');
   await testFetchRemoteResponseHonorsTimeout();
   console.log('PASS testFetchRemoteResponseHonorsTimeout');
+  await testFetchRemoteResponseUsesProvidedAgent();
+  console.log('PASS testFetchRemoteResponseUsesProvidedAgent');
+  await testChainProxyConnectFailureDoesNotFallbackDirect();
+  console.log('PASS testChainProxyConnectFailureDoesNotFallbackDirect');
   testRequestHandlerStoresTimeoutConfig();
   console.log('PASS testRequestHandlerStoresTimeoutConfig');
   testProxyServerPassesTimeoutToRequestHandler();
   console.log('PASS testProxyServerPassesTimeoutToRequestHandler');
+  testChainProxyAddressParserValidatesInput();
+  console.log('PASS testChainProxyAddressParserValidatesInput');
+  testChainProxyAgentCacheReusesAgents();
+  console.log('PASS testChainProxyAgentCacheReusesAgents');
+  testSocks5ConnectResponseLengthParser();
+  console.log('PASS testSocks5ConnectResponseLengthParser');
   testEnsureRootCAReplacesMismatchedCache();
   console.log('PASS testEnsureRootCAReplacesMismatchedCache');
   await testConnectHeadWebSocketUsesLocalProxy();
   console.log('PASS testConnectHeadWebSocketUsesLocalProxy');
+  await testConnectHandlerSupportsAsyncCustomConnect();
+  console.log('PASS testConnectHandlerSupportsAsyncCustomConnect');
   await testMitmConnectForwardsHttpsRequest();
   console.log('PASS testMitmConnectForwardsHttpsRequest');
 }

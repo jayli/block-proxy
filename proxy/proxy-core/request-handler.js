@@ -145,9 +145,10 @@ function fetchRemoteResponse(protocol, options, reqData, config) {
       }
 
       const isHttps = /https/i.test(protocol);
-      opts.agent = useAgent
-        ? (isHttps ? _httpsAgent : _httpAgent)
-        : false;
+      const hasCallerAgent = Object.prototype.hasOwnProperty.call(options, 'agent');
+      opts.agent = hasCallerAgent
+        ? options.agent
+        : (useAgent ? (isHttps ? _httpsAgent : _httpAgent) : false);
 
       let settled = false;
       const settleResolve = (value) => {
@@ -706,7 +707,14 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
         }
 
         return new Promise((resolve, reject) => {
-          const setupPipe = (conn) => {
+          let conn = null;
+          let readyToPipe = false;
+          let piped = false;
+          let fallbackStarted = false;
+
+          const setupPipe = () => {
+            if (piped || !readyToPipe || !conn) return;
+            piped = true;
             if (conn.setTimeout) {
               conn.setTimeout(0);
             }
@@ -715,37 +723,73 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
             resolve();
           };
 
-          let conn;
+          const markReady = () => {
+            readyToPipe = true;
+            setupPipe();
+          };
+
+          const attachConnection = (nextConn) => {
+            if (!nextConn) return false;
+            if (typeof nextConn.on !== 'function' || typeof nextConn.pipe !== 'function') {
+              reject(new Error('customConnect must return a socket-like stream'));
+              return true;
+            }
+
+            conn = nextConn;
+
+            if (reqHandlerCtx.timeout && conn.setTimeout) {
+              conn.setTimeout(reqHandlerCtx.timeout, () => {
+                const error = new Error('connect timeout');
+                error.code = 'ETIMEDOUT';
+                conn.destroy(error);
+                reject(error);
+              });
+            }
+
+            conn.on('error', (e) => {
+              reject(e);
+            });
+
+            const socketMapKey = serverInfo.host + ':' + serverInfo.port;
+            reqHandlerCtx.conns.set(socketMapKey, conn);
+            reqHandlerCtx.cltSockets.set(socketMapKey, cltSocket);
+            registerSocketMapCleanup(reqHandlerCtx.conns, socketMapKey, conn);
+            registerSocketMapCleanup(reqHandlerCtx.cltSockets, socketMapKey, cltSocket);
+            setupPipe();
+            return true;
+          };
+
+          const startFallbackConnect = () => {
+            if (fallbackStarted) return;
+            fallbackStarted = true;
+            const directConn = net.connect(serverInfo.port, serverInfo.host, markReady);
+            attachConnection(directConn);
+          };
+
           if (reqHandlerCtx.customConnect) {
-            conn = reqHandlerCtx.customConnect(serverInfo.host, serverInfo.port, () => {
-              setupPipe(conn);
-            });
+            let customConn;
+            try {
+              customConn = reqHandlerCtx.customConnect(serverInfo.host, serverInfo.port, markReady);
+            } catch (e) {
+              reject(e);
+              return;
+            }
+
+            if (customConn && typeof customConn.then === 'function') {
+              customConn.then((resolvedConn) => {
+                if (!attachConnection(resolvedConn)) {
+                  startFallbackConnect();
+                }
+              }).catch(reject);
+              return;
+            }
+
+            if (attachConnection(customConn)) {
+              return;
+            }
           }
 
-          if (!conn) {
-            conn = net.connect(serverInfo.port, serverInfo.host, () => {
-              setupPipe(conn);
-            });
-          }
-
-          if (reqHandlerCtx.timeout && conn.setTimeout) {
-            conn.setTimeout(reqHandlerCtx.timeout, () => {
-              const error = new Error('connect timeout');
-              error.code = 'ETIMEDOUT';
-              conn.destroy(error);
-              reject(error);
-            });
-          }
-
-          conn.on('error', (e) => {
-            reject(e);
-          });
-
-          const socketMapKey = serverInfo.host + ':' + serverInfo.port;
-          reqHandlerCtx.conns.set(socketMapKey, conn);
-          reqHandlerCtx.cltSockets.set(socketMapKey, cltSocket);
-          registerSocketMapCleanup(reqHandlerCtx.conns, socketMapKey, conn);
-          registerSocketMapCleanup(reqHandlerCtx.cltSockets, socketMapKey, cltSocket);
+          startFallbackConnect();
         });
       })
       .catch(co.wrap(function *(error) {
