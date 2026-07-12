@@ -505,7 +505,7 @@ A: 如果 block-proxy 部署在路由器上且配置了代理认证，iOS 会拒
 
 ### Q: 隧道链接客户端和家宽时，怎么连443端口
 
-[参照这里](https://github.com/jayli/block-proxy/issues/41)
+通过 CDN 中转，[参照这里](https://github.com/jayli/block-proxy/issues/41)
 
 ### Q：还能做哪些用途？
 
