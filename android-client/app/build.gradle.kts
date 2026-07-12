@@ -18,6 +18,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            isMinifyEnabled = false
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -40,6 +43,13 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+    }
+
+    applicationVariants.all {
+        outputs.all {
+            (this as com.android.build.gradle.internal.api.ApkVariantOutputImpl).outputFileName =
+                "BlockProxyClient-android.apk"
+        }
     }
 }
 
@@ -78,3 +88,5 @@ dependencies {
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 }
+
+setProperty("archivesBaseName", "BlockProxyClient-android")
