@@ -454,11 +454,9 @@ BlockProxyClient 提供 [android 客户端](https://github.com/jayli/block-proxy
 
 ## NAT 隧道反代
 
-Block-Proxy 服务端和 BlockProxyClient 客户端通过私有协议建立双向隧道，目的是为了穿透 NAT 网络，实现内网穿透的代理。
+Block-Proxy 服务端和 BlockProxyClient 客户端通过私有协议建立双向隧道，穿透 NAT 网络，实现反向代理。
 
-隧道服务运行在 **端口 8003**，使用 TLS 加密传输。客户端通过该端口与服务端建立隧道连接，服务端通过隧道将请求反向转发给客户端处理。
-
-<img width="700" alt="Image" src="https://github.com/user-attachments/assets/a9db3a1c-dd05-4fde-a452-5eb72b5a869e" />
+隧道服务运行在 **端口 8003**。
 
 客户端 B 访问内网资源 C，通过双向隧道来架桥。
 
