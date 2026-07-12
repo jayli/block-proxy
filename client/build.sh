@@ -76,6 +76,7 @@ $PYTHON -m nuitka \
     --include-data-files=traffic_view.py=traffic_view.py \
     --include-data-files=tunnel_client.py=tunnel_client.py \
     --include-data-dir=geodata=geodata \
+    --include-package=websockets \
     --enable-plugin=no-qt \
     --output-dir="$DIST_DIR" \
     main.py
