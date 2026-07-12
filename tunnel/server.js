@@ -163,6 +163,11 @@ class TunnelServer {
       return;
     }
 
+    if (frame.type === FRAME_TYPES.PING) {
+      this._sendWsFrame(ws, { type: FRAME_TYPES.PONG, payload: frame.payload }).catch(() => {});
+      return;
+    }
+
     if (frame.type === FRAME_TYPES.PONG) {
       if (!record.pendingPingPayload || frame.payload.equals(record.pendingPingPayload)) {
         record.pongTime = Date.now();

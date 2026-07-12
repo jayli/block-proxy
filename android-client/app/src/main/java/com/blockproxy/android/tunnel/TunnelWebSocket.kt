@@ -10,6 +10,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
+import android.util.Log
 import java.io.IOException
 import java.security.SecureRandom
 import java.time.Duration
@@ -112,12 +113,15 @@ class TunnelWebSocket(
         customHeaders.forEach { (k, v) -> requestBuilder.addHeader(k, v) }
         val request = requestBuilder.build()
 
+        val tag = "TunnelWS"
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
+                Log.i(tag, "WebSocket opened, sending AUTH")
                 ws.send(ByteString.of(*authPayload))
             }
 
             override fun onMessage(ws: WebSocket, text: String) {
+                Log.w(tag, "Unexpected text message, closing")
                 ws.close(1003, "binary frames required")
             }
 
@@ -130,17 +134,20 @@ class TunnelWebSocket(
                 try {
                     onFrame(this@TunnelWebSocket, frameBytes)
                 } catch (t: Throwable) {
+                    Log.e(tag, "onFrame threw, closing WS", t)
                     ws.close(1002, "bad frame")
                     onDisconnect(this@TunnelWebSocket, t)
                 }
             }
 
             override fun onClosing(ws: WebSocket, code: Int, reason: String) {
+                Log.i(tag, "Server initiated close: code=$code reason=$reason (echoing)")
                 ws.close(code, reason)
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                 isOpen = false
+                Log.i(tag, "WebSocket closed: code=$code reason=$reason")
                 if (!deferred.isCompleted) {
                     deferred.completeExceptionally(IOException("Closed before auth: $code $reason"))
                 }
@@ -149,6 +156,7 @@ class TunnelWebSocket(
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                 isOpen = false
+                Log.e(tag, "WebSocket failure: ${t.message}", t)
                 if (!deferred.isCompleted) {
                     deferred.completeExceptionally(t)
                 }
