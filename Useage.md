@@ -122,10 +122,10 @@ pm2 stop block-proxy    # 停止
 
 或者直接进项目目录：`pm2 start npm --name "block-proxy" -- run start`
 
-可以自定义隧道证书，通过两个参数配置
+可以自定义隧道证书，通过两个参数配置，比如
 
 ```
-block-proxy --pubkey /path/to/fullchain.pem --privkey /path/to/privkey.pem
+pm2 start server/start.js --name "block-proxy" -- --pubkey /root/block-proxy/yui_cool_cert/pubkey.pem --privkey /root/block-proxy/yui_cool_cert/privkey.pem
 ```
 
 参数说明：
