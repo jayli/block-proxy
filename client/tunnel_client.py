@@ -523,7 +523,7 @@ class TunnelClient:
             connect_kwargs['additional_headers'] = headers
 
         ws = await asyncio.wait_for(
-            websockets.connect(ws_url, **connect_kwargs),
+            websockets.connect(ws_url, proxy=None, **connect_kwargs),
             timeout=10
         )
 
@@ -554,7 +554,7 @@ class TunnelClient:
 
         connector = aiohttp.TCPConnector(ssl=self._ssl_ctx) if aiohttp.TCPConnector else None
         base = f'https://{addr}:{port}'
-        async with aiohttp.ClientSession(connector=connector) as session:
+        async with aiohttp.ClientSession(connector=connector, trust_env=False) as session:
             async with session.get(f'{base}/'):
                 pass
             await asyncio.sleep(random.uniform(0.5, 2.0))
