@@ -505,7 +505,7 @@ class TunnelClient:
         if websockets.connect is None:
             raise RuntimeError('websockets dependency is not installed')
 
-        ws_path = self._tunnel_cfg.get('ws_path', '/ws')
+        ws_path = self._tunnel_cfg.get('ws_path', '/websocket')
         if not ws_path.startswith('/'):
             ws_path = '/' + ws_path
 

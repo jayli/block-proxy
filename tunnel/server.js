@@ -4,7 +4,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 const { FRAME_TYPES, MAX_FRAME_PAYLOAD, encodeFrame, decodeFrame } = require('./protocol');
 const { handleDisguiseRequest } = require('./disguiseResponse');
 
-const DEFAULT_WS_PATH = '/ws';
+const DEFAULT_WS_PATH = '/websocket';
 const DEFAULT_HEARTBEAT_MIN = 15;
 const DEFAULT_HEARTBEAT_MAX = 40;
 const DEFAULT_HEARTBEAT_TIMEOUT = 60;

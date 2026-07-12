@@ -169,7 +169,7 @@ class TestTunnelClientLifecycle:
                 return encode_frame(FRAME_AUTH_OK)
 
         async def fake_connect(*args, **kwargs):
-            assert args[0] == 'wss://127.0.0.1:8003/ws'
+            assert args[0] == 'wss://127.0.0.1:8003/websocket'
             assert kwargs['ping_interval'] is None
             assert kwargs['ping_timeout'] is None
             return FakeWs()
@@ -246,7 +246,7 @@ class TestTunnelClientLifecycle:
             'sleep',
             'https://127.0.0.1:8003/favicon.ico',
             'sleep',
-            'wss://127.0.0.1:8003/ws',
+            'wss://127.0.0.1:8003/websocket',
         ]
 
     def test_handle_requests_echoes_ping_payload(self):

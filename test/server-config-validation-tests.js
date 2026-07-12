@@ -18,6 +18,7 @@ function minimalConfig(overrides = {}) {
     rule_modules: {},
     enable_tunnel: '1',
     tunnel_port: 8003,
+    tunnel_ws_path: '/websocket',
     tunnel_domains: [],
     chain_proxy_enabled: '0',
     chain_proxy_type: 'http',
@@ -59,7 +60,30 @@ function testImportValidationAcceptsValidChainProxyConfig() {
   assert.deepStrictEqual(result.details, []);
 }
 
+function testImportValidationBackfillsTunnelWsPath() {
+  const config = minimalConfig();
+  delete config.tunnel_ws_path;
+
+  const result = Server._test.validateImportedConfig(config);
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.config.tunnel_ws_path, '/websocket');
+}
+
+function testImportValidationRejectsInvalidTunnelWsPath() {
+  const result = Server._test.validateImportedConfig(minimalConfig({
+    tunnel_ws_path: 123,
+  }));
+
+  assert.strictEqual(result.ok, false);
+  assert(result.details.some((detail) => detail.includes('隧道 WebSocket 路径')));
+}
+
 function run() {
+  testImportValidationBackfillsTunnelWsPath();
+  console.log('PASS testImportValidationBackfillsTunnelWsPath');
+  testImportValidationRejectsInvalidTunnelWsPath();
+  console.log('PASS testImportValidationRejectsInvalidTunnelWsPath');
   testImportValidationRejectsInvalidChainProxyType();
   console.log('PASS testImportValidationRejectsInvalidChainProxyType');
   testImportValidationRejectsEnabledChainProxyWithoutAddress();

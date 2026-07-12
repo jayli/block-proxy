@@ -248,6 +248,7 @@ async function loadConfig() {
     express_port: expressPort,
     enable_tunnel: "1",
     tunnel_port: 8003,
+    tunnel_ws_path: "/websocket",
     tunnel_rotation_drain_timeout: 10,
     tunnel_rotation_drain_idle_timeout: 20,
     tunnel_domains: [],
@@ -326,6 +327,7 @@ async function loadConfig() {
 
       config.enable_tunnel = loadedConfig.enable_tunnel || "1";
       config.tunnel_port = loadedConfig.tunnel_port || 8003;
+      config.tunnel_ws_path = loadedConfig.tunnel_ws_path || "/websocket";
       config.tunnel_rotation_drain_timeout = loadedConfig.tunnel_rotation_drain_timeout || 10;
       config.tunnel_rotation_drain_idle_timeout = loadedConfig.tunnel_rotation_drain_idle_timeout || 20;
       config.tunnel_domains = loadedConfig.tunnel_domains || [];
@@ -375,6 +377,7 @@ async function loadConfig() {
         chain_proxy_address: chain_proxy_address,
         enable_tunnel: "1",
         tunnel_port: 8003,
+        tunnel_ws_path: "/websocket",
         tunnel_rotation_drain_timeout: 10,
         tunnel_rotation_drain_idle_timeout: 20,
         tunnel_domains: [],
@@ -1344,6 +1347,7 @@ async function initTunnel(config) {
       username: config.auth_username,
       password: config.auth_password
     },
+    tunnel_ws_path: config.tunnel_ws_path || '/websocket',
     tunnel_rotation_drain_timeout: config.tunnel_rotation_drain_timeout,
     tunnel_rotation_drain_idle_timeout: config.tunnel_rotation_drain_idle_timeout,
     onConnect: (socket, addr, port) => {

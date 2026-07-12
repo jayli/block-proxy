@@ -36,7 +36,7 @@ function getHttps(port, requestPath) {
 
 function connectClient(port) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://localhost:${port}/ws`, {
+    const ws = new WebSocket(`wss://localhost:${port}/websocket`, {
       rejectUnauthorized: false,
     });
     ws.once('open', () => resolve(ws));
@@ -195,7 +195,7 @@ describe('TunnelServer WebSocket', () => {
     if (server) { await server.stop(); server = null; }
   });
 
-  it('authenticates client and sends AUTH_OK over /ws', async () => {
+  it('authenticates client and sends AUTH_OK over /websocket', async () => {
     const port = nextPort();
     server = new TunnelServer({
       port,
