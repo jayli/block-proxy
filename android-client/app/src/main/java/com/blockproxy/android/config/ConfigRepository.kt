@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.blockproxy.android.cdn.CfCdnConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -32,8 +33,6 @@ interface ConfigDataSource {
  * [DataStoreConfigDataSource]; tests may inject an in-memory fake.
  */
 class ConfigRepository(private val source: ConfigDataSource) {
-    private val cloudflareHttpsPorts = setOf(443, 2053, 2083, 2087, 2096, 8443)
-
     /** Cold [Flow] that emits the current config whenever it changes. */
     fun observe(): Flow<ServerConfig?> = source.observe()
 
@@ -43,7 +42,7 @@ class ConfigRepository(private val source: ConfigDataSource) {
         require(config.serverPort in 1..65535) { "serverPort must be in 1..65535" }
         if (config.cfCdnEnabled) {
             require(config.useTls) { "Cloudflare CDN mode requires TLS" }
-            require(config.serverPort in cloudflareHttpsPorts) {
+            require(config.serverPort in CfCdnConfig.HTTPS_PORTS) {
                 "Cloudflare CDN mode requires a Cloudflare HTTPS proxy port"
             }
         }

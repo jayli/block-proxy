@@ -29,7 +29,11 @@ class CfIpRefreshWorker(
         }
 
         val pool = CfIpPool(applicationContext)
-        val tester = CfIpSpeedTester(pool, testPort = serverPort)
+        val tester = CfIpSpeedTester(
+            ipPool = pool,
+            testPort = serverPort,
+            protect = CfIpRuntimeRegistry.currentProtect(),
+        )
         val selected = tester.runTest { tested, total ->
             setProgressAsync(workDataOf(KEY_TESTED to tested, KEY_TOTAL to total))
         }

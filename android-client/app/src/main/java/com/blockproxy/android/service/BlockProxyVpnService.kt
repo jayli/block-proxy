@@ -103,7 +103,10 @@ class BlockProxyVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tunnelClient: TunnelClient? = null
     private var localSocksServer: LocalSocksServer? = null
+    @Volatile
     private var cfIpPool: CfIpPool? = null
+
+    @Volatile
     private var cfIpSelector: CfIpSelector? = null
 
     /** True when the TUN fd was detached and handed to tun2socks. */
@@ -370,7 +373,7 @@ class BlockProxyVpnService : VpnService() {
             CfIpDns(config.serverHost, selector)
         }
         if (cfIpPool != null && cfIpSelector != null) {
-            CfIpRuntimeRegistry.attach(cfIpPool!!, cfIpSelector!!)
+            CfIpRuntimeRegistry.attach(cfIpPool!!, cfIpSelector!!, protectCallback)
             CfIpRefreshWorker.schedule(applicationContext, config.serverPort)
         } else {
             CfIpRefreshWorker.cancelSchedule(applicationContext)

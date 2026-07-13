@@ -93,6 +93,16 @@ class CfIpSelectorTest {
     }
 
     @Test
+    fun `advance with single ip returns null to allow DNS fallback`() {
+        val selector = CfIpSelector(CfIpSnapshot(listOf("1.1.1.1"), 0)) {}
+
+        assertEquals("1.1.1.1", selector.selectForLookup())
+        selector.markActiveDisconnectedUnexpectedly()
+
+        assertNull(selector.selectForLookup())
+    }
+
+    @Test
     fun `replaceSnapshot preserves selected IP if still present`() {
         val selector = CfIpSelector(CfIpSnapshot(listOf("1.1.1.1", "2.2.2.2"), 1)) {}
 

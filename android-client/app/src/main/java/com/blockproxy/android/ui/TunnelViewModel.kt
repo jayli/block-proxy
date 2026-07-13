@@ -13,6 +13,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.blockproxy.android.cdn.CfCdnConfig
 import com.blockproxy.android.cdn.CfIpRefreshWorker
 import com.blockproxy.android.config.ConfigRepository
 import com.blockproxy.android.config.CredentialStore
@@ -329,11 +330,10 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
     private fun isCfConfigValid(state: ConfigUiState): Boolean {
         if (!state.cfCdnEnabled) return true
         val port = state.port.toIntOrNull() ?: return false
-        return state.useTls && port in CLOUDFLARE_HTTPS_PORTS
+        return state.useTls && port in CfCdnConfig.HTTPS_PORTS
     }
 
     companion object {
-        val CLOUDFLARE_HTTPS_PORTS = setOf(443, 2053, 2083, 2087, 2096, 8443)
         private val KEY_BATTERY_EXEMPTION_REQUESTED = booleanPreferencesKey("battery_exemption_requested")
         private val KEY_BATTERY_EXEMPTION_GRANTED = booleanPreferencesKey("battery_exemption_granted")
     }

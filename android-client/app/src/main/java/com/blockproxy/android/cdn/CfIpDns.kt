@@ -25,5 +25,5 @@ class CfIpDns(
         }
     }
 
-    fun getCurrentIp(): String? = selector.getSelectedIp()
+    fun getCurrentIp(): String? = selector.currentIp()
 }

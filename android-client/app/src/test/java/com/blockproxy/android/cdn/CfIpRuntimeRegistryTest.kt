@@ -3,8 +3,10 @@ package com.blockproxy.android.cdn
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.Socket
 
 class CfIpRuntimeRegistryTest {
 
@@ -42,6 +44,19 @@ class CfIpRuntimeRegistryTest {
 
         assertTrue(CfIpRuntimeRegistry.reloadActiveSnapshot())
         assertEquals("3.3.3.3", newSelector.currentIp())
+        CfIpRuntimeRegistry.clearForTest()
+    }
+
+    @Test
+    fun `registry exposes protect callback for active tunnel`() {
+        CfIpRuntimeRegistry.clearForTest()
+        val selector = CfIpSelector(CfIpSnapshot(listOf("1.1.1.1"), 0)) {}
+        val pool = CfIpPool(FakeCfIpStorage(), FakeCursorStore())
+        val protect: (Socket) -> Boolean = { true }
+
+        CfIpRuntimeRegistry.attach(pool, selector, protect)
+
+        assertSame(protect, CfIpRuntimeRegistry.currentProtect())
         CfIpRuntimeRegistry.clearForTest()
     }
 }

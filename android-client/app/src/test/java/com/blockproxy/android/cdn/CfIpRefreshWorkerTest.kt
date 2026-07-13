@@ -26,6 +26,11 @@ class CfIpRefreshWorkerTest {
     }
 
     @Test
+    fun `cloudflare https ports are defined in cdn module`() {
+        assertEquals(setOf(443, 2053, 2083, 2087, 2096, 8443), CfCdnConfig.HTTPS_PORTS)
+    }
+
+    @Test
     fun `calculateDelayToNext4Am returns delay later same day before 4am`() {
         val now = Calendar.getInstance().apply {
             set(2026, Calendar.JULY, 13, 3, 30, 0)

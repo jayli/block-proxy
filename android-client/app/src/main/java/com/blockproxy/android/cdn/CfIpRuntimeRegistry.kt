@@ -1,20 +1,33 @@
 package com.blockproxy.android.cdn
 
+import java.net.Socket
+
 object CfIpRuntimeRegistry {
     private val lock = Any()
     private var activePool: CfIpPool? = null
     private var activeSelector: CfIpSelector? = null
+    private var activeProtect: ((Socket) -> Boolean)? = null
 
-    fun attach(pool: CfIpPool, selector: CfIpSelector) = synchronized(lock) {
+    fun attach(
+        pool: CfIpPool,
+        selector: CfIpSelector,
+        protect: ((Socket) -> Boolean)? = null,
+    ) = synchronized(lock) {
         activePool = pool
         activeSelector = selector
+        activeProtect = protect
     }
 
     fun detach(selector: CfIpSelector) = synchronized(lock) {
         if (activeSelector === selector) {
             activePool = null
             activeSelector = null
+            activeProtect = null
         }
+    }
+
+    fun currentProtect(): ((Socket) -> Boolean)? = synchronized(lock) {
+        activeProtect
     }
 
     suspend fun reloadActiveSnapshot(): Boolean {
@@ -31,5 +44,6 @@ object CfIpRuntimeRegistry {
     fun clearForTest() = synchronized(lock) {
         activePool = null
         activeSelector = null
+        activeProtect = null
     }
 }

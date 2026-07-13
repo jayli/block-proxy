@@ -21,6 +21,11 @@ class CfIpSelector(
         }
 
         if (advanceOnNextLookup) {
+            if (goodIps.size <= 1) {
+                selectedIp = null
+                advanceOnNextLookup = false
+                return@synchronized null
+            }
             val nextCursor = (cursor + 1) % goodIps.size
             if (nextCursor != cursor) {
                 persistCursor(nextCursor)
@@ -67,6 +72,4 @@ class CfIpSelector(
         }
         advanceOnNextLookup = false
     }
-
-    fun getSelectedIp(): String? = currentIp()
 }
