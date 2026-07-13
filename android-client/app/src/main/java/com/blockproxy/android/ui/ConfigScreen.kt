@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -35,6 +37,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -55,6 +58,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.blockproxy.android.cdn.CfCdnConfig
 import kotlinx.coroutines.delay
 
 /**
@@ -82,6 +86,9 @@ fun ConfigScreen(
     onUpdatePort: (String) -> Unit,
     onUpdateUsername: (String) -> Unit,
     onUpdatePassword: (String) -> Unit,
+    onUpdateCfCdnEnabled: (Boolean) -> Unit,
+    onRefreshCfIpPool: () -> Unit,
+    cfIpRefreshState: CfIpRefreshState,
     onSave: () -> Unit,
     onBatterySettingsClick: () -> Unit,
     routingEnabled: Boolean,
@@ -92,6 +99,8 @@ fun ConfigScreen(
     var passwordVisible by remember { mutableStateOf(false) }
     var saveCount by remember { mutableIntStateOf(0) }
     var showSaved by remember { mutableStateOf(false) }
+    val cfPortSupported = !config.cfCdnEnabled ||
+        config.port.toIntOrNull() in CfCdnConfig.HTTPS_PORTS
 
     LaunchedEffect(saveCount) {
         if (saveCount > 0) {
@@ -152,6 +161,114 @@ fun ConfigScreen(
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "连接 CDN 设置",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "使用 Cloudflare CDN",
+                                style = MaterialTheme.typography.titleSmall,
+                            )
+                            Text(
+                                text = "NAT 轮换时同步轮换 CF 边缘 IP",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = config.cfCdnEnabled,
+                            onCheckedChange = onUpdateCfCdnEnabled,
+                        )
+                    }
+
+                    if (config.cfCdnEnabled && !cfPortSupported) {
+                        Text(
+                            text = "CF CDN 模式仅支持 HTTPS 代理端口：443、2053、2083、2087、2096、8443",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+
+                    AnimatedVisibility(visible = config.cfCdnEnabled) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            OutlinedButton(
+                                onClick = onRefreshCfIpPool,
+                                enabled = cfIpRefreshState !is CfIpRefreshState.Refreshing &&
+                                    cfPortSupported,
+                            ) {
+                                if (cfIpRefreshState is CfIpRefreshState.Refreshing) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                }
+                                Text("刷新 CF IP 池")
+                            }
+
+                            when (val state = cfIpRefreshState) {
+                                is CfIpRefreshState.Refreshing -> {
+                                    Text(
+                                        text = if (state.total > 0) {
+                                            "${state.tested}/${state.total}"
+                                        } else {
+                                            "刷新中"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                is CfIpRefreshState.Done -> {
+                                    Text(
+                                        text = if (state.appliedToRunningTunnel) {
+                                            "已刷新 ${state.count} 个，已应用"
+                                        } else {
+                                            "已刷新 ${state.count} 个，下次启动生效"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                                is CfIpRefreshState.Error -> {
+                                    Text(
+                                        text = state.message,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                                CfIpRefreshState.Idle -> Unit
+                            }
+                        }
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -312,6 +429,7 @@ fun ConfigScreen(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = config.host.isNotBlank() &&
                     config.port.toIntOrNull() in 1..65535 &&
+                    cfPortSupported &&
                     config.username.isNotBlank() &&
                     config.password.isNotBlank(),
             ) {
@@ -331,7 +449,7 @@ fun ConfigScreen(
             Box(
                 modifier = Modifier
                     .background(
-                        color = Color(0xFF43A047),
+                        color = Color(0xFF424242),
                         shape = RoundedCornerShape(8.dp),
                     )
                     .padding(horizontal = 24.dp, vertical = 12.dp),

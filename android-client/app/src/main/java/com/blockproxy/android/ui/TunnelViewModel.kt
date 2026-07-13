@@ -11,6 +11,10 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import com.blockproxy.android.cdn.CfCdnConfig
+import com.blockproxy.android.cdn.CfIpRefreshWorker
 import com.blockproxy.android.config.ConfigRepository
 import com.blockproxy.android.config.CredentialStore
 import com.blockproxy.android.config.DataStoreConfigDataSource
@@ -23,8 +27,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+
+sealed class CfIpRefreshState {
+    data object Idle : CfIpRefreshState()
+    data class Refreshing(val tested: Int = 0, val total: Int = 0) : CfIpRefreshState()
+    data class Done(val count: Int, val appliedToRunningTunnel: Boolean) : CfIpRefreshState()
+    data class Error(val message: String) : CfIpRefreshState()
+}
 
 /**
  * UI state for the configuration form.
@@ -37,6 +48,7 @@ data class ConfigUiState(
     val username: String = "",
     val password: String = "",
     val isSaved: Boolean = false,
+    val cfCdnEnabled: Boolean = false,
 )
 
 /**
@@ -63,10 +75,14 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
 
     // Tunnel status from the service
     val tunnelStatus: StateFlow<TunnelStatus> = BlockProxyVpnService.statusStore.status
+    val currentCfIp: StateFlow<String?> = BlockProxyVpnService.statusStore.currentCfIp
 
     // Battery exemption state
     private val _batteryExemptionState = MutableStateFlow(BatteryExemptionState())
     val batteryExemptionState: StateFlow<BatteryExemptionState> = _batteryExemptionState.asStateFlow()
+
+    private val _cfIpRefreshState = MutableStateFlow<CfIpRefreshState>(CfIpRefreshState.Idle)
+    val cfIpRefreshState: StateFlow<CfIpRefreshState> = _cfIpRefreshState.asStateFlow()
 
     // Repositories
     private val configRepository = ConfigRepository(DataStoreConfigDataSource(context))
@@ -92,6 +108,7 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
                         port = cfg.serverPort.toString(),
                         useTls = cfg.useTls,
                         allowInsecure = cfg.allowInsecure,
+                        cfCdnEnabled = cfg.cfCdnEnabled,
                         isSaved = true,
                     )
                 }
@@ -199,6 +216,7 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
         val state = _configUiState.value
         return state.host.isNotBlank() &&
             state.port.toIntOrNull() in 1..65535 &&
+            isCfConfigValid(state) &&
             state.username.isNotBlank() &&
             state.password.isNotBlank() &&
             state.isSaved
@@ -230,6 +248,10 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
         _configUiState.value = _configUiState.value.copy(password = password, isSaved = false)
     }
 
+    fun updateCfCdnEnabled(enabled: Boolean) {
+        _configUiState.value = _configUiState.value.copy(cfCdnEnabled = enabled, isSaved = false)
+    }
+
     /**
      * Saves the current config and credentials to persistent storage.
      */
@@ -242,6 +264,7 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
                 serverPort = state.port.toIntOrNull() ?: ServerConfig.DEFAULT_PORT,
                 useTls = state.useTls,
                 allowInsecure = state.allowInsecure,
+                cfCdnEnabled = state.cfCdnEnabled,
             )
             configRepository.save(config)
 
@@ -251,8 +274,63 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
             )
             credentialStore.save(creds)
 
+            if (config.cfCdnEnabled) {
+                CfIpRefreshWorker.schedule(context, config.serverPort)
+            } else {
+                CfIpRefreshWorker.cancelSchedule(context)
+            }
+
             _configUiState.value = _configUiState.value.copy(isSaved = true)
         }
+    }
+
+    fun refreshCfIpPool() {
+        val state = _configUiState.value
+        val port = state.port.toIntOrNull()
+        if (!state.cfCdnEnabled || port == null || !isCfConfigValid(state)) {
+            _cfIpRefreshState.value = CfIpRefreshState.Error("请先启用 CF CDN 并使用支持的 HTTPS 端口")
+            return
+        }
+
+        val id = CfIpRefreshWorker.refreshNow(context, port)
+        viewModelScope.launch {
+            WorkManager.getInstance(context)
+                .getWorkInfoByIdFlow(id)
+                .collectLatest { info ->
+                    if (info == null) return@collectLatest
+                    when (info.state) {
+                        WorkInfo.State.ENQUEUED,
+                        WorkInfo.State.BLOCKED,
+                        WorkInfo.State.RUNNING -> {
+                            _cfIpRefreshState.value = CfIpRefreshState.Refreshing(
+                                tested = info.progress.getInt(CfIpRefreshWorker.KEY_TESTED, 0),
+                                total = info.progress.getInt(CfIpRefreshWorker.KEY_TOTAL, 0),
+                            )
+                        }
+                        WorkInfo.State.SUCCEEDED -> {
+                            _cfIpRefreshState.value = CfIpRefreshState.Done(
+                                count = info.outputData.getInt(CfIpRefreshWorker.KEY_SELECTED_COUNT, 0),
+                                appliedToRunningTunnel = info.outputData.getBoolean(
+                                    CfIpRefreshWorker.KEY_APPLIED_TO_RUNNING_TUNNEL,
+                                    false,
+                                ),
+                            )
+                        }
+                        WorkInfo.State.FAILED -> {
+                            _cfIpRefreshState.value = CfIpRefreshState.Error("刷新失败")
+                        }
+                        WorkInfo.State.CANCELLED -> {
+                            _cfIpRefreshState.value = CfIpRefreshState.Idle
+                        }
+                    }
+                }
+        }
+    }
+
+    private fun isCfConfigValid(state: ConfigUiState): Boolean {
+        if (!state.cfCdnEnabled) return true
+        val port = state.port.toIntOrNull() ?: return false
+        return state.useTls && port in CfCdnConfig.HTTPS_PORTS
     }
 
     companion object {

@@ -18,6 +18,7 @@ data class ServerConfig(
     val wsPath: String = "/websocket",
     val httpDisguise: Boolean = true,
     val customHeaders: Map<String, String> = emptyMap(),
+    val cfCdnEnabled: Boolean = false,
 ) {
     companion object {
         /** Default tunnel server port (matches block-proxy tunnel server). */

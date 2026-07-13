@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.blockproxy.android.status.TunnelStatus
+import com.blockproxy.android.util.NetworkInfo
 
 /**
  * Main tunnel screen showing status, connect/disconnect controls, and config navigation.
@@ -53,12 +54,17 @@ fun MainScreen(
     batteryExempted: Boolean,
     host: String = "",
     port: String = "",
+    cfCdnEnabled: Boolean = false,
+    currentCfIp: String? = null,
     isSlideActive: Boolean = false,
     sliderTrackTone: SliderTrackTone = SliderTrackTone.Neutral,
     onSlideActiveChange: (Boolean) -> Unit = {},
     onStart: () -> Unit,
     onStop: () -> Unit,
     onBatterySettingsClick: () -> Unit,
+    networkInfo: NetworkInfo = NetworkInfo(),
+    isNetworkInfoLoading: Boolean = false,
+    onRefreshNetworkInfo: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -88,10 +94,20 @@ fun MainScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 // Status card
-                StatusCard(status = status, host = host, port = port)
+                StatusCard(
+                    status = status,
+                    host = host,
+                    port = port,
+                    cfCdnEnabled = cfCdnEnabled,
+                    currentCfIp = currentCfIp,
+                )
 
                 // Network info card
-                NetworkInfoCard()
+                NetworkInfoCard(
+                    networkInfo = networkInfo,
+                    isLoading = isNetworkInfoLoading,
+                    onRefresh = onRefreshNetworkInfo,
+                )
 
                 // Battery warning
                 if (!batteryExempted) {
@@ -115,7 +131,13 @@ fun MainScreen(
  * Card displaying the current tunnel status with a colored indicator.
  */
 @Composable
-private fun StatusCard(status: TunnelStatus, host: String = "", port: String = "") {
+private fun StatusCard(
+    status: TunnelStatus,
+    host: String = "",
+    port: String = "",
+    cfCdnEnabled: Boolean = false,
+    currentCfIp: String? = null,
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -137,7 +159,11 @@ private fun StatusCard(status: TunnelStatus, host: String = "", port: String = "
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 val display = if (status == TunnelStatus.Connected) {
-                    "已连接 · $host:$port"
+                    if (cfCdnEnabled && currentCfIp != null) {
+                        "已连接 · $currentCfIp:$port (CF)"
+                    } else {
+                        "已连接 · $host:$port"
+                    }
                 } else {
                     status.displayText
                 }

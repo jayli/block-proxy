@@ -9,54 +9,36 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.blockproxy.android.util.NetworkInfo
-import com.blockproxy.android.util.NetworkInfoManager
-import kotlinx.coroutines.launch
 
 /**
  * Displays local network information in a card below the status card.
  *
- * Auto-refreshes when the composable enters composition.
- * Public IP can be manually refreshed via the icon button.
+ * This is a pure display component. The parent manages the data and refresh logic.
+ *
+ * @param networkInfo The current network information to display
+ * @param isLoading Whether the network info is currently being loaded
+ * @param onRefresh Called when the user taps the refresh button
  */
 @Composable
-fun NetworkInfoCard(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val manager = remember { NetworkInfoManager(context) }
-    var networkInfo by remember { mutableStateOf(NetworkInfo()) }
-    var isLoading by remember { mutableStateOf(true) }
-    var isPublicIpLoading by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-
-    // Initial load
-    LaunchedEffect(Unit) {
-        isLoading = true
-        networkInfo = manager.refresh()
-        isLoading = false
-    }
-
+fun NetworkInfoCard(
+    networkInfo: NetworkInfo,
+    isLoading: Boolean,
+    onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -64,18 +46,37 @@ fun NetworkInfoCard(modifier: Modifier = Modifier) {
         )
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            // Header
-            Text(
-                text = "网络信息",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(
-                    start = 16.dp,
-                    top = 12.dp,
-                    end = 16.dp,
-                    bottom = 8.dp
+            // Header with refresh button
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, top = 8.dp, end = 8.dp, bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "网络信息",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            )
+                TextButton(
+                    onClick = onRefresh,
+                    enabled = !isLoading,
+                    modifier = Modifier.height(32.dp),
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    Text(
+                        text = "刷新",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
 
             if (isLoading) {
                 Row(
@@ -96,20 +97,9 @@ fun NetworkInfoCard(modifier: Modifier = Modifier) {
             } else {
                 NetworkInfoRow(label = "本机 IP", value = networkInfo.localIp)
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                PublicIpRow(
-                    value = networkInfo.publicIp,
-                    isRefreshing = isPublicIpLoading,
-                    onRefresh = {
-                        scope.launch {
-                            isPublicIpLoading = true
-                            networkInfo = networkInfo.copy(publicIp = "-")
-                            networkInfo = manager.refresh()
-                            isPublicIpLoading = false
-                        }
-                    }
-                )
+                NetworkInfoRow(label = "公网 IP", value = networkInfo.publicIp)
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                NetworkInfoRow(label = "服务器 IP", value = networkInfo.serverIp)
+                NetworkInfoRow(label = "服务器 IP(from DNS)", value = networkInfo.serverIp)
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                 NetworkInfoRow(label = "MAC 地址", value = networkInfo.macAddress)
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
@@ -150,49 +140,5 @@ private fun NetworkInfoRow(label: String, value: String) {
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.onSurface
         )
-    }
-}
-
-@Composable
-private fun PublicIpRow(
-    value: String,
-    isRefreshing: Boolean,
-    onRefresh: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = "公网 IP",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (isRefreshing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp),
-                    strokeWidth = 2.dp
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-            }
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = "刷新公网 IP",
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
     }
 }

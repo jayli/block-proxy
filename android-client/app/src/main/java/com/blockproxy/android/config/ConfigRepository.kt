@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.blockproxy.android.cdn.CfCdnConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -32,7 +33,6 @@ interface ConfigDataSource {
  * [DataStoreConfigDataSource]; tests may inject an in-memory fake.
  */
 class ConfigRepository(private val source: ConfigDataSource) {
-
     /** Cold [Flow] that emits the current config whenever it changes. */
     fun observe(): Flow<ServerConfig?> = source.observe()
 
@@ -40,6 +40,12 @@ class ConfigRepository(private val source: ConfigDataSource) {
     suspend fun save(config: ServerConfig) {
         require(config.serverHost.isNotBlank()) { "serverHost must not be blank" }
         require(config.serverPort in 1..65535) { "serverPort must be in 1..65535" }
+        if (config.cfCdnEnabled) {
+            require(config.useTls) { "Cloudflare CDN mode requires TLS" }
+            require(config.serverPort in CfCdnConfig.HTTPS_PORTS) {
+                "Cloudflare CDN mode requires a Cloudflare HTTPS proxy port"
+            }
+        }
         source.save(config)
     }
 
@@ -77,6 +83,7 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             allowInsecure = prefs[KEY_ALLOW_INSECURE] ?: true,
             wsPath = prefs[KEY_WS_PATH] ?: "/websocket",
             httpDisguise = prefs[KEY_HTTP_DISGUISE] ?: true,
+            cfCdnEnabled = prefs[KEY_CF_CDN_ENABLED] ?: false,
         )
     }
 
@@ -88,6 +95,7 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             prefs[KEY_ALLOW_INSECURE] = config.allowInsecure
             prefs[KEY_WS_PATH] = config.wsPath
             prefs[KEY_HTTP_DISGUISE] = config.httpDisguise
+            prefs[KEY_CF_CDN_ENABLED] = config.cfCdnEnabled
         }
     }
 
@@ -102,5 +110,6 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
         val KEY_ALLOW_INSECURE = booleanPreferencesKey("allow_insecure")
         val KEY_WS_PATH = stringPreferencesKey("ws_path")
         val KEY_HTTP_DISGUISE = booleanPreferencesKey("http_disguise")
+        val KEY_CF_CDN_ENABLED = booleanPreferencesKey("cf_cdn_enabled")
     }
 }

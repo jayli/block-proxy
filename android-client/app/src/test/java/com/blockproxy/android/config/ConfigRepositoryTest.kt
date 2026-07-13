@@ -75,6 +75,59 @@ class ConfigRepositoryTest {
     }
 
     @Test
+    fun `save and observe preserves cfCdnEnabled`() = scope.runTest {
+        repository.observe().test {
+            assertNull(awaitItem())
+
+            repository.save(
+                ServerConfig(
+                    serverHost = "example.com",
+                    serverPort = 443,
+                    useTls = true,
+                    cfCdnEnabled = true,
+                )
+            )
+
+            assertEquals(true, awaitItem()?.cfCdnEnabled)
+            cancelAndConsumeRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `cfCdnEnabled defaults to false`() = scope.runTest {
+        repository.save(ServerConfig(serverHost = "example.com"))
+
+        repository.observe().test {
+            assertEquals(false, awaitItem()?.cfCdnEnabled)
+            cancelAndConsumeRemainingEvents()
+        }
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `cf cdn requires tls`() = scope.runTest {
+        repository.save(
+            ServerConfig(
+                serverHost = "example.com",
+                serverPort = 443,
+                useTls = false,
+                cfCdnEnabled = true,
+            )
+        )
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `cf cdn rejects unsupported port`() = scope.runTest {
+        repository.save(
+            ServerConfig(
+                serverHost = "example.com",
+                serverPort = 8003,
+                useTls = true,
+                cfCdnEnabled = true,
+            )
+        )
+    }
+
+    @Test
     fun `save twice emits latest config`() = scope.runTest {
         val config1 = ServerConfig(serverHost = "host1.example.com", serverPort = 8003)
         val config2 = ServerConfig(serverHost = "host2.example.com", serverPort = 9000)

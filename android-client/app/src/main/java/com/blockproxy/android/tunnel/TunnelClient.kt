@@ -1,6 +1,8 @@
 package com.blockproxy.android.tunnel
 
 import android.util.Log
+import com.blockproxy.android.cdn.CfIpDns
+import com.blockproxy.android.cdn.CfIpSelector
 import com.blockproxy.android.config.ServerConfig
 import com.blockproxy.android.config.TunnelCredentials
 import com.blockproxy.android.status.TunnelStatus
@@ -35,6 +37,9 @@ class TunnelClient(
     private val targetSocketFactory: TargetSocketFactory,
     private val clientScope: CoroutineScope,
     private val protect: ((java.net.Socket) -> Boolean)? = null,
+    private val cfIpDns: CfIpDns? = null,
+    private val cfIpSelector: CfIpSelector? = null,
+    private val onCfIpChanged: (String?) -> Unit = {},
 ) {
     companion object {
         const val INITIAL_BACKOFF_MS = 1_000L
@@ -87,6 +92,8 @@ class TunnelClient(
 
     suspend fun stop(timeoutMs: Long = 5_000L) {
         stopped = true
+        cfIpSelector?.markStoppedCleanly()
+        onCfIpChanged(null)
         mainJob?.cancel()
         mainJob = null
 
@@ -223,12 +230,13 @@ class TunnelClient(
     private suspend fun establishConnection(): FrameSender {
         val addr = config.serverHost
         val port = config.serverPort
+        val wsClient = connectionClient()
 
         Log.i(TAG, "Connecting to tunnel $addr:$port")
 
         // HTTP disguise
         if (config.httpDisguise) {
-            performHttpDisguise(addr, port)
+            performHttpDisguise(addr, port, wsClient)
         }
 
         // WebSocket URL
@@ -249,26 +257,48 @@ class TunnelClient(
             customHeaders = config.customHeaders,
             onAuthSuccess = { sender ->
                 frameChannels[sender] = frameChannel
+                cfIpSelector?.markConnected()
+                onCfIpChanged(cfIpDns?.getCurrentIp())
             },
             onFrame = { sender, frameBytes ->
                 frameChannels[sender]?.trySend(frameBytes)
             },
             onDisconnect = { sender, error ->
                 frameChannels[sender]?.close()
+                handleCfDisconnect(sender)
             },
         )
 
         return try {
-            tunnelWs.connect(okHttpClient)
+            tunnelWs.connect(wsClient)
         } catch (e: Exception) {
             frameChannel.close()
+            cfIpSelector?.markCandidateFailed()
             throw e
         }
     }
 
-    private suspend fun performHttpDisguise(addr: String, port: Int) {
+    private fun connectionClient(): OkHttpClient {
+        return if (cfIpDns != null) {
+            okHttpClient.newBuilder().dns(cfIpDns).build()
+        } else {
+            okHttpClient
+        }
+    }
+
+    private fun handleCfDisconnect(sender: FrameSender) {
+        val selector = cfIpSelector ?: return
+        if (stopped) return
+        when {
+            sender === drainingWs -> Unit
+            sender === activeWs -> selector.markActiveDisconnectedUnexpectedly()
+            else -> selector.markCandidateFailed()
+        }
+    }
+
+    private suspend fun performHttpDisguise(addr: String, port: Int, client: OkHttpClient) {
         val base = "https://$addr:$port"
-        val disguiseClient = okHttpClient.newBuilder()
+        val disguiseClient = client.newBuilder()
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
             .build()
@@ -374,6 +404,8 @@ class TunnelClient(
     private suspend fun rotationCycle() {
         val oldWs = activeWs ?: return
         if (!oldWs.isOpen) return
+
+        cfIpSelector?.forceNextOnNextLookup()
 
         // Establish candidate connection (channel pre-created and registered in onAuthSuccess)
         val candidate = try {
