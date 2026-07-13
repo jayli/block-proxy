@@ -13,6 +13,7 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
+        android:name=".BlockProxyApplication"
         android:theme="@style/Theme.BlockProxy"
         android:label="BlockProxy"
         android:icon="@mipmap/ic_launcher"
@@ -29,6 +30,13 @@
         <activity
             android:name="androidx.activity.ComponentActivity"
             android:exported="true" />
+
+        <activity
+            android:name=".CrashReportActivity"
+            android:exported="false"
+            android:process=":crash"
+            android:excludeFromRecents="true"
+            android:taskAffinity="" />
 
         <service
             android:name=".service.BlockProxyVpnService"

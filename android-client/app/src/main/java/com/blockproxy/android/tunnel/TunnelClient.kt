@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
@@ -268,8 +269,8 @@ class TunnelClient(
     private suspend fun performHttpDisguise(addr: String, port: Int) {
         val base = "https://$addr:$port"
         val disguiseClient = okHttpClient.newBuilder()
-            .connectTimeout(java.time.Duration.ofSeconds(5))
-            .readTimeout(java.time.Duration.ofSeconds(5))
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(5, TimeUnit.SECONDS)
             .build()
 
         try {

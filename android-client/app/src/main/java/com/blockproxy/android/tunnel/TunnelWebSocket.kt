@@ -13,7 +13,6 @@ import okio.ByteString.Companion.toByteString
 import android.util.Log
 import java.io.IOException
 import java.security.SecureRandom
-import java.time.Duration
 import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
 import javax.net.SocketFactory
@@ -81,10 +80,10 @@ class TunnelWebSocket(
             protect: ((java.net.Socket) -> Boolean)?,
         ): OkHttpClient {
             val builder = OkHttpClient.Builder()
-                .pingInterval(Duration.ZERO) // 不用 OkHttp 内置 ping
-                .readTimeout(Duration.ZERO) // 无超时，由应用层心跳管理
-                .writeTimeout(Duration.ofSeconds(30))
-                .connectTimeout(Duration.ofSeconds(10))
+                .pingInterval(0, TimeUnit.MILLISECONDS) // 不用 OkHttp 内置 ping
+                .readTimeout(0, TimeUnit.MILLISECONDS) // 无超时，由应用层心跳管理
+                .writeTimeout(30, TimeUnit.SECONDS)
+                .connectTimeout(10, TimeUnit.SECONDS)
 
             if (protect != null) {
                 builder.socketFactory(ProtectedSocketFactory(protect))
