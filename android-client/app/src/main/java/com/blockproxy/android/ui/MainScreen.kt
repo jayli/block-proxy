@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.blockproxy.android.status.TunnelStatus
+import com.blockproxy.android.util.NetworkInfo
 
 /**
  * Main tunnel screen showing status, connect/disconnect controls, and config navigation.
@@ -61,6 +62,9 @@ fun MainScreen(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onBatterySettingsClick: () -> Unit,
+    networkInfo: NetworkInfo = NetworkInfo(),
+    isNetworkInfoLoading: Boolean = false,
+    onRefreshNetworkInfo: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -99,7 +103,11 @@ fun MainScreen(
                 )
 
                 // Network info card
-                NetworkInfoCard()
+                NetworkInfoCard(
+                    networkInfo = networkInfo,
+                    isLoading = isNetworkInfoLoading,
+                    onRefresh = onRefreshNetworkInfo,
+                )
 
                 // Battery warning
                 if (!batteryExempted) {

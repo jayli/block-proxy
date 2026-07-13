@@ -79,9 +79,9 @@ fun AboutScreen(onNavigateToHome: () -> Unit, modifier: Modifier = Modifier) {
                     HorizontalDivider()
                     InfoRow("App 名称", "BlockProxyClient")
                     HorizontalDivider()
-                    InfoRow("版本", "v0.1.3")
+                    InfoRow("版本", "v0.1.4")
                     HorizontalDivider()
-                    InfoRow("作者", "bachi")
+                    InfoRow("作者", "jayli")
                     HorizontalDivider()
                     InfoRow("系统版本", "支持 Android 6.x 及以上版本")
                 }

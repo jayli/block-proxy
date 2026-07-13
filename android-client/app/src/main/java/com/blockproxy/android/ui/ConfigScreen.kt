@@ -58,6 +58,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.blockproxy.android.cdn.CfCdnConfig
 import kotlinx.coroutines.delay
 
 /**
@@ -99,7 +100,7 @@ fun ConfigScreen(
     var saveCount by remember { mutableIntStateOf(0) }
     var showSaved by remember { mutableStateOf(false) }
     val cfPortSupported = !config.cfCdnEnabled ||
-        config.port.toIntOrNull() in TunnelViewModel.CLOUDFLARE_HTTPS_PORTS
+        config.port.toIntOrNull() in CfCdnConfig.HTTPS_PORTS
 
     LaunchedEffect(saveCount) {
         if (saveCount > 0) {
@@ -164,7 +165,7 @@ fun ConfigScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "CDN 设置",
+                text = "连接 CDN 设置",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -448,7 +449,7 @@ fun ConfigScreen(
             Box(
                 modifier = Modifier
                     .background(
-                        color = Color(0xFF43A047),
+                        color = Color(0xFF424242),
                         shape = RoundedCornerShape(8.dp),
                     )
                     .padding(horizontal = 24.dp, vertical = 12.dp),

@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModelProvider
@@ -42,6 +43,8 @@ import com.blockproxy.android.ui.RoutingViewModel
 import com.blockproxy.android.ui.SliderAction
 import com.blockproxy.android.ui.SliderStateMachine
 import com.blockproxy.android.ui.TunnelViewModel
+import com.blockproxy.android.util.NetworkInfo
+import com.blockproxy.android.util.NetworkInfoManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -98,6 +101,19 @@ class MainActivity : ComponentActivity() {
                 val cfIpRefreshState by viewModel.cfIpRefreshState.collectAsState()
                 val currentCfIp by viewModel.currentCfIp.collectAsState()
                 val routingState by routingViewModel.uiState.collectAsState()
+
+                // Network info state - managed at Activity level to persist across tab switches
+                val networkInfoManager = remember { NetworkInfoManager(applicationContext) }
+                var networkInfo by remember { mutableStateOf(NetworkInfo()) }
+                var isNetworkInfoLoading by remember { mutableStateOf(false) }
+                val scope = rememberCoroutineScope()
+
+                // Load network info once when the activity starts
+                LaunchedEffect(Unit) {
+                    isNetworkInfoLoading = true
+                    networkInfo = networkInfoManager.refresh()
+                    isNetworkInfoLoading = false
+                }
 
                 var selectedTab by remember { mutableIntStateOf(0) }
 
@@ -191,6 +207,15 @@ class MainActivity : ComponentActivity() {
                             onStop = { controller.stop() },
                             onBatterySettingsClick = {
                                 startActivity(viewModel.createBatterySettingsIntent())
+                            },
+                            networkInfo = networkInfo,
+                            isNetworkInfoLoading = isNetworkInfoLoading,
+                            onRefreshNetworkInfo = {
+                                scope.launch {
+                                    isNetworkInfoLoading = true
+                                    networkInfo = networkInfoManager.refresh()
+                                    isNetworkInfoLoading = false
+                                }
                             },
                             modifier = modifier,
                         )
