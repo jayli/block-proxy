@@ -2,6 +2,9 @@ const { Duplex } = require('stream');
 const net = require('net');
 const { FRAME_TYPES, ATYP, MAX_DATA_CHUNK } = require('./protocol');
 
+const MAX_FORWARD_CONNECTIONS = 100;
+const FORWARD_IDLE_TIMEOUT = 300 * 1000; // 5 min idle timeout for established connections
+
 class TunnelManager {
   constructor(tunnelServer, config) {
     this._server = tunnelServer;
@@ -9,6 +12,7 @@ class TunnelManager {
     this._proxyPort = config.proxy_port || 8001;
     this._reqidCounter = 0;
     this._activeRequests = new Map();
+    this._forwardCount = 0;
     this._connected = false;
     this._clientAddress = null;
 
@@ -163,7 +167,14 @@ class TunnelManager {
       return;
     }
 
-    console.log(`[Tunnel] Forward CONNECT ${reqid}: ${targetHost}:${targetPort}`);
+    // Concurrency limit — reject when too many forward connections
+    if (this._forwardCount >= MAX_FORWARD_CONNECTIONS) {
+      console.log(`[Tunnel] Forward rejected: too many concurrent connections (${this._forwardCount}/${MAX_FORWARD_CONNECTIONS}) reqid=${reqid}`);
+      this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid }, socket);
+      return;
+    }
+
+    console.log(`[Tunnel] Forward CONNECT ${reqid}: ${targetHost}:${targetPort} (active=${this._forwardCount})`);
 
     const stream = new TunnelDuplex(this, reqid);
     const entry = {
@@ -178,7 +189,15 @@ class TunnelManager {
     anyproxySocket.setKeepAlive(true, 60000);
     entry._anyproxySocket = anyproxySocket;
 
+    // Track whether cleanup has already run to prevent double-decrement
+    let cleaned = false;
+    this._forwardCount++;
+
     const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      this._forwardCount--;
+      if (entry.idleTimer) clearTimeout(entry.idleTimer);
       this._clearActiveRequest(reqid);
       if (!anyproxySocket.destroyed) anyproxySocket.destroy();
     };
@@ -189,6 +208,15 @@ class TunnelManager {
       cleanup();
     }, 30000);
     entry.timeout = timeout;
+
+    const resetIdleTimer = () => {
+      if (entry.idleTimer) clearTimeout(entry.idleTimer);
+      entry.idleTimer = setTimeout(() => {
+        console.log(`[Tunnel] Forward idle timeout ${targetHost}:${targetPort} (reqid=${reqid})`);
+        cleanup();
+      }, FORWARD_IDLE_TIMEOUT);
+      entry.idleTimer.unref();
+    };
 
     anyproxySocket.connect(this._proxyPort, '127.0.0.1', () => {
       const connectReq = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n\r\n`;
@@ -214,6 +242,9 @@ class TunnelManager {
         entry.confirmed = true;
         this._server.sendFrame({ type: FRAME_TYPES.CONNECT_OK, reqid }, entry.socket);
 
+        // Start idle timer for established connection
+        resetIdleTimer();
+
         // Forward any remaining data after headers (binary-safe)
         const remaining = responseBuffer.slice(headerEnd + 4);
         if (remaining.length > 0) {
@@ -225,6 +256,7 @@ class TunnelManager {
 
       // Relay data from AnyProxy to client
       entry.lastActivityAt = Date.now();
+      resetIdleTimer();
       this._sendDataToClient(reqid, data, entry.socket).catch(() => {});
     });
 
@@ -232,7 +264,7 @@ class TunnelManager {
       if (entry.confirmed && this._activeRequests.has(reqid)) {
         this._sendCloseToClient(reqid, entry.socket);
       }
-      this._clearActiveRequest(reqid);
+      cleanup();
     });
 
     anyproxySocket.on('error', (err) => {
@@ -306,6 +338,8 @@ class TunnelManager {
       connected: this._connected,
       clientAddress: this._clientAddress,
       activeRequests: this._activeRequests.size,
+      forwardConnections: this._forwardCount,
+      maxForwardConnections: MAX_FORWARD_CONNECTIONS,
       connections: counts.total,
       activeConnections: counts.active || 0,
       candidateConnections: counts.candidate || 0,
@@ -341,6 +375,7 @@ class TunnelManager {
       for (const [reqid, entry] of this._activeRequests) {
         if (entry.socket === socket) {
           if (entry.timeout) clearTimeout(entry.timeout);
+          if (entry.idleTimer) clearTimeout(entry.idleTimer);
           if (entry._anyproxySocket && !entry._anyproxySocket.destroyed) {
             entry._anyproxySocket.destroy();
           }
