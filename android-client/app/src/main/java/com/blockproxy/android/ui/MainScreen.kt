@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ButtonDefaults
@@ -78,17 +80,26 @@ fun MainScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Status card
-            StatusCard(status = status, host = host, port = port)
+            // Scrollable content area
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                // Status card
+                StatusCard(status = status, host = host, port = port)
 
-            // Battery warning
-            if (!batteryExempted) {
-                BatteryWarningCard(onClick = onBatterySettingsClick)
+                // Network info card
+                NetworkInfoCard()
+
+                // Battery warning
+                if (!batteryExempted) {
+                    BatteryWarningCard(onClick = onBatterySettingsClick)
+                }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
-
-            // Slide-to-connect button
+            // Slide-to-connect button (fixed at bottom)
             SlideButton(
                 enabled = isConfigValid,
                 isActive = isSlideActive,
