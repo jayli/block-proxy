@@ -53,6 +53,8 @@ fun MainScreen(
     batteryExempted: Boolean,
     host: String = "",
     port: String = "",
+    cfCdnEnabled: Boolean = false,
+    currentCfIp: String? = null,
     isSlideActive: Boolean = false,
     sliderTrackTone: SliderTrackTone = SliderTrackTone.Neutral,
     onSlideActiveChange: (Boolean) -> Unit = {},
@@ -88,7 +90,13 @@ fun MainScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 // Status card
-                StatusCard(status = status, host = host, port = port)
+                StatusCard(
+                    status = status,
+                    host = host,
+                    port = port,
+                    cfCdnEnabled = cfCdnEnabled,
+                    currentCfIp = currentCfIp,
+                )
 
                 // Network info card
                 NetworkInfoCard()
@@ -115,7 +123,13 @@ fun MainScreen(
  * Card displaying the current tunnel status with a colored indicator.
  */
 @Composable
-private fun StatusCard(status: TunnelStatus, host: String = "", port: String = "") {
+private fun StatusCard(
+    status: TunnelStatus,
+    host: String = "",
+    port: String = "",
+    cfCdnEnabled: Boolean = false,
+    currentCfIp: String? = null,
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -137,7 +151,11 @@ private fun StatusCard(status: TunnelStatus, host: String = "", port: String = "
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 val display = if (status == TunnelStatus.Connected) {
-                    "已连接 · $host:$port"
+                    if (cfCdnEnabled && currentCfIp != null) {
+                        "已连接 · $currentCfIp:$port (CF)"
+                    } else {
+                        "已连接 · $host:$port"
+                    }
                 } else {
                     status.displayText
                 }

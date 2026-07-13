@@ -13,6 +13,11 @@ import java.util.concurrent.TimeUnit
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.blockproxy.android.cdn.CfIpDns
+import com.blockproxy.android.cdn.CfIpPool
+import com.blockproxy.android.cdn.CfIpRefreshWorker
+import com.blockproxy.android.cdn.CfIpRuntimeRegistry
+import com.blockproxy.android.cdn.CfIpSelector
 import com.blockproxy.android.config.ConfigRepository
 import com.blockproxy.android.config.DataStoreConfigDataSource
 import com.blockproxy.android.config.DataStoreCredentialDataSource
@@ -98,6 +103,8 @@ class BlockProxyVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tunnelClient: TunnelClient? = null
     private var localSocksServer: LocalSocksServer? = null
+    private var cfIpPool: CfIpPool? = null
+    private var cfIpSelector: CfIpSelector? = null
 
     /** True when the TUN fd was detached and handed to tun2socks. */
     private var vpnFdDetached = false
@@ -144,6 +151,10 @@ class BlockProxyVpnService : VpnService() {
 
             // Immediately update status so UI reflects disconnected state
             statusStore.update(TunnelStatus.Disconnected)
+            cfIpSelector?.let { CfIpRuntimeRegistry.detach(it) }
+            cfIpPool = null
+            cfIpSelector = null
+            statusStore.updateCfIp(null)
 
             // Cancel the service scope to abort setupTunnel() coroutine
             serviceScope?.cancel()
@@ -275,6 +286,10 @@ class BlockProxyVpnService : VpnService() {
 
         // Update status
         statusStore.update(TunnelStatus.Disconnected)
+        cfIpSelector?.let { CfIpRuntimeRegistry.detach(it) }
+        cfIpPool = null
+        cfIpSelector = null
+        statusStore.updateCfIp(null)
 
         super.onDestroy()
     }
@@ -344,6 +359,24 @@ class BlockProxyVpnService : VpnService() {
 
         val targetSocketFactory = RealTargetSocketFactory(protect = protectCallback)
 
+        cfIpPool = if (config.cfCdnEnabled) CfIpPool(applicationContext) else null
+        cfIpSelector = cfIpPool?.let { pool ->
+            val snapshot = pool.loadSnapshot()
+            CfIpSelector(snapshot) { cursor ->
+                serviceScope?.launch { pool.saveCursor(cursor) }
+            }
+        }
+        val cfIpDns = cfIpSelector?.let { selector ->
+            CfIpDns(config.serverHost, selector)
+        }
+        if (cfIpPool != null && cfIpSelector != null) {
+            CfIpRuntimeRegistry.attach(cfIpPool!!, cfIpSelector!!)
+            CfIpRefreshWorker.schedule(applicationContext, config.serverPort)
+        } else {
+            CfIpRefreshWorker.cancelSchedule(applicationContext)
+            statusStore.updateCfIp(null)
+        }
+
         // Create TunnelClient (needed by TunnelForwardConnector for LocalSocksServer)
         val scope = serviceScope ?: return
         val client = TunnelClient(
@@ -352,6 +385,9 @@ class BlockProxyVpnService : VpnService() {
             targetSocketFactory = targetSocketFactory,
             clientScope = scope,
             protect = protectCallback,
+            cfIpDns = cfIpDns,
+            cfIpSelector = cfIpSelector,
+            onCfIpChanged = statusStore::updateCfIp,
         )
         tunnelClient = client
 

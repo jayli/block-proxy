@@ -95,6 +95,8 @@ class MainActivity : ComponentActivity() {
                 val status by viewModel.tunnelStatus.collectAsState()
                 val config by viewModel.configUiState.collectAsState()
                 val batteryState by viewModel.batteryExemptionState.collectAsState()
+                val cfIpRefreshState by viewModel.cfIpRefreshState.collectAsState()
+                val currentCfIp by viewModel.currentCfIp.collectAsState()
                 val routingState by routingViewModel.uiState.collectAsState()
 
                 var selectedTab by remember { mutableIntStateOf(0) }
@@ -172,6 +174,8 @@ class MainActivity : ComponentActivity() {
                             batteryExempted = batteryState.isExempt,
                             host = config.host,
                             port = config.port,
+                            cfCdnEnabled = config.cfCdnEnabled,
+                            currentCfIp = currentCfIp,
                             isSlideActive = sliderRender.isActive,
                             sliderTrackTone = sliderRender.trackTone,
                             onSlideActiveChange = { active ->
@@ -207,6 +211,9 @@ class MainActivity : ComponentActivity() {
                                     onUpdatePort = viewModel::updatePort,
                                     onUpdateUsername = viewModel::updateUsername,
                                     onUpdatePassword = viewModel::updatePassword,
+                                    onUpdateCfCdnEnabled = viewModel::updateCfCdnEnabled,
+                                    onRefreshCfIpPool = viewModel::refreshCfIpPool,
+                                    cfIpRefreshState = cfIpRefreshState,
                                     onSave = viewModel::saveConfig,
                                     onBatterySettingsClick = {
                                         startActivity(viewModel.createBatterySettingsIntent())
