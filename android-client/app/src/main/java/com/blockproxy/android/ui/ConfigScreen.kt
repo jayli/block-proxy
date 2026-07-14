@@ -548,6 +548,14 @@ private fun ConnectionTestResultDialog(
                         value = "✗ ${result.error ?: "连接失败"}",
                         valueColor = Color(0xFFF44336),
                     )
+                    // 直连 IP（CF CDN 模式下显示）
+                    result.connectedIp?.let { ip ->
+                        ResultRow(
+                            label = "直连 IP",
+                            value = ip,
+                            valueColor = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                 } else {
                     // 连通性
                     ResultRow(
@@ -555,6 +563,15 @@ private fun ConnectionTestResultDialog(
                         value = "✓ 已连通",
                         valueColor = Color(0xFF4CAF50),
                     )
+
+                    // 直连 IP（CF CDN 模式下显示）
+                    result.connectedIp?.let { ip ->
+                        ResultRow(
+                            label = "直连 IP",
+                            value = ip,
+                            valueColor = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
 
                     // MITM 检测
                     if (result.isMitm) {

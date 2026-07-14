@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Log
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
@@ -14,6 +15,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.blockproxy.android.cdn.CfCdnConfig
+import com.blockproxy.android.cdn.CfIpRuntimeRegistry
 import com.blockproxy.android.cdn.CfIpRefreshWorker
 import com.blockproxy.android.config.ConfigRepository
 import com.blockproxy.android.config.CredentialStore
@@ -352,7 +354,11 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * 执行 TLS 连接测试 + MITM 检测。
-     * 使用当前表单中的 host:port，在 IO 线程执行原始 TLS 握手。
+     *
+     * 测试参数与实际隧道连接逻辑完全一致：
+     * - CF CDN 开启时：从 CfIpRuntimeRegistry 取当前游标指向的 CF 边缘 IP 直连，
+     *   绕过公司网关 DNS 劫持，SNI 仍设为原始 hostname
+     * - CF CDN 关闭时：走正常 DNS 解析
      */
     fun testConnection() {
         val state = _configUiState.value
@@ -362,10 +368,25 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
             _connectionTestState.value = ConnectionTestState.Error("请先填写有效的服务器地址和端口")
             return
         }
+
+        // CF CDN 模式下直连 CF IP，避免 DNS 被公司网关劫持到 MITM 代理
+        val ipOverride = if (state.cfCdnEnabled) {
+            val cfIp = CfIpRuntimeRegistry.currentIp()
+            if (cfIp != null) {
+                Log.d(TAG, "TLS test: using CF IP $cfIp for host $host")
+                cfIp
+            } else {
+                Log.w(TAG, "TLS test: CF CDN enabled but no IP available, falling back to DNS")
+                null
+            }
+        } else {
+            null
+        }
+
         _connectionTestState.value = ConnectionTestState.Testing
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val result = TlsTester.test(host, port)
+                val result = TlsTester.test(host, port, ipOverride = ipOverride)
                 _connectionTestState.value = ConnectionTestState.Success(result)
             } catch (e: Exception) {
                 _connectionTestState.value = ConnectionTestState.Error(e.message ?: "测试失败")
@@ -381,6 +402,7 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     companion object {
+        private const val TAG = "TunnelViewModel"
         private val KEY_BATTERY_EXEMPTION_REQUESTED = booleanPreferencesKey("battery_exemption_requested")
         private val KEY_BATTERY_EXEMPTION_GRANTED = booleanPreferencesKey("battery_exemption_granted")
     }

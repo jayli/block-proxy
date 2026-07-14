@@ -1,14 +1,16 @@
 package com.blockproxy.android.util
 
 import android.util.Log
+import com.blockproxy.android.cdn.CfIpRuntimeRegistry
+import okhttp3.Dns
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.net.InetAddress
-import java.net.InetSocketAddress
 import java.security.cert.X509Certificate
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLParameters
-import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManager
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
@@ -39,20 +41,26 @@ data class TlsTestResult(
     val chain: List<CertInfo>,
     val durationMs: Long,
     val error: String?,
+    val connectedIp: String?,
 )
 
 /**
  * TLS 连接测试 + MITM 检测。
  *
- * 对指定的 host:port 执行原始 TLS 握手，提取证书链信息，
- * 并检测证书 issuer 中是否包含已知的 MITM 关键字（如企业代理）。
+ * 使用 OkHttp 执行 HTTPS 请求触发 TLS 握手。OkHttp 在所有 Android API 级别
+ * （包括 API 23）都正确设置 SNI，无需反射调用平台内部 API。
  *
- * 检测逻辑参考 check_mitm.sh：
- * - 遍历证书链中的每个证书的 issuer DN
- * - 对 issuer 做大小写不敏感的关键字匹配
- * - 任何证书匹配到 MITM 关键字即判定为 MITM
+ * 证书提取在 RecordingTrustManager.checkServerTrusted() 中完成：
+ * 该方法在 TLS 握手期间被调用，此时证书链已经完整可用。
+ * 这比依赖 OkHttp 的 handshake/response 机制更可靠，
+ * 因为 TrustManager 回调发生在 TLS 层，早于 HTTP 解析层。
+ * 即使后续 HTTP 响应解析失败（隧道服务器不是 HTTP 服务器），证书已捕获。
  *
- * 注意：必须在 IO 线程调用（阻塞操作）。
+ * CF CDN 模式下，通过自定义 Dns 将 hostname 解析为 CF 边缘 IP。
+ * 关键：InetAddress.getByAddress(hostname, ipBytes) 携带原始 hostname，
+ * 让 OkHttp 内部 isNumeric(hostName) 为 false，从而正确设置 SNI。
+ * 否则 OkHttp 检测到纯 IP 会跳过 SNI，导致 CF 拒绝连接。
+ *
  * VPN 不需要 protect()，因为 BlockProxyVpnService 已通过
  * addDisallowedApplication(packageName) 排除本应用的所有流量。
  */
@@ -65,8 +73,10 @@ object TlsTester {
     /**
      * 对 host:port 执行 TLS 握手并检测 MITM。
      *
-     * @param host 服务器地址（域名或 IP）
+     * @param host 服务器域名（用于 SNI 和 URL）
      * @param port 服务器端口
+     * @param ipOverride 直连 IP（跳过 DNS 解析）。CF CDN 模式下传入当前游标指向的 CF 边缘 IP，
+     *                   避免公司网关 DNS 劫持导致 MITM。为 null 时走正常 DNS 解析。
      * @param timeoutMs 连接超时（默认 5000ms）
      * @param mitmKeywords MITM 关键字列表
      * @return 测试结果
@@ -74,42 +84,65 @@ object TlsTester {
     fun test(
         host: String,
         port: Int,
+        ipOverride: String? = null,
         timeoutMs: Int = 5000,
         mitmKeywords: List<String> = DEFAULT_MITM_KEYWORDS,
     ): TlsTestResult {
         val startTime = System.currentTimeMillis()
 
+        // RecordingTrustManager 在 TLS 握手期间捕获证书
+        val recordingTm = RecordingTrustManager()
+
         try {
-            // 创建 RecordingTrustManager：接受所有证书（用于自签名），
-            // 但记录系统默认 trust manager 是否会接受
-            val recordingTm = RecordingTrustManager()
             val sslContext = SSLContext.getInstance("TLS").apply {
                 init(null, arrayOf<TrustManager>(recordingTm), null)
             }
 
-            val factory = sslContext.socketFactory
-            val socket = factory.createSocket() as SSLSocket
+            val builder = OkHttpClient.Builder()
+                .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+                .readTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+                .writeTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+                .sslSocketFactory(sslContext.socketFactory, recordingTm)
+                .hostnameVerifier { _, _ -> true }
 
-            // 设置超时
-            socket.soTimeout = timeoutMs
-            socket.connect(InetSocketAddress(host, port), timeoutMs)
-
-            // SNI 支持：如果 host 是域名（非 IP），设置 server name
-            if (!isIpAddress(host)) {
-                val params: SSLParameters = socket.sslParameters
-                params.serverNames = listOf(javax.net.ssl.SNIHostName(host))
-                socket.sslParameters = params
+            // 有 ipOverride 时：通过自定义 Dns 将 hostname 解析为指定 IP。
+            // 关键：InetAddress.getByAddress(hostname, ipBytes) 携带原始 hostname，
+            // 让 OkHttp 内部 isNumeric(addr.hostName) 为 false，从而正确设置 SNI。
+            if (ipOverride != null) {
+                builder.dns(object : Dns {
+                    override fun lookup(hostname: String): List<InetAddress> {
+                        val ipBytes = InetAddress.getByName(ipOverride).address
+                        return listOf(InetAddress.getByAddress(hostname, ipBytes))
+                    }
+                })
             }
 
-            // 执行 TLS 握手
-            socket.startHandshake()
+            // VPN 保护：如果 VPN 服务在运行，保护 socket 避免路由循环
+            CfIpRuntimeRegistry.currentProtect()?.let { protect ->
+                builder.socketFactory(
+                    com.blockproxy.android.tunnel.ProtectedSocketFactory(protect)
+                )
+            }
 
-            val session = socket.session
-            val certs = session.peerCertificates
+            val client = builder.build()
 
-            // 关闭连接
-            socket.close()
+            // 用原始 hostname 构建 URL，OkHttp 自动设置 SNI
+            val url = "https://$host:$port/"
+            val request = Request.Builder().url(url).build()
 
+            try {
+                val response = client.newCall(request).execute()
+                response.close()
+            } catch (e: Exception) {
+                // 隧道服务器不是 HTTP 服务器，响应解析可能失败。
+                // 但 TLS 握手已完成，证书已在 RecordingTrustManager 中捕获。
+                Log.d(TAG, "HTTP response error (expected): ${e.message}")
+            }
+
+            client.dispatcher.executorService.shutdown()
+            client.connectionPool.evictAll()
+
+            val certs = recordingTm.capturedCerts
             val durationMs = System.currentTimeMillis() - startTime
 
             if (certs.isEmpty()) {
@@ -125,12 +158,12 @@ object TlsTester {
                     chain = emptyList(),
                     durationMs = durationMs,
                     error = "未获取到证书",
+                    connectedIp = ipOverride,
                 )
             }
 
             // 解析证书链
-            val chain = certs.map { cert ->
-                val x509 = cert as X509Certificate
+            val chain = certs.map { x509 ->
                 CertInfo(
                     subject = x509.subjectDN.name,
                     issuer = x509.issuerDN.name,
@@ -140,7 +173,7 @@ object TlsTester {
                 )
             }
 
-            val leafCert = certs[0] as X509Certificate
+            val leafCert = certs[0]
             val leafIssuer = leafCert.issuerDN.name
             val leafSubject = leafCert.subjectDN.name
             val isSelfSigned = leafSubject == leafIssuer
@@ -149,7 +182,7 @@ object TlsTester {
             var isMitm = false
             var matchedKeyword: String? = null
             for (cert in certs) {
-                val issuerDn = (cert as X509Certificate).issuerDN.name.lowercase(Locale.ROOT)
+                val issuerDn = cert.issuerDN.name.lowercase(Locale.ROOT)
                 for (keyword in mitmKeywords) {
                     if (issuerDn.contains(keyword.lowercase(Locale.ROOT))) {
                         isMitm = true
@@ -172,6 +205,7 @@ object TlsTester {
                 chain = chain,
                 durationMs = durationMs,
                 error = null,
+                connectedIp = ipOverride,
             )
         } catch (e: Exception) {
             val durationMs = System.currentTimeMillis() - startTime
@@ -188,16 +222,8 @@ object TlsTester {
                 chain = emptyList(),
                 durationMs = durationMs,
                 error = e.message ?: "连接失败",
+                connectedIp = ipOverride,
             )
-        }
-    }
-
-    private fun isIpAddress(host: String): Boolean {
-        return try {
-            InetAddress.getByName(host)
-            host.matches(Regex("^\\d+\\.\\d+\\.\\d+\\.\\d+$")) || host.contains(":")
-        } catch (_: Exception) {
-            false
         }
     }
 
@@ -210,14 +236,19 @@ object TlsTester {
 
 /**
  * 自定义 TrustManager：接受所有证书（用于支持自签名证书），
- * 但同时记录系统默认 trust manager 的验证结果。
+ * 同时记录系统默认 trust manager 的验证结果，并捕获证书链。
  *
- * 这样既能拿到证书信息（自签名不会被拒绝），又能报告
- * verifyOk 状态（系统信任库是否接受该证书链）。
+ * checkServerTrusted() 在 TLS 握手期间被调用，此时证书链已经完整可用。
+ * 这比依赖 OkHttp 的 handshake/response 机制更可靠，因为 TrustManager 回调
+ * 发生在 TLS 层，早于 HTTP 解析层。即使后续 HTTP 响应解析失败，证书已在此捕获。
  */
 private class RecordingTrustManager : X509TrustManager {
     @Volatile
     var lastVerifyOk: Boolean = false
+
+    /** TLS 握手期间捕获的证书链 */
+    @Volatile
+    var capturedCerts: List<X509Certificate> = emptyList()
 
     private val systemTrustManager: X509TrustManager? = try {
         val tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm())
@@ -227,11 +258,14 @@ private class RecordingTrustManager : X509TrustManager {
         null
     }
 
-    override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {
-        // 不检查客户端证书
-    }
+    override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
 
     override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {
+        // 捕获证书链
+        if (chain != null) {
+            capturedCerts = chain.toList()
+        }
+
         // 记录系统 trust manager 是否会接受这个证书链
         lastVerifyOk = try {
             systemTrustManager?.checkServerTrusted(chain, authType)
@@ -239,7 +273,37 @@ private class RecordingTrustManager : X509TrustManager {
         } catch (_: Exception) {
             false
         }
-        // 不抛出异常 —— 接受所有证书，让握手继续进行以获取证书信息
+        // 不抛出异常 —— 接受所有证书，让握手继续进行
+    }
+
+    /**
+     * Conscrypt 扩展接口：checkServerTrusted with hostname。
+     *
+     * OkHttp 在 Android 上通过 AndroidCertificateChainCleaner 反射查找
+     * TrustManager 上的 checkServerTrusted(X509Certificate[], String, String)
+     * 方法。如果找到就调用它做链验证，找不到就回退到系统默认 TrustManager，
+     * 自签名证书会被拒绝导致 CertificateException。
+     *
+     * 此方法让 OkHttp 认为证书验证通过，返回原始证书链。
+     */
+    @Suppress("unused") // Called via reflection by OkHttp's AndroidCertificateChainCleaner
+    fun checkServerTrusted(
+        chain: Array<out X509Certificate>?,
+        authType: String?,
+        @Suppress("UNUSED_PARAMETER") hostname: String?,
+    ): List<X509Certificate> {
+        // 同时更新标准接口的验证记录
+        if (chain != null) {
+            capturedCerts = chain.toList()
+        }
+        lastVerifyOk = try {
+            systemTrustManager?.checkServerTrusted(chain, authType)
+            true
+        } catch (_: Exception) {
+            false
+        }
+        // 返回原始证书链，表示验证通过
+        return chain?.toList() ?: emptyList()
     }
 
     override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()

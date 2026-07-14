@@ -30,6 +30,11 @@ object CfIpRuntimeRegistry {
         activeProtect
     }
 
+    /** 获取当前游标指向的 CF IP（不推进游标）。用于 TLS 测试等只读场景。 */
+    fun currentIp(): String? = synchronized(lock) {
+        activeSelector?.currentIp()
+    }
+
     suspend fun reloadActiveSnapshot(): Boolean {
         val pair = synchronized(lock) {
             val pool = activePool ?: return false
