@@ -414,6 +414,27 @@ class ForwardSessionRegistryTest {
     }
 
     @Test
+    fun `session sendData triggers padding after successful DATA send`() = runTest {
+        val paddingInjector = PaddingInjector(
+            scope = this,
+            config = PaddingConfig(enabled = true, probability = 1.0f, minBytes = 2, maxBytes = 2),
+        )
+        val registry = ForwardSessionRegistry(this, paddingInjector = paddingInjector)
+        val sender = FakeFrameSender()
+
+        val deferred = openAsync(registry, "example.com", 80, sender); runCurrent()
+        registry.handleFrame(Frame.ConnectOk(0x8000)); runCurrent()
+        val session = deferred.await().session!!
+
+        session.sendData(byteArrayOf(0x01, 0x02, 0x03)); runCurrent()
+
+        val frames = decodeSentFrames(sender)
+        assertEquals(1, frames.filterIsInstance<Frame.Data>().size)
+        val padding = frames.filterIsInstance<Frame.Padding>().single()
+        assertEquals(2, padding.data.size)
+    }
+
+    @Test
     fun `session sendClose sends CLOSE frame via sender`() = runTest {
         val registry = ForwardSessionRegistry(this)
         val sender = FakeFrameSender()

@@ -30,6 +30,7 @@ class ForwardSession internal constructor(
     /** Completed when CONNECT_OK arrives; failed on CONNECT_FAILED / disconnect / stop. */
     internal val openResult: CompletableDeferred<Unit>,
     inboundCapacity: Int,
+    private val paddingInjector: PaddingInjector? = null,
     private val onEnd: (ForwardSession) -> Unit,
 ) {
     private val closed = AtomicBoolean(false)
@@ -58,7 +59,8 @@ class ForwardSession internal constructor(
     suspend fun sendData(data: ByteArray) {
         if (closed.get()) return
         lastActivityAt = System.currentTimeMillis()
-        sender.sendFrame(FrameCodec.encode(Frame.Data(reqid, data)))
+        val sent = sender.sendFrame(FrameCodec.encode(Frame.Data(reqid, data)))
+        if (sent) paddingInjector?.onDataSent(sender)
     }
 
     /**

@@ -152,6 +152,13 @@ object FrameCodec {
                 result.toByteArray()
             }
 
+            is Frame.Padding -> {
+                val result = ByteArray(1 + frame.data.size)
+                result[0] = FrameType.PADDING.code.toByte()
+                System.arraycopy(frame.data, 0, result, 1, frame.data.size)
+                result
+            }
+
             is Frame.Unknown -> {
                 throw IllegalArgumentException("Cannot encode Unknown frame type")
             }
@@ -365,6 +372,10 @@ object FrameCodec {
                 }
 
                 Frame.Error(message)
+            }
+
+            FrameType.PADDING.code -> {
+                Frame.Padding(payload.copyOfRange(1, payload.size))
             }
 
             else -> {

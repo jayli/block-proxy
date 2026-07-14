@@ -112,6 +112,22 @@ describe('Protocol encodeFrame/decodeFrame', () => {
     assert.deepEqual(decoded.payload, Buffer.alloc(0));
   });
 
+  it('should roundtrip PADDING frame', () => {
+    assert.equal(FRAME_TYPES.PADDING, 0x30);
+    const data = Buffer.from([0x01, 0x02, 0x03, 0x04]);
+    const buf = encodeFrame({ type: FRAME_TYPES.PADDING, data });
+    const decoded = decodeFrame(buf);
+    assert.equal(decoded.type, FRAME_TYPES.PADDING);
+    assert.deepEqual(decoded.data, data);
+  });
+
+  it('should roundtrip PADDING frame with empty data', () => {
+    const buf = encodeFrame({ type: FRAME_TYPES.PADDING, data: Buffer.alloc(0) });
+    const decoded = decodeFrame(buf);
+    assert.equal(decoded.type, FRAME_TYPES.PADDING);
+    assert.deepEqual(decoded.data, Buffer.alloc(0));
+  });
+
   it('should roundtrip ERROR frame with message', () => {
     const frame = { type: FRAME_TYPES.ERROR, message: 'Tunnel port occupied' };
     const buf = encodeFrame(frame);
@@ -122,5 +138,15 @@ describe('Protocol encodeFrame/decodeFrame', () => {
 
   it('should throw on unknown frame type', () => {
     assert.throws(() => encodeFrame({ type: 0xFF }), /Unknown frame type/);
+  });
+
+  it('should decode unknown frame type as opaque data', () => {
+    const payload = Buffer.from([0xFE, 0xAA, 0xBB]);
+    const header = Buffer.alloc(2);
+    header.writeUInt16BE(payload.length, 0);
+    const decoded = decodeFrame(Buffer.concat([header, payload]));
+    assert.equal(decoded.type, 0xFE);
+    assert.deepEqual(decoded.data, Buffer.from([0xAA, 0xBB]));
+    assert.equal(decoded.bytesRead, 2 + payload.length);
   });
 });

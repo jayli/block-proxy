@@ -3,9 +3,11 @@ const assert = require('node:assert/strict');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const { WebSocket } = require('ws');
+const wsModule = require('ws');
 const TunnelServer = require('../server');
 const { FRAME_TYPES, encodeFrame, decodeFrame } = require('../protocol');
+
+const WebSocket = wsModule.WebSocket || wsModule;
 
 let portCounter = 18004 + (process.pid % 1000);
 function nextPort() { return portCounter++; }
@@ -97,6 +99,14 @@ function closeWs(ws) {
   if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
     ws.close();
   }
+}
+
+function collectFrames(ws, frames) {
+  const onMessage = (chunk) => {
+    frames.push(decodeFrame(Buffer.from(chunk)));
+  };
+  ws.on('message', onMessage);
+  return () => ws.removeListener('message', onMessage);
 }
 
 async function expectPortReusable(port) {
@@ -291,6 +301,96 @@ describe('TunnelServer WebSocket', () => {
     closeWs(ws);
   });
 
+  it('ignores authenticated PADDING frames without dispatching to handlers', async () => {
+    const port = nextPort();
+    let handlerCalls = 0;
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+    });
+    server.onFrame(() => { handlerCalls += 1; });
+    await server.start();
+
+    const ws = await connectClient(port);
+    assert.equal((await authenticate(ws)).type, FRAME_TYPES.AUTH_OK);
+
+    ws.send(encodeFrame({ type: FRAME_TYPES.PADDING, data: Buffer.from('noise') }));
+    await new Promise(r => setTimeout(r, 50));
+
+    assert.equal(handlerCalls, 0);
+    assert.equal(ws.readyState, WebSocket.OPEN);
+    closeWs(ws);
+  });
+
+  it('sends PADDING after successful DATA send when probability is one', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+      paddingProbability: 1,
+      paddingMinBytes: 4,
+      paddingMaxBytes: 4,
+      paddingIntervalMinMs: 0,
+    });
+    await server.start();
+
+    const ws = await connectClient(port);
+    assert.equal((await authenticate(ws)).type, FRAME_TYPES.AUTH_OK);
+
+    const ok = await server.sendFrame({
+      type: FRAME_TYPES.DATA,
+      reqid: 7,
+      data: Buffer.from('hello'),
+    });
+    assert.equal(ok, true);
+
+    const dataFrame = await readUntil(ws, frame => frame.type === FRAME_TYPES.DATA);
+    const paddingFrame = await readUntil(ws, frame => frame.type === FRAME_TYPES.PADDING);
+    assert.equal(dataFrame.reqid, 7);
+    assert.deepEqual(dataFrame.data, Buffer.from('hello'));
+    assert.equal(paddingFrame.data.length, 4);
+    closeWs(ws);
+  });
+
+  it('sends periodic PADDING only to active connection, not draining connection', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+      rotationDrainTimeout: 1,
+      paddingProbability: 0,
+      paddingMinBytes: 3,
+      paddingMaxBytes: 3,
+      paddingIntervalMinMs: 20,
+      paddingIntervalMaxMs: 20,
+    });
+    await server.start();
+
+    const ws1 = await connectClient(port);
+    assert.equal((await authenticate(ws1)).type, FRAME_TYPES.AUTH_OK);
+
+    const ws2 = await connectClient(port);
+    assert.equal((await authenticate(ws2)).type, FRAME_TYPES.AUTH_OK);
+    await waitForCondition(() => server.getConnectionCounts().draining === 1);
+
+    const ws1Frames = [];
+    const ws2Frames = [];
+    const stopCollect1 = collectFrames(ws1, ws1Frames);
+    const stopCollect2 = collectFrames(ws2, ws2Frames);
+    await waitForCondition(() => ws2Frames.some(frame => frame.type === FRAME_TYPES.PADDING), 500);
+    await new Promise(r => setTimeout(r, 50));
+    stopCollect1();
+    stopCollect2();
+
+    assert.equal(ws1Frames.some(frame => frame.type === FRAME_TYPES.PADDING), false);
+    assert.equal(ws2Frames.some(frame => frame.type === FRAME_TYPES.PADDING), true);
+    closeWs(ws1);
+    closeWs(ws2);
+  });
+
   it('stop releases the listening port', async () => {
     const port = nextPort();
     server = new TunnelServer({
@@ -301,6 +401,30 @@ describe('TunnelServer WebSocket', () => {
     await server.start();
     await server.stop();
     server = null;
+    await expectPortReusable(port);
+  });
+
+  it('stop clears periodic padding timer', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+      paddingIntervalMinMs: 20,
+      paddingIntervalMaxMs: 20,
+    });
+    await server.start();
+
+    const ws = await connectClient(port);
+    assert.equal((await authenticate(ws)).type, FRAME_TYPES.AUTH_OK);
+    await waitForCondition(() => server._paddingTimer !== null, 500);
+
+    const stoppedServer = server;
+    await server.stop();
+    server = null;
+    assert.equal(stoppedServer._paddingTimer, null);
+    assert.equal(server, null);
+    closeWs(ws);
     await expectPortReusable(port);
   });
 });

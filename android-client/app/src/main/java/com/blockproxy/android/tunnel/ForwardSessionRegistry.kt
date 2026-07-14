@@ -39,6 +39,7 @@ class ForwardSessionRegistry(
     private val reqidMin: Int = FORWARD_REQID_MIN,
     private val reqidMax: Int = FORWARD_REQID_MAX,
     private val inboundCapacity: Int = DEFAULT_INBOUND_CAPACITY,
+    private val paddingInjector: PaddingInjector? = null,
 ) {
     companion object {
         /** First reqid in the forward range. */
@@ -89,6 +90,7 @@ class ForwardSessionRegistry(
             sender = sender,
             openResult = openResult,
             inboundCapacity = inboundCapacity,
+            paddingInjector = paddingInjector,
             onEnd = { s -> sessions.remove(s.reqid, s) },
         )
         sessions[reqid] = session

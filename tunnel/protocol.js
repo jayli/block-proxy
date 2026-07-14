@@ -9,6 +9,7 @@ const FRAME_TYPES = {
   AUTH_OK:        0x21,
   AUTH_FAIL:      0x22,
   ERROR:          0x23,
+  PADDING:        0x30,
   CONNECT_FAILED: 0x81,
 };
 
@@ -96,6 +97,12 @@ function encodeFrame(frame) {
       break;
     }
 
+    case FRAME_TYPES.PADDING: {
+      const padData = frame.data || Buffer.alloc(0);
+      payload = Buffer.concat([Buffer.from([frame.type]), padData]);
+      break;
+    }
+
     case FRAME_TYPES.AUTH_OK:
     case FRAME_TYPES.AUTH_FAIL: {
       payload = Buffer.from([frame.type]);
@@ -174,6 +181,10 @@ function decodeFrame(buffer) {
       return { type, payload: payload.slice(offset), bytesRead: 2 + length };
     }
 
+    case FRAME_TYPES.PADDING: {
+      return { type, data: payload.slice(offset), bytesRead: 2 + length };
+    }
+
     case FRAME_TYPES.AUTH_OK:
     case FRAME_TYPES.AUTH_FAIL: {
       return { type, bytesRead: 2 + length };
@@ -195,7 +206,7 @@ function decodeFrame(buffer) {
     }
 
     default:
-      throw new Error(`Unknown frame type: 0x${type.toString(16)}`);
+      return { type, data: payload.slice(offset), bytesRead: 2 + length };
   }
 }
 

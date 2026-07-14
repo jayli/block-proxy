@@ -1,8 +1,11 @@
 const https = require('https');
 const crypto = require('crypto');
-const { WebSocketServer, WebSocket } = require('ws');
+const wsModule = require('ws');
 const { FRAME_TYPES, MAX_FRAME_PAYLOAD, encodeFrame, decodeFrame } = require('./protocol');
 const { handleDisguiseRequest } = require('./disguiseResponse');
+
+const WebSocketServer = wsModule.WebSocketServer || wsModule.Server;
+const WebSocket = wsModule.WebSocket || wsModule;
 
 const DEFAULT_WS_PATH = '/websocket';
 const DEFAULT_HEARTBEAT_MIN = 15;
@@ -23,6 +26,12 @@ class TunnelServer {
     this.heartbeatTimeout = options.heartbeatTimeout || options.tunnel_heartbeat_timeout || DEFAULT_HEARTBEAT_TIMEOUT;
     this.rotationDrainTimeout = options.rotationDrainTimeout || options.tunnel_rotation_drain_timeout || DEFAULT_ROTATION_DRAIN_TIMEOUT;
     this.rotationDrainIdleTimeout = options.rotationDrainIdleTimeout || options.tunnel_rotation_drain_idle_timeout || DEFAULT_ROTATION_DRAIN_IDLE_TIMEOUT;
+    this.paddingEnabled = options.paddingEnabled ?? true;
+    this.paddingProbability = Math.max(0, Math.min(1, options.paddingProbability ?? 0.3));
+    this.paddingMinBytes = Math.max(0, Math.min(65534, options.paddingMinBytes ?? 64));
+    this.paddingMaxBytes = Math.max(this.paddingMinBytes, Math.min(65534, options.paddingMaxBytes ?? 512));
+    this.paddingIntervalMinMs = Math.max(0, options.paddingIntervalMinMs ?? 5000);
+    this.paddingIntervalMaxMs = Math.max(this.paddingIntervalMinMs, options.paddingIntervalMaxMs ?? 15000);
     this.onConnect = options.onConnect || (() => {});
     this.onDisconnect = options.onDisconnect || (() => {});
 
@@ -33,6 +42,7 @@ class TunnelServer {
     this._clientWs = null;
     this._records = new Map();
     this._heartbeatTimer = null;
+    this._paddingTimer = null;
     this._drainCheckCallback = null;
   }
 
@@ -64,6 +74,7 @@ class TunnelServer {
 
   async stop() {
     this._stopHeartbeat();
+    this._stopPeriodicPadding();
     this._drainCheckCallback = null;
 
     const sockets = [...this._records.keys()];
@@ -135,7 +146,8 @@ class TunnelServer {
     this._records.set(ws, record);
 
     ws.on('message', (data, isBinary) => {
-      if (!isBinary) {
+      const binary = typeof isBinary === 'boolean' ? isBinary : !isTextMessage(data);
+      if (!binary) {
         this._closeWs(ws, 1003, 'binary frames required');
         return;
       }
@@ -183,6 +195,10 @@ class TunnelServer {
       return;
     }
 
+    if (frame.type === FRAME_TYPES.PADDING) {
+      return;
+    }
+
     this._frameHandlers.forEach(handler => handler(frame, ws));
   }
 
@@ -212,6 +228,7 @@ class TunnelServer {
     this._sendWsFrame(ws, { type: FRAME_TYPES.AUTH_OK }).then(() => {
       console.log(`[Tunnel] Client authenticated: ${record.remoteAddress} (${record.state})`);
       this._startHeartbeat();
+      this._startPeriodicPadding();
       this.onConnect(ws, record.remoteAddress, record.remotePort);
     });
   }
@@ -256,6 +273,7 @@ class TunnelServer {
 
     if (this._clientSockets.size === 0) {
       this._stopHeartbeat();
+      this._stopPeriodicPadding();
     }
   }
 
@@ -264,13 +282,19 @@ class TunnelServer {
       if (!this._clientSockets.has(targetSocket)) {
         return Promise.resolve(false);
       }
-      return this._sendWsFrame(targetSocket, frame);
+      return this._sendWsFrame(targetSocket, frame).then((ok) => {
+        if (ok && frame.type === FRAME_TYPES.DATA) this._maybePadAfterSend(targetSocket);
+        return ok;
+      });
     }
 
     if (!this._clientWs || !this._clientSockets.has(this._clientWs)) {
       return Promise.resolve(false);
     }
-    return this._sendWsFrame(this._clientWs, frame);
+    return this._sendWsFrame(this._clientWs, frame).then((ok) => {
+      if (ok && frame.type === FRAME_TYPES.DATA) this._maybePadAfterSend(this._clientWs);
+      return ok;
+    });
   }
 
   _sendWsFrame(ws, frame) {
@@ -399,6 +423,69 @@ class TunnelServer {
       this._heartbeatTimer = null;
     }
   }
+
+  _randomPaddingBytes() {
+    const size = this.paddingMinBytes +
+      Math.floor(Math.random() * (this.paddingMaxBytes - this.paddingMinBytes + 1));
+    return crypto.randomBytes(size);
+  }
+
+  _maybePadAfterSend(ws) {
+    if (!this.paddingEnabled) return;
+    if (Math.random() >= this.paddingProbability) return;
+    this._sendWsFrame(ws, {
+      type: FRAME_TYPES.PADDING,
+      data: this._randomPaddingBytes(),
+    }).catch(() => {});
+  }
+
+  _startPeriodicPadding() {
+    if (this._paddingTimer) return;
+    this._schedulePeriodicPadding();
+  }
+
+  _schedulePeriodicPadding() {
+    this._stopPeriodicPadding();
+    if (!this.paddingEnabled || this.paddingIntervalMinMs <= 0) return;
+    if (!this._hasActiveRecord()) return;
+
+    const delay = this.paddingIntervalMinMs +
+      Math.floor(Math.random() * (this.paddingIntervalMaxMs - this.paddingIntervalMinMs + 1));
+    this._paddingTimer = setTimeout(() => {
+      this._paddingTimer = null;
+      this._sendPeriodicPadding();
+      this._schedulePeriodicPadding();
+    }, delay);
+    this._paddingTimer.unref();
+  }
+
+  _sendPeriodicPadding() {
+    for (const record of this._records.values()) {
+      if (!record.authenticated || record.state !== 'active') continue;
+      this._sendWsFrame(record.ws, {
+        type: FRAME_TYPES.PADDING,
+        data: this._randomPaddingBytes(),
+      }).catch(() => {});
+    }
+  }
+
+  _stopPeriodicPadding() {
+    if (this._paddingTimer) {
+      clearTimeout(this._paddingTimer);
+      this._paddingTimer = null;
+    }
+  }
+
+  _hasActiveRecord() {
+    for (const record of this._records.values()) {
+      if (record.authenticated && record.state === 'active') return true;
+    }
+    return false;
+  }
+}
+
+function isTextMessage(data) {
+  return typeof data === 'string';
 }
 
 module.exports = TunnelServer;

@@ -240,6 +240,31 @@ class ReverseConnectHandlerTest {
     }
 
     @Test
+    fun `target to tunnel DATA triggers padding after successful send`() = runTest {
+        val factory = TestTargetSocketFactory()
+        val paddingInjector = PaddingInjector(
+            scope = this,
+            config = PaddingConfig(enabled = true, probability = 1.0f, minBytes = 2, maxBytes = 2),
+        )
+        val handler = ReverseConnectHandler(this, factory, paddingInjector = paddingInjector)
+        val targetSocket = FakeTargetSocket()
+        factory.nextSocket = targetSocket
+        val sender = FakeFrameSender()
+
+        handler.handleFrame(sender, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
+        runCurrent()
+
+        targetSocket.enqueueIncomingData(byteArrayOf(0x01, 0x02, 0x03))
+        targetSocket.enqueueEOF()
+        advanceUntilIdle()
+
+        val sentFrames = decodeSentFrames(sender)
+        assertEquals(1, sentFrames.filterIsInstance<Frame.Data>().size)
+        val padding = sentFrames.filterIsInstance<Frame.Padding>().single()
+        assertEquals(2, padding.data.size)
+    }
+
+    @Test
     fun `tunnel to target DATA writes in order`() = runTest {
         val factory = TestTargetSocketFactory()
         val handler = ReverseConnectHandler(this, factory)
