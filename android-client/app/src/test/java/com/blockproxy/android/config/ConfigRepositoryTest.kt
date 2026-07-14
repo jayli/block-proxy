@@ -103,6 +103,26 @@ class ConfigRepositoryTest {
         }
     }
 
+    @Test
+    fun `padding defaults to enabled`() = scope.runTest {
+        repository.save(ServerConfig(serverHost = "example.com"))
+
+        repository.observe().test {
+            assertEquals(true, awaitItem()?.paddingEnabled)
+            cancelAndConsumeRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `padding probability defaults to five percent`() = scope.runTest {
+        repository.save(ServerConfig(serverHost = "example.com"))
+
+        repository.observe().test {
+            assertEquals(0.05f, awaitItem()?.paddingProbability)
+            cancelAndConsumeRemainingEvents()
+        }
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `cf cdn requires tls`() = scope.runTest {
         repository.save(

@@ -3,6 +3,7 @@ package com.blockproxy.android.tunnel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import java.security.SecureRandom
+import java.util.concurrent.ConcurrentHashMap
 
 class PaddingInjector(
     private val scope: CoroutineScope,
@@ -10,13 +11,27 @@ class PaddingInjector(
 ) {
     private val secureRandom = SecureRandom()
     private val cfg = config.normalized()
+    private val negotiatedSenders = ConcurrentHashMap.newKeySet<FrameSender>()
 
     fun onDataSent(sender: FrameSender) {
         if (!cfg.enabled) return
+        if (!negotiatedSenders.contains(sender)) return
         if (secureRandom.nextFloat() >= cfg.probability) return
         scope.launch {
             sendPadding(sender)
         }
+    }
+
+    fun setNegotiated(sender: FrameSender, negotiated: Boolean) {
+        if (negotiated) {
+            negotiatedSenders.add(sender)
+        } else {
+            negotiatedSenders.remove(sender)
+        }
+    }
+
+    fun clearNegotiation(sender: FrameSender) {
+        negotiatedSenders.remove(sender)
     }
 
     private suspend fun sendPadding(sender: FrameSender) {
@@ -38,7 +53,7 @@ class PaddingInjector(
 
 data class PaddingConfig(
     val enabled: Boolean = true,
-    val probability: Float = 0.3f,
+    val probability: Float = 0.05f,
     val minBytes: Int = 64,
     val maxBytes: Int = 512,
 ) {

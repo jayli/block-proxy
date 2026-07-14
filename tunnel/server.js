@@ -1,7 +1,7 @@
 const https = require('https');
 const crypto = require('crypto');
 const wsModule = require('ws');
-const { FRAME_TYPES, MAX_FRAME_PAYLOAD, encodeFrame, decodeFrame } = require('./protocol');
+const { FRAME_TYPES, MAX_FRAME_PAYLOAD, CAP_PADDING, encodeFrame, decodeFrame } = require('./protocol');
 const { handleDisguiseRequest } = require('./disguiseResponse');
 
 const WebSocketServer = wsModule.WebSocketServer || wsModule.Server;
@@ -137,6 +137,7 @@ class TunnelServer {
       connectedAt: Date.now(),
       pongTime: Date.now(),
       pendingPingPayload: null,
+      capabilities: new Set(),
       drainTimer: null,
     };
     this._records.set(ws, record);
@@ -219,9 +220,26 @@ class TunnelServer {
 
     record.authenticated = true;
     record.pongTime = Date.now();
+    const clientCapabilities = new Set(frame.capabilities || []);
+    if (this.paddingEnabled && clientCapabilities.has(CAP_PADDING)) {
+      record.capabilities.add(CAP_PADDING);
+    }
     this._promoteRecord(record);
 
     this._sendWsFrame(ws, { type: FRAME_TYPES.AUTH_OK }).then(() => {
+      if (record.capabilities.size > 0) {
+        return this._sendWsFrame(ws, {
+          type: FRAME_TYPES.CAPABILITIES,
+          capabilities: [...record.capabilities],
+        }).then((ok) => {
+          if (ok && record.capabilities.has(CAP_PADDING)) {
+            console.log(`[Tunnel] Padding negotiated: ${record.remoteAddress} (${record.state})`);
+          }
+          return ok;
+        });
+      }
+      return true;
+    }).then(() => {
       console.log(`[Tunnel] Client authenticated: ${record.remoteAddress} (${record.state})`);
       this._startHeartbeat();
       this.onConnect(ws, record.remoteAddress, record.remotePort);
@@ -426,6 +444,8 @@ class TunnelServer {
 
   _maybePadAfterSend(ws) {
     if (!this.paddingEnabled) return;
+    const record = this._records.get(ws);
+    if (!record || !record.capabilities || !record.capabilities.has(CAP_PADDING)) return;
     if (Math.random() >= this.paddingProbability) return;
     this._sendWsFrame(ws, {
       type: FRAME_TYPES.PADDING,

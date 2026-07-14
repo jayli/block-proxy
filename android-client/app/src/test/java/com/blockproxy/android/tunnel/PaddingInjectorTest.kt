@@ -41,6 +41,7 @@ class PaddingInjectorTest {
             scope = this,
             config = PaddingConfig(enabled = true, probability = 0.0f, minBytes = 4, maxBytes = 4),
         )
+        injector.setNegotiated(sender, true)
 
         injector.onDataSent(sender)
         runCurrent()
@@ -49,12 +50,27 @@ class PaddingInjectorTest {
     }
 
     @Test
-    fun `probability one sends padding`() = runTest {
+    fun `does not send padding before negotiation`() = runTest {
         val sender = FakeFrameSender()
         val injector = PaddingInjector(
             scope = this,
             config = PaddingConfig(enabled = true, probability = 1.0f, minBytes = 4, maxBytes = 4),
         )
+
+        injector.onDataSent(sender)
+        runCurrent()
+
+        assertTrue(sender.writtenBytes.isEmpty())
+    }
+
+    @Test
+    fun `probability one sends padding after negotiation`() = runTest {
+        val sender = FakeFrameSender()
+        val injector = PaddingInjector(
+            scope = this,
+            config = PaddingConfig(enabled = true, probability = 1.0f, minBytes = 4, maxBytes = 4),
+        )
+        injector.setNegotiated(sender, true)
 
         injector.onDataSent(sender)
         runCurrent()
@@ -70,6 +86,7 @@ class PaddingInjectorTest {
             scope = this,
             config = PaddingConfig(enabled = true, probability = 1.0f, minBytes = 5, maxBytes = 9),
         )
+        injector.setNegotiated(sender, true)
 
         repeat(20) { injector.onDataSent(sender) }
         runCurrent()
@@ -85,7 +102,24 @@ class PaddingInjectorTest {
             scope = this,
             config = PaddingConfig(enabled = true, probability = 1.0f, minBytes = 4, maxBytes = 4),
         )
+        injector.setNegotiated(sender, true)
 
+        injector.onDataSent(sender)
+        runCurrent()
+
+        assertTrue(sender.writtenBytes.isEmpty())
+    }
+
+    @Test
+    fun `clearing negotiation disables future padding for sender`() = runTest {
+        val sender = FakeFrameSender()
+        val injector = PaddingInjector(
+            scope = this,
+            config = PaddingConfig(enabled = true, probability = 1.0f, minBytes = 4, maxBytes = 4),
+        )
+
+        injector.setNegotiated(sender, true)
+        injector.clearNegotiation(sender)
         injector.onDataSent(sender)
         runCurrent()
 

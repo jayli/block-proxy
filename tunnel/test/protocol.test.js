@@ -87,6 +87,30 @@ describe('Protocol encodeFrame/decodeFrame', () => {
     assert.equal(decoded.type, FRAME_TYPES.AUTH);
     assert.equal(decoded.username, 'admin');
     assert.equal(decoded.password, 's3cret');
+    assert.deepEqual(decoded.capabilities, []);
+  });
+
+  it('should roundtrip AUTH frame with capabilities', () => {
+    const frame = {
+      type: FRAME_TYPES.AUTH,
+      username: 'admin',
+      password: 's3cret',
+      capabilities: ['padding']
+    };
+    const buf = encodeFrame(frame);
+    const decoded = decodeFrame(buf);
+    assert.equal(decoded.type, FRAME_TYPES.AUTH);
+    assert.equal(decoded.username, 'admin');
+    assert.equal(decoded.password, 's3cret');
+    assert.deepEqual(decoded.capabilities, ['padding']);
+  });
+
+  it('should roundtrip CAPABILITIES frame', () => {
+    assert.equal(FRAME_TYPES.CAPABILITIES, 0x24);
+    const buf = encodeFrame({ type: FRAME_TYPES.CAPABILITIES, capabilities: ['padding'] });
+    const decoded = decodeFrame(buf);
+    assert.equal(decoded.type, FRAME_TYPES.CAPABILITIES);
+    assert.deepEqual(decoded.capabilities, ['padding']);
   });
 
   it('should roundtrip simple frames (PING, PONG, AUTH_OK, AUTH_FAIL)', () => {

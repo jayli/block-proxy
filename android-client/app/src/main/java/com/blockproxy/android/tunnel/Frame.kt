@@ -29,10 +29,15 @@ sealed class Frame {
             other is Pong && payload.contentEquals(other.payload)
         override fun hashCode(): Int = payload.contentHashCode()
     }
-    data class Auth(val username: String, val password: String) : Frame()
+    data class Auth(
+        val username: String,
+        val password: String,
+        val capabilities: List<String> = emptyList(),
+    ) : Frame()
     data object AuthOk : Frame()
     data object AuthFail : Frame()
     data class Error(val message: String) : Frame()
+    data class Capabilities(val capabilities: List<String>) : Frame()
 
     class Padding(val data: ByteArray) : Frame() {
         override fun equals(other: Any?): Boolean =
@@ -60,6 +65,7 @@ enum class FrameType(val code: Int) {
     AUTH_OK(0x21),
     AUTH_FAIL(0x22),
     ERROR(0x23),
+    CAPABILITIES(0x24),
     PADDING(0x30),
     CONNECT_FAILED(0x81),
 }

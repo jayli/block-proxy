@@ -253,7 +253,10 @@ class TunnelClient(
         val wsUrl = "wss://$addr:$port$wsPath"
 
         // Encode AUTH payload
-        val authPayload = FrameCodec.encode(Frame.Auth(credentials.username, credentials.password))
+        val authCapabilities = if (config.paddingEnabled) listOf(FrameCodec.CAP_PADDING) else emptyList()
+        val authPayload = FrameCodec.encode(
+            Frame.Auth(credentials.username, credentials.password, authCapabilities)
+        )
 
         // Pre-create frame channel — registered in onAuthSuccess before any post-auth frame arrives.
         // OkHttp serializes onMessage callbacks on a single thread, so by the time the first
@@ -347,6 +350,12 @@ class TunnelClient(
                         } catch (_: Exception) {}
                     }
                     is Frame.Pong -> { /* server response to its own PING, no client-side tracking */ }
+                    is Frame.Capabilities -> {
+                        paddingInjector.setNegotiated(
+                            sender,
+                            frame.capabilities.contains(FrameCodec.CAP_PADDING)
+                        )
+                    }
                     is Frame.Padding -> { /* silently discard */ }
                     is Frame.Connect -> {
                         if (sender === drainingWs) {
@@ -491,6 +500,7 @@ class TunnelClient(
     }
 
     private suspend fun closeSender(sender: FrameSender) {
+        paddingInjector.clearNegotiation(sender)
         senderReadJobs.remove(sender)?.cancel()
         frameChannels.remove(sender)?.close()
         handler.closeSessionsFor(sender)

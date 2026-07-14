@@ -9,6 +9,7 @@ const FRAME_TYPES = {
   AUTH_OK:        0x21,
   AUTH_FAIL:      0x22,
   ERROR:          0x23,
+  CAPABILITIES:   0x24,
   PADDING:        0x30,
   CONNECT_FAILED: 0x81,
 };
@@ -22,6 +23,34 @@ const ATYP = {
 const MAX_FRAME_PAYLOAD = 0xFFFF;
 const DATA_HEADER_LEN = 3; // type(1) + reqid(2)
 const MAX_DATA_CHUNK = MAX_FRAME_PAYLOAD - DATA_HEADER_LEN;
+const CAP_PADDING = 'padding';
+
+function encodeCapabilities(capabilities) {
+  const caps = Array.isArray(capabilities) ? capabilities : [];
+  const parts = [Buffer.from([caps.length])];
+  for (const cap of caps) {
+    const capBuf = Buffer.from(String(cap), 'utf8');
+    if (capBuf.length > 255) {
+      throw new Error(`Capability too long: ${cap}`);
+    }
+    parts.push(Buffer.from([capBuf.length]), capBuf);
+  }
+  return Buffer.concat(parts);
+}
+
+function decodeCapabilities(payload, offset) {
+  if (offset >= payload.length) return { capabilities: [], bytesRead: 0 };
+  const count = payload[offset++];
+  const capabilities = [];
+  for (let i = 0; i < count; i++) {
+    if (offset >= payload.length) throw new Error('Capabilities frame too short');
+    const len = payload[offset++];
+    if (offset + len > payload.length) throw new Error('Capability extends beyond payload');
+    capabilities.push(payload.slice(offset, offset + len).toString('utf8'));
+    offset += len;
+  }
+  return { capabilities, bytesRead: offset };
+}
 
 function encodeAddress(atyp, addr) {
   if (atyp === ATYP.IPV4) {
@@ -116,7 +145,16 @@ function encodeFrame(frame) {
         Buffer.from([frame.type, uBuf.length]),
         uBuf,
         Buffer.from([pBuf.length]),
-        pBuf
+        pBuf,
+        encodeCapabilities(frame.capabilities)
+      ]);
+      break;
+    }
+
+    case FRAME_TYPES.CAPABILITIES: {
+      payload = Buffer.concat([
+        Buffer.from([frame.type]),
+        encodeCapabilities(frame.capabilities)
       ]);
       break;
     }
@@ -196,7 +234,14 @@ function decodeFrame(buffer) {
       offset += uLen;
       const pLen = payload[offset++];
       const password = payload.slice(offset, offset + pLen).toString('utf8');
-      return { type, username, password, bytesRead: 2 + length };
+      offset += pLen;
+      const { capabilities } = decodeCapabilities(payload, offset);
+      return { type, username, password, capabilities, bytesRead: 2 + length };
+    }
+
+    case FRAME_TYPES.CAPABILITIES: {
+      const { capabilities } = decodeCapabilities(payload, offset);
+      return { type, capabilities, bytesRead: 2 + length };
     }
 
     case FRAME_TYPES.ERROR: {
@@ -215,8 +260,11 @@ module.exports = {
   ATYP,
   MAX_FRAME_PAYLOAD,
   MAX_DATA_CHUNK,
+  CAP_PADDING,
   encodeFrame,
   decodeFrame,
   encodeAddress,
-  decodeAddress
+  decodeAddress,
+  encodeCapabilities,
+  decodeCapabilities
 };

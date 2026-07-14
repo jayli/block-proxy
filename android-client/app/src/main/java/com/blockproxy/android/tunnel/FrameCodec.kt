@@ -6,6 +6,7 @@ import java.nio.ByteBuffer
 object FrameCodec {
     const val MAX_PAYLOAD_SIZE = 65535
     const val MAX_DATA_CHUNK = 65532
+    const val CAP_PADDING = "padding"
 
     fun encode(frame: Frame): ByteArray {
         val payload = encodePayload(frame)
@@ -58,6 +59,7 @@ object FrameCodec {
                 result.write(usernameBytes)
                 result.write(passwordBytes.size)
                 result.write(passwordBytes)
+                result.write(encodeCapabilities(frame.capabilities))
                 result.toByteArray()
             }
 
@@ -152,6 +154,13 @@ object FrameCodec {
                 result.toByteArray()
             }
 
+            is Frame.Capabilities -> {
+                val result = ByteArrayOutputStream()
+                result.write(FrameType.CAPABILITIES.code)
+                result.write(encodeCapabilities(frame.capabilities))
+                result.toByteArray()
+            }
+
             is Frame.Padding -> {
                 val result = ByteArray(1 + frame.data.size)
                 result[0] = FrameType.PADDING.code.toByte()
@@ -163,6 +172,44 @@ object FrameCodec {
                 throw IllegalArgumentException("Cannot encode Unknown frame type")
             }
         }
+    }
+
+    private fun encodeCapabilities(capabilities: List<String>): ByteArray {
+        if (capabilities.size > 255) {
+            throw IllegalArgumentException("Too many capabilities: ${capabilities.size} > 255")
+        }
+        val result = ByteArrayOutputStream()
+        result.write(capabilities.size)
+        for (capability in capabilities) {
+            val bytes = capability.toByteArray(Charsets.UTF_8)
+            if (bytes.size > 255) {
+                throw IllegalArgumentException("Capability too long: ${bytes.size} > 255")
+            }
+            result.write(bytes.size)
+            result.write(bytes)
+        }
+        return result.toByteArray()
+    }
+
+    private fun decodeCapabilities(payload: ByteArray, startOffset: Int): Pair<List<String>, Int> {
+        if (startOffset >= payload.size) return emptyList<String>() to startOffset
+        var offset = startOffset
+        val count = payload[offset].toInt() and 0xFF
+        offset++
+        val capabilities = mutableListOf<String>()
+        repeat(count) {
+            if (offset >= payload.size) {
+                throw IllegalArgumentException("Capabilities frame too short")
+            }
+            val len = payload[offset].toInt() and 0xFF
+            offset++
+            if (offset + len > payload.size) {
+                throw IllegalArgumentException("Capability extends beyond payload")
+            }
+            capabilities.add(String(payload, offset, len, Charsets.UTF_8))
+            offset += len
+        }
+        return capabilities to offset
     }
 
     fun decode(frameBytes: ByteArray): Frame {
@@ -236,11 +283,14 @@ object FrameCodec {
                 val password = String(payload, offset, passwordLen, Charsets.UTF_8)
                 offset += passwordLen
 
+                val (capabilities, capabilityEnd) = decodeCapabilities(payload, offset)
+                offset = capabilityEnd
+
                 if (offset != payload.size) {
                     throw IllegalArgumentException("Auth frame has trailing bytes")
                 }
 
-                Frame.Auth(username, password)
+                Frame.Auth(username, password, capabilities)
             }
 
             FrameType.CONNECT.code -> {
@@ -372,6 +422,14 @@ object FrameCodec {
                 }
 
                 Frame.Error(message)
+            }
+
+            FrameType.CAPABILITIES.code -> {
+                val (capabilities, capabilityEnd) = decodeCapabilities(payload, offset)
+                if (capabilityEnd != payload.size) {
+                    throw IllegalArgumentException("Capabilities frame has trailing bytes")
+                }
+                Frame.Capabilities(capabilities)
             }
 
             FrameType.PADDING.code -> {

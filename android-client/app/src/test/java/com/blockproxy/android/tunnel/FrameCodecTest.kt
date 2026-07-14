@@ -26,9 +26,33 @@ class FrameCodecTest {
     @Test
     fun `encode Auth`() {
         assertArrayEquals(
-            byteArrayOf(0x00, 0x0C, 0x20, 0x05, 0x61, 0x64, 0x6D, 0x69, 0x6E, 0x04, 0x70, 0x61, 0x73, 0x73),
+            byteArrayOf(0x00, 0x0D, 0x20, 0x05, 0x61, 0x64, 0x6D, 0x69, 0x6E, 0x04, 0x70, 0x61, 0x73, 0x73, 0x00),
             FrameCodec.encode(Frame.Auth("admin", "pass"))
         )
+    }
+
+    @Test
+    fun `encode and decode Auth with capabilities`() {
+        val encoded = FrameCodec.encode(Frame.Auth("admin", "pass", listOf("padding")))
+        val decoded = FrameCodec.decode(encoded)
+
+        assertTrue(decoded is Frame.Auth)
+        val auth = decoded as Frame.Auth
+        assertEquals("admin", auth.username)
+        assertEquals("pass", auth.password)
+        assertEquals(listOf("padding"), auth.capabilities)
+    }
+
+    @Test
+    fun `encode and decode Capabilities`() {
+        val original = Frame.Capabilities(listOf("padding"))
+        val encoded = FrameCodec.encode(original)
+
+        assertArrayEquals(
+            byteArrayOf(0x00, 0x0A, 0x24, 0x01, 0x07, 0x70, 0x61, 0x64, 0x64, 0x69, 0x6E, 0x67),
+            encoded
+        )
+        assertEquals(original, FrameCodec.decode(encoded))
     }
 
     @Test

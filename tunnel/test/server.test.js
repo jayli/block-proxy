@@ -87,6 +87,19 @@ async function authenticate(ws, username = 'admin', password = 'secret') {
   return pending;
 }
 
+async function authenticateWithCapabilities(ws, capabilities, username = 'admin', password = 'secret') {
+  const pendingAuth = readFrame(ws);
+  ws.send(encodeFrame({
+    type: FRAME_TYPES.AUTH,
+    username,
+    password,
+    capabilities,
+  }));
+  const authResponse = await pendingAuth;
+  const negotiated = await readFrame(ws);
+  return { authResponse, negotiated };
+}
+
 function sendAuth(ws, username = 'admin', password = 'secret') {
   ws.send(encodeFrame({
     type: FRAME_TYPES.AUTH,
@@ -99,6 +112,21 @@ function closeWs(ws) {
   if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
     ws.close();
   }
+}
+
+async function captureConsoleLog(fn) {
+  const originalLog = console.log;
+  const logs = [];
+  console.log = (...args) => {
+    logs.push(args.join(' '));
+    originalLog.apply(console, args);
+  };
+  try {
+    await fn(logs);
+  } finally {
+    console.log = originalLog;
+  }
+  return logs;
 }
 
 async function expectPortReusable(port) {
@@ -315,7 +343,7 @@ describe('TunnelServer WebSocket', () => {
     closeWs(ws);
   });
 
-  it('sends PADDING after successful DATA send when probability is one', async () => {
+  it('does not send PADDING by default even when probability is one', async () => {
     const port = nextPort();
     server = new TunnelServer({
       port,
@@ -338,11 +366,110 @@ describe('TunnelServer WebSocket', () => {
     assert.equal(ok, true);
 
     const dataFrame = await readUntil(ws, frame => frame.type === FRAME_TYPES.DATA);
+    assert.equal(dataFrame.reqid, 7);
+    assert.deepEqual(dataFrame.data, Buffer.from('hello'));
+    await assert.rejects(
+      readUntil(ws, frame => frame.type === FRAME_TYPES.PADDING),
+      /readFrame timeout|matching frame timeout/
+    );
+    closeWs(ws);
+  });
+
+  it('sends PADDING only after padding is negotiated', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+      paddingEnabled: true,
+      paddingProbability: 1,
+      paddingMinBytes: 4,
+      paddingMaxBytes: 4,
+    });
+    await server.start();
+
+    const ws = await connectClient(port);
+    const { authResponse, negotiated } = await authenticateWithCapabilities(ws, ['padding']);
+    assert.equal(authResponse.type, FRAME_TYPES.AUTH_OK);
+    assert.equal(negotiated.type, FRAME_TYPES.CAPABILITIES);
+    assert.deepEqual(negotiated.capabilities, ['padding']);
+
+    const ok = await server.sendFrame({
+      type: FRAME_TYPES.DATA,
+      reqid: 7,
+      data: Buffer.from('hello'),
+    });
+    assert.equal(ok, true);
+
+    const dataFrame = await readUntil(ws, frame => frame.type === FRAME_TYPES.DATA);
     const paddingFrame = await readUntil(ws, frame => frame.type === FRAME_TYPES.PADDING);
     assert.equal(dataFrame.reqid, 7);
     assert.deepEqual(dataFrame.data, Buffer.from('hello'));
     assert.equal(paddingFrame.data.length, 4);
     closeWs(ws);
+  });
+
+  it('logs when padding is negotiated', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+    });
+    await server.start();
+
+    const ws = await connectClient(port);
+    const logs = await captureConsoleLog(async (capturedLogs) => {
+      const { authResponse, negotiated } = await authenticateWithCapabilities(ws, ['padding']);
+      assert.equal(authResponse.type, FRAME_TYPES.AUTH_OK);
+      assert.equal(negotiated.type, FRAME_TYPES.CAPABILITIES);
+      await waitForCondition(
+        () => capturedLogs.some(line => line.includes('[Tunnel] Padding negotiated')),
+        1000
+      );
+    });
+
+    assert.ok(logs.some(line => line.includes('[Tunnel] Padding negotiated')));
+    closeWs(ws);
+  });
+
+  it('does not carry padding negotiation across reconnects', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+      paddingEnabled: true,
+      paddingProbability: 1,
+      paddingMinBytes: 4,
+      paddingMaxBytes: 4,
+    });
+    await server.start();
+
+    const ws1 = await connectClient(port);
+    const negotiated1 = await authenticateWithCapabilities(ws1, ['padding']);
+    assert.equal(negotiated1.authResponse.type, FRAME_TYPES.AUTH_OK);
+    assert.equal(negotiated1.negotiated.type, FRAME_TYPES.CAPABILITIES);
+    closeWs(ws1);
+    await waitForClose(ws1);
+
+    const ws2 = await connectClient(port);
+    assert.equal((await authenticate(ws2)).type, FRAME_TYPES.AUTH_OK);
+
+    const ok = await server.sendFrame({
+      type: FRAME_TYPES.DATA,
+      reqid: 9,
+      data: Buffer.from('after-reconnect'),
+    });
+    assert.equal(ok, true);
+
+    const dataFrame = await readUntil(ws2, frame => frame.type === FRAME_TYPES.DATA);
+    assert.equal(dataFrame.reqid, 9);
+    await assert.rejects(
+      readUntil(ws2, frame => frame.type === FRAME_TYPES.PADDING),
+      /readFrame timeout|matching frame timeout/
+    );
+    closeWs(ws2);
   });
 
   it('stop releases the listening port', async () => {
