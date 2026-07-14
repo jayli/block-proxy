@@ -101,6 +101,7 @@ class MainActivity : ComponentActivity() {
                 val cfIpRefreshState by viewModel.cfIpRefreshState.collectAsState()
                 val currentCfIp by viewModel.currentCfIp.collectAsState()
                 val routingState by routingViewModel.uiState.collectAsState()
+                val connectionTestState by viewModel.connectionTestState.collectAsState()
 
                 // Network info state - managed at Activity level to persist across tab switches
                 val networkInfoManager = remember { NetworkInfoManager(applicationContext) }
@@ -239,6 +240,9 @@ class MainActivity : ComponentActivity() {
                                     onUpdateCfCdnEnabled = viewModel::updateCfCdnEnabled,
                                     onRefreshCfIpPool = viewModel::refreshCfIpPool,
                                     cfIpRefreshState = cfIpRefreshState,
+                                    connectionTestState = connectionTestState,
+                                    onTestConnection = viewModel::testConnection,
+                                    onDismissConnectionTest = viewModel::dismissConnectionTest,
                                     onSave = viewModel::saveConfig,
                                     onBatterySettingsClick = {
                                         startActivity(viewModel.createBatterySettingsIntent())

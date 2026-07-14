@@ -23,6 +23,9 @@ import com.blockproxy.android.config.ServerConfig
 import com.blockproxy.android.config.TunnelCredentials
 import com.blockproxy.android.service.BlockProxyVpnService
 import com.blockproxy.android.status.TunnelStatus
+import com.blockproxy.android.util.TlsTestResult
+import com.blockproxy.android.util.TlsTester
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +38,16 @@ sealed class CfIpRefreshState {
     data class Refreshing(val tested: Int = 0, val total: Int = 0) : CfIpRefreshState()
     data class Done(val count: Int, val appliedToRunningTunnel: Boolean) : CfIpRefreshState()
     data class Error(val message: String) : CfIpRefreshState()
+}
+
+/**
+ * 连接测试状态：空闲 → 测试中 → 成功/错误。
+ */
+sealed class ConnectionTestState {
+    data object Idle : ConnectionTestState()
+    data object Testing : ConnectionTestState()
+    data class Success(val result: TlsTestResult) : ConnectionTestState()
+    data class Error(val message: String) : ConnectionTestState()
 }
 
 /**
@@ -83,6 +96,10 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _cfIpRefreshState = MutableStateFlow<CfIpRefreshState>(CfIpRefreshState.Idle)
     val cfIpRefreshState: StateFlow<CfIpRefreshState> = _cfIpRefreshState.asStateFlow()
+
+    // 连接测试状态
+    private val _connectionTestState = MutableStateFlow<ConnectionTestState>(ConnectionTestState.Idle)
+    val connectionTestState: StateFlow<ConnectionTestState> = _connectionTestState.asStateFlow()
 
     // Repositories
     private val configRepository = ConfigRepository(DataStoreConfigDataSource(context))
@@ -331,6 +348,36 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
         if (!state.cfCdnEnabled) return true
         val port = state.port.toIntOrNull() ?: return false
         return state.useTls && port in CfCdnConfig.HTTPS_PORTS
+    }
+
+    /**
+     * 执行 TLS 连接测试 + MITM 检测。
+     * 使用当前表单中的 host:port，在 IO 线程执行原始 TLS 握手。
+     */
+    fun testConnection() {
+        val state = _configUiState.value
+        val host = state.host.trim()
+        val port = state.port.toIntOrNull()
+        if (host.isBlank() || port == null || port !in 1..65535) {
+            _connectionTestState.value = ConnectionTestState.Error("请先填写有效的服务器地址和端口")
+            return
+        }
+        _connectionTestState.value = ConnectionTestState.Testing
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val result = TlsTester.test(host, port)
+                _connectionTestState.value = ConnectionTestState.Success(result)
+            } catch (e: Exception) {
+                _connectionTestState.value = ConnectionTestState.Error(e.message ?: "测试失败")
+            }
+        }
+    }
+
+    /**
+     * 关闭连接测试结果，重置为空闲状态。
+     */
+    fun dismissConnectionTest() {
+        _connectionTestState.value = ConnectionTestState.Idle
     }
 
     companion object {

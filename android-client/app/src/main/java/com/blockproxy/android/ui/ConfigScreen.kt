@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -59,6 +60,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.blockproxy.android.cdn.CfCdnConfig
+import com.blockproxy.android.util.TlsTestResult
 import kotlinx.coroutines.delay
 
 /**
@@ -89,6 +91,9 @@ fun ConfigScreen(
     onUpdateCfCdnEnabled: (Boolean) -> Unit,
     onRefreshCfIpPool: () -> Unit,
     cfIpRefreshState: CfIpRefreshState,
+    connectionTestState: ConnectionTestState,
+    onTestConnection: () -> Unit,
+    onDismissConnectionTest: () -> Unit,
     onSave: () -> Unit,
     onBatterySettingsClick: () -> Unit,
     routingEnabled: Boolean,
@@ -137,11 +142,30 @@ fun ConfigScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
             // Server settings section
-            Text(
-                text = "服务器设置",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "服务器设置",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                TextButton(
+                    onClick = onTestConnection,
+                    enabled = connectionTestState !is ConnectionTestState.Testing,
+                ) {
+                    if (connectionTestState is ConnectionTestState.Testing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    Text("测试")
+                }
+            }
 
             OutlinedTextField(
                 value = config.host,
@@ -462,5 +486,220 @@ fun ConfigScreen(
                 )
             }
         }
+
+        // 连接测试结果对话框
+        when (val testState = connectionTestState) {
+            is ConnectionTestState.Success -> ConnectionTestResultDialog(
+                result = testState.result,
+                onDismiss = onDismissConnectionTest,
+            )
+            is ConnectionTestState.Error -> AlertDialog(
+                onDismissRequest = onDismissConnectionTest,
+                title = { Text("测试失败") },
+                text = { Text(testState.message) },
+                confirmButton = {
+                    TextButton(onClick = onDismissConnectionTest) {
+                        Text("确定")
+                    }
+                },
+            )
+            else -> Unit
+        }
+    }
+}
+
+/**
+ * 从证书 DN 字符串中提取 CN 值。
+ * 例如 "CN=BlockProxy, O=BlockProxy" → "BlockProxy"
+ */
+private fun extractCn(dn: String): String {
+    val cnMatch = Regex("CN\\s*=\\s*([^,]+)").find(dn)
+    if (cnMatch != null) return cnMatch.groupValues[1].trim()
+    // 回退到 O
+    val oMatch = Regex("O\\s*=\\s*([^,]+)").find(dn)
+    if (oMatch != null) return "O=${oMatch.groupValues[1].trim()}"
+    // 回退到整个 DN
+    return dn
+}
+
+/**
+ * 连接测试成功结果对话框。
+ *
+ * 显示：连通性、MITM 检测、证书信息、耗时等。
+ */
+@Composable
+private fun ConnectionTestResultDialog(
+    result: TlsTestResult,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = if (result.reachable) "测试结果" else "连接失败",
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!result.reachable) {
+                    // 不可达
+                    ResultRow(
+                        label = "连通性",
+                        value = "✗ ${result.error ?: "连接失败"}",
+                        valueColor = Color(0xFFF44336),
+                    )
+                } else {
+                    // 连通性
+                    ResultRow(
+                        label = "连通性",
+                        value = "✓ 已连通",
+                        valueColor = Color(0xFF4CAF50),
+                    )
+
+                    // MITM 检测
+                    if (result.isMitm) {
+                        ResultRow(
+                            label = "MITM 检测",
+                            value = "⚠ 检测到 MITM",
+                            valueColor = Color(0xFFF44336),
+                        )
+                        result.matchedKeyword?.let { kw ->
+                            Text(
+                                text = "匹配关键字: $kw",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFFF44336),
+                                modifier = Modifier.padding(start = 8.dp),
+                            )
+                        }
+                    } else {
+                        ResultRow(
+                            label = "MITM 检测",
+                            value = "✓ 未发现",
+                            valueColor = Color(0xFF4CAF50),
+                        )
+                    }
+
+                    // 分隔线
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // 证书信息
+                    Text(
+                        text = "证书信息",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+
+                    ResultRow(
+                        label = "Issuer",
+                        value = extractCn(result.leafIssuer),
+                        valueColor = MaterialTheme.colorScheme.onSurface,
+                    )
+
+                    ResultRow(
+                        label = "Subject",
+                        value = extractCn(result.leafSubject),
+                        valueColor = MaterialTheme.colorScheme.onSurface,
+                    )
+
+                    ResultRow(
+                        label = "自签名",
+                        value = if (result.isSelfSigned) "是" else "否",
+                        valueColor = MaterialTheme.colorScheme.onSurface,
+                    )
+
+                    ResultRow(
+                        label = "系统信任",
+                        value = if (result.verifyOk) "✓ 是" else "✗ 否",
+                        valueColor = if (result.verifyOk) {
+                            Color(0xFF4CAF50)
+                        } else {
+                            Color(0xFFFFC107)
+                        },
+                    )
+
+                    if (result.certChainSize > 1) {
+                        ResultRow(
+                            label = "证书链",
+                            value = "${result.certChainSize} 个证书",
+                            valueColor = MaterialTheme.colorScheme.onSurface,
+                        )
+
+                        // 展开证书链（跳过叶子证书，因为已显示）
+                        result.chain.drop(1).forEachIndexed { index, cert ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 8.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                ),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
+                                    Text(
+                                        text = "CA #${index + 1}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                    Text(
+                                        text = extractCn(cert.subject),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    Text(
+                                        text = "有效期: ${cert.notBefore} ~ ${cert.notAfter}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 分隔线
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // 耗时
+                    ResultRow(
+                        label = "耗时",
+                        value = "${result.durationMs} ms",
+                        valueColor = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("确定")
+            }
+        },
+    )
+}
+
+/**
+ * 对话框中的单行结果：标签 + 值。
+ */
+@Composable
+private fun ResultRow(
+    label: String,
+    value: String,
+    valueColor: Color,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = valueColor,
+        )
     }
 }
