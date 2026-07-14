@@ -3,9 +3,11 @@ const assert = require('node:assert/strict');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
-const { WebSocket } = require('ws');
+const wsModule = require('ws');
 const TunnelServer = require('../server');
 const { FRAME_TYPES, encodeFrame, decodeFrame } = require('../protocol');
+
+const WebSocket = wsModule.WebSocket || wsModule;
 
 let portCounter = 18004 + (process.pid % 1000);
 function nextPort() { return portCounter++; }
@@ -291,6 +293,58 @@ describe('TunnelServer WebSocket', () => {
     closeWs(ws);
   });
 
+  it('ignores authenticated PADDING frames without dispatching to handlers', async () => {
+    const port = nextPort();
+    let handlerCalls = 0;
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+    });
+    server.onFrame(() => { handlerCalls += 1; });
+    await server.start();
+
+    const ws = await connectClient(port);
+    assert.equal((await authenticate(ws)).type, FRAME_TYPES.AUTH_OK);
+
+    ws.send(encodeFrame({ type: FRAME_TYPES.PADDING, data: Buffer.from('noise') }));
+    await new Promise(r => setTimeout(r, 50));
+
+    assert.equal(handlerCalls, 0);
+    assert.equal(ws.readyState, WebSocket.OPEN);
+    closeWs(ws);
+  });
+
+  it('sends PADDING after successful DATA send when probability is one', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+      paddingProbability: 1,
+      paddingMinBytes: 4,
+      paddingMaxBytes: 4,
+    });
+    await server.start();
+
+    const ws = await connectClient(port);
+    assert.equal((await authenticate(ws)).type, FRAME_TYPES.AUTH_OK);
+
+    const ok = await server.sendFrame({
+      type: FRAME_TYPES.DATA,
+      reqid: 7,
+      data: Buffer.from('hello'),
+    });
+    assert.equal(ok, true);
+
+    const dataFrame = await readUntil(ws, frame => frame.type === FRAME_TYPES.DATA);
+    const paddingFrame = await readUntil(ws, frame => frame.type === FRAME_TYPES.PADDING);
+    assert.equal(dataFrame.reqid, 7);
+    assert.deepEqual(dataFrame.data, Buffer.from('hello'));
+    assert.equal(paddingFrame.data.length, 4);
+    closeWs(ws);
+  });
+
   it('stop releases the listening port', async () => {
     const port = nextPort();
     server = new TunnelServer({
@@ -303,6 +357,7 @@ describe('TunnelServer WebSocket', () => {
     server = null;
     await expectPortReusable(port);
   });
+
 });
 
 describe('TunnelServer callbacks', () => {

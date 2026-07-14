@@ -177,6 +177,35 @@ class FrameCodecTest {
         assertEquals(original, decoded)
     }
 
+    // ========== PADDING frame ==========
+
+    @Test
+    fun `encode and decode PADDING frame round-trip`() {
+        val data = byteArrayOf(0x01, 0x02, 0x03)
+        val original = Frame.Padding(data)
+        val encoded = FrameCodec.encode(original)
+
+        assertArrayEquals(byteArrayOf(0x00, 0x04, 0x30, 0x01, 0x02, 0x03), encoded)
+        assertEquals(original, FrameCodec.decode(encoded))
+    }
+
+    @Test
+    fun `encode and decode empty PADDING frame`() {
+        val original = Frame.Padding(byteArrayOf())
+        val encoded = FrameCodec.encode(original)
+
+        assertArrayEquals(byteArrayOf(0x00, 0x01, 0x30), encoded)
+        assertEquals(original, FrameCodec.decode(encoded))
+    }
+
+    @Test
+    fun `PADDING type decodes to Frame_Padding`() {
+        val decoded = FrameCodec.decode(byteArrayOf(0x00, 0x03, 0x30, 0x0A, 0x0B))
+
+        assertTrue(decoded is Frame.Padding)
+        assertArrayEquals(byteArrayOf(0x0A, 0x0B), (decoded as Frame.Padding).data)
+    }
+
     @Test
     fun `DATA max chunk 65532 succeeds`() {
         val payload = ByteArray(65532) { it.toByte() }
@@ -293,6 +322,16 @@ class FrameCodecTest {
 
         assertEquals(data1, data2)
         assertNotEquals(data1, data3)
+    }
+
+    @Test
+    fun `Frame_Padding compares byte arrays by content`() {
+        val padding1 = Frame.Padding(byteArrayOf(0x01, 0x02))
+        val padding2 = Frame.Padding(byteArrayOf(0x01, 0x02))
+        val padding3 = Frame.Padding(byteArrayOf(0x01, 0x03))
+
+        assertEquals(padding1, padding2)
+        assertNotEquals(padding1, padding3)
     }
 
     @Test

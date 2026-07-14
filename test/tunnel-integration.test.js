@@ -1,12 +1,14 @@
 const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { once } = require('node:events');
-const tls = require('tls');
 const fs = require('fs');
 const path = require('path');
+const wsModule = require('ws');
 const TunnelServer = require('../tunnel/server');
 const TunnelManager = require('../tunnel/manager');
 const { FRAME_TYPES, ATYP, encodeFrame, decodeFrame } = require('../tunnel/protocol');
+
+const WebSocket = wsModule.WebSocket || wsModule;
 
 const PORT = 28004;
 const cert = fs.readFileSync(path.join(__dirname, '../cert/rootCA.crt'));
@@ -14,35 +16,32 @@ const key = fs.readFileSync(path.join(__dirname, '../cert/rootCA.key'));
 
 function connectClient(port) {
   return new Promise((resolve, reject) => {
-    const s = tls.connect(port, 'localhost', { rejectUnauthorized: false }, () => resolve(s));
-    s.on('error', reject);
+    const ws = new WebSocket(`wss://localhost:${port}/websocket`, {
+      rejectUnauthorized: false,
+    });
+    ws.once('open', () => resolve(ws));
+    ws.once('error', reject);
   });
 }
 
-function readFrame(socket) {
+function readFrame(ws) {
   return new Promise((resolve, reject) => {
-    let buf = Buffer.alloc(0);
-    const onData = (chunk) => {
-      buf = Buffer.concat([buf, chunk]);
-      if (buf.length >= 2) {
-        const len = buf.readUInt16BE(0);
-        if (buf.length >= 2 + len) {
-          socket.removeListener('data', onData);
-          try { resolve(decodeFrame(buf)); } catch (e) { reject(e); }
-        }
-      }
+    const timer = setTimeout(() => reject(new Error('readFrame timeout')), 5000);
+    const onMessage = (chunk) => {
+      clearTimeout(timer);
+      ws.removeListener('message', onMessage);
+      try { resolve(decodeFrame(Buffer.from(chunk))); } catch (e) { reject(e); }
     };
-    socket.on('data', onData);
-    setTimeout(() => reject(new Error('readFrame timeout')), 5000);
+    ws.on('message', onMessage);
   });
 }
 
 async function authenticateClient(port, user, pass) {
-  const socket = await connectClient(port);
-  socket.write(encodeFrame({ type: FRAME_TYPES.AUTH, username: user, password: pass }));
-  const resp = await readFrame(socket);
+  const ws = await connectClient(port);
+  ws.send(encodeFrame({ type: FRAME_TYPES.AUTH, username: user, password: pass }));
+  const resp = await readFrame(ws);
   assert.equal(resp.type, FRAME_TYPES.AUTH_OK);
-  return socket;
+  return ws;
 }
 
 describe('Tunnel end-to-end', () => {
@@ -87,18 +86,18 @@ describe('Tunnel end-to-end', () => {
     const reqid = connectFrame.reqid;
 
     // Client sends CONNECT_OK
-    clientSocket.write(encodeFrame({ type: FRAME_TYPES.CONNECT_OK, reqid }));
+    clientSocket.send(encodeFrame({ type: FRAME_TYPES.CONNECT_OK, reqid }));
     await new Promise(r => setTimeout(r, 50));
     assert.equal(connectCallbackCalled, true, 'callback should fire on CONNECT_OK');
 
     // Client sends DATA
-    clientSocket.write(encodeFrame({ type: FRAME_TYPES.DATA, reqid, data: Buffer.from('response-data') }));
+    clientSocket.send(encodeFrame({ type: FRAME_TYPES.DATA, reqid, data: Buffer.from('response-data') }));
     await new Promise(r => setTimeout(r, 50));
     assert.equal(dataReceived.length, 1);
     assert.equal(dataReceived[0].toString(), 'response-data');
 
     // Client sends CLOSE
-    clientSocket.write(encodeFrame({ type: FRAME_TYPES.CLOSE, reqid }));
+    clientSocket.send(encodeFrame({ type: FRAME_TYPES.CLOSE, reqid }));
     await new Promise(r => setTimeout(r, 50));
     assert.equal(streamClosed, true);
 
@@ -107,7 +106,7 @@ describe('Tunnel end-to-end', () => {
     assert.ok(stream2, 'Manager should be free after CLOSE');
     stream2.destroy();
 
-    clientSocket.destroy();
+    clientSocket.close();
   });
 
   it('should return error stream when disconnected', async () => {
@@ -168,23 +167,23 @@ describe('Tunnel end-to-end', () => {
 
     // Send CONNECT_OK for received frames
     if (frame1 && frame1.type === FRAME_TYPES.CONNECT) {
-      clientSocket1.write(encodeFrame({ type: FRAME_TYPES.CONNECT_OK, reqid: frame1.reqid }));
+      clientSocket1.send(encodeFrame({ type: FRAME_TYPES.CONNECT_OK, reqid: frame1.reqid }));
     }
     if (frame2 && frame2.type === FRAME_TYPES.CONNECT) {
-      clientSocket2.write(encodeFrame({ type: FRAME_TYPES.CONNECT_OK, reqid: frame2.reqid }));
+      clientSocket2.send(encodeFrame({ type: FRAME_TYPES.CONNECT_OK, reqid: frame2.reqid }));
     }
     await new Promise(r => setTimeout(r, 20));
 
     // Send CLOSE for received frames
     if (frame1 && frame1.type === FRAME_TYPES.CONNECT) {
-      clientSocket1.write(encodeFrame({ type: FRAME_TYPES.CLOSE, reqid: frame1.reqid }));
+      clientSocket1.send(encodeFrame({ type: FRAME_TYPES.CLOSE, reqid: frame1.reqid }));
     }
     if (frame2 && frame2.type === FRAME_TYPES.CONNECT) {
-      clientSocket2.write(encodeFrame({ type: FRAME_TYPES.CLOSE, reqid: frame2.reqid }));
+      clientSocket2.send(encodeFrame({ type: FRAME_TYPES.CLOSE, reqid: frame2.reqid }));
     }
     await new Promise(r => setTimeout(r, 20));
 
-    clientSocket1.destroy();
-    clientSocket2.destroy();
+    clientSocket1.close();
+    clientSocket2.close();
   });
 });

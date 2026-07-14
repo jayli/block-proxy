@@ -34,6 +34,13 @@ sealed class Frame {
     data object AuthFail : Frame()
     data class Error(val message: String) : Frame()
 
+    class Padding(val data: ByteArray) : Frame() {
+        override fun equals(other: Any?): Boolean =
+            other is Padding && data.contentEquals(other.data)
+
+        override fun hashCode(): Int = data.contentHashCode()
+    }
+
     class Unknown(val type: Int, val payload: ByteArray) : Frame() {
         override fun equals(other: Any?): Boolean =
             other is Unknown && type == other.type && payload.contentEquals(other.payload)
@@ -53,6 +60,7 @@ enum class FrameType(val code: Int) {
     AUTH_OK(0x21),
     AUTH_FAIL(0x22),
     ERROR(0x23),
+    PADDING(0x30),
     CONNECT_FAILED(0x81),
 }
 

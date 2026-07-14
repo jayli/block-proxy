@@ -53,8 +53,18 @@ class TunnelClient(
     private val _status = MutableStateFlow<TunnelStatus>(TunnelStatus.Disconnected)
     val status: StateFlow<TunnelStatus> = _status.asStateFlow()
 
-    private val handler = ReverseConnectHandler(clientScope, targetSocketFactory)
-    private val forwardRegistry = ForwardSessionRegistry(clientScope)
+    private val paddingInjector = PaddingInjector(
+        clientScope,
+        PaddingConfig(
+            enabled = config.paddingEnabled,
+            probability = config.paddingProbability,
+            minBytes = config.paddingMinBytes,
+            maxBytes = config.paddingMaxBytes,
+        ),
+    )
+
+    private val handler = ReverseConnectHandler(clientScope, targetSocketFactory, paddingInjector = paddingInjector)
+    private val forwardRegistry = ForwardSessionRegistry(clientScope, paddingInjector = paddingInjector)
 
     private val okHttpClient = TunnelWebSocket.createOkHttpClient(
         allowInsecure = config.allowInsecure,
@@ -96,7 +106,6 @@ class TunnelClient(
         onCfIpChanged(null)
         mainJob?.cancel()
         mainJob = null
-
         // Close all active/draining/candidate senders
         for (sender in listOfNotNull(activeWs, candidateWs, drainingWs)) {
             closeSender(sender)
@@ -338,6 +347,7 @@ class TunnelClient(
                         } catch (_: Exception) {}
                     }
                     is Frame.Pong -> { /* server response to its own PING, no client-side tracking */ }
+                    is Frame.Padding -> { /* silently discard */ }
                     is Frame.Connect -> {
                         if (sender === drainingWs) {
                             // Reject new reverse requests on draining connection

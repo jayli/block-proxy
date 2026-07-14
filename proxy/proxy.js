@@ -1337,6 +1337,7 @@ async function initTunnel(config) {
   console.log(`[Tunnel] 使用证书: ${certPaths.type}`);
   const tunnelCert = fs.readFileSync(certPaths.cert);
   const tunnelKey = fs.readFileSync(certPaths.key);
+  const tunnelPadding = config.tunnel_padding || {};
 
   let nextTunnelManager = null;
   const nextTunnelServer = new TunnelServer({
@@ -1350,6 +1351,12 @@ async function initTunnel(config) {
     tunnel_ws_path: config.tunnel_ws_path || '/websocket',
     tunnel_rotation_drain_timeout: config.tunnel_rotation_drain_timeout,
     tunnel_rotation_drain_idle_timeout: config.tunnel_rotation_drain_idle_timeout,
+    paddingEnabled: tunnelPadding.enabled ?? true,
+    paddingProbability: tunnelPadding.probability ?? 0.3,
+    paddingMinBytes: tunnelPadding.min_bytes ?? 64,
+    paddingMaxBytes: tunnelPadding.max_bytes ?? 512,
+    paddingIntervalMinMs: tunnelPadding.periodic_interval_min_ms ?? 5000,
+    paddingIntervalMaxMs: tunnelPadding.periodic_interval_max_ms ?? 15000,
     onConnect: (socket, addr, port) => {
       if (nextTunnelManager) {
         nextTunnelManager.setConnected(socket, true, `${addr}:${port}`);

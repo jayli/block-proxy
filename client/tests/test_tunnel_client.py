@@ -77,6 +77,14 @@ class TestDecodeFrame:
         assert frame['type'] == FRAME_PONG
         assert frame['payload'] == b''
 
+    def test_decode_padding_type_as_unknown_frame(self):
+        payload = bytes([0x30, 0x01, 0x02, 0x03])
+        buf = struct.pack('!H', len(payload)) + payload
+        frame = decode_frame_from_buffer(buf)
+
+        assert frame['type'] == 0x30
+        assert 'reqid' not in frame
+
 
 class TestTunnelClientLifecycle:
     def test_stop_schedules_active_ws_close(self):
@@ -281,6 +289,39 @@ class TestTunnelClientLifecycle:
         frame = decode_frame_from_buffer(sent[0])
         assert frame['type'] == FRAME_PONG
         assert frame['payload'] == b'abc'
+
+    def test_handle_requests_ignores_padding_unknown_frame(self):
+        sent = []
+        payload = bytes([0x30, 0x01, 0x02])
+        padding_frame = struct.pack('!H', len(payload)) + payload
+
+        class FakeWs:
+            def __init__(self):
+                self.closed = False
+                self.messages = [padding_frame]
+
+            async def recv(self):
+                if self.messages:
+                    return self.messages.pop(0)
+                raise asyncio.CancelledError()
+
+            async def send(self, data):
+                sent.append(data)
+
+            async def close(self):
+                self.closed = True
+
+        cfg = {
+            'server': {'address': '127.0.0.1', 'username': 'u', 'password': 'p', 'allowInsecure': True},
+            'tunnel': {'server_address': '127.0.0.1', 'server_port': 8003},
+        }
+        tc = TunnelClient(cfg, lambda status, detail='': None)
+        tc._running = True
+
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(tc._handle_requests(FakeWs()))
+
+        assert sent == []
 
     def test_rotation_enabled_by_default(self):
         cfg = {

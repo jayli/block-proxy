@@ -19,6 +19,10 @@ data class ServerConfig(
     val httpDisguise: Boolean = true,
     val customHeaders: Map<String, String> = emptyMap(),
     val cfCdnEnabled: Boolean = false,
+    val paddingEnabled: Boolean = true,
+    val paddingProbability: Float = 0.3f,
+    val paddingMinBytes: Int = 64,
+    val paddingMaxBytes: Int = 512,
 ) {
     companion object {
         /** Default tunnel server port (matches block-proxy tunnel server). */

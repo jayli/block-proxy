@@ -130,6 +130,7 @@ class ReverseConnectHandler(
     private val scope: CoroutineScope,
     private val socketFactory: TargetSocketFactory,
     private val connectTimeoutMs: Long = 30_000L,
+    private val paddingInjector: PaddingInjector? = null,
 ) {
     private val sessions = ConcurrentHashMap<Int, RequestSession>()
 
@@ -196,6 +197,7 @@ class ReverseConnectHandler(
             sender = sender,
             targetSocket = targetSocket,
             scope = scope,
+            paddingInjector = paddingInjector,
             onEnd = { s -> sessions.remove(s.reqid, s) },
         )
         // Use putIfAbsent to avoid orphaning an existing session with the same reqid
@@ -275,6 +277,7 @@ internal class RequestSession(
     val sender: FrameSender,
     private val targetSocket: TargetSocket,
     private val scope: CoroutineScope,
+    private val paddingInjector: PaddingInjector? = null,
     private val onEnd: (RequestSession) -> Unit,
 ) {
     internal val closed = AtomicBoolean(false)
@@ -350,7 +353,8 @@ internal class RequestSession(
                 if (n <= 0) break
                 val chunk = if (n == buffer.size) buffer.copyOf() else buffer.copyOfRange(0, n)
                 lastActivityAt = System.currentTimeMillis()
-                sender.sendFrame(FrameCodec.encode(Frame.Data(reqid, chunk)))
+                val sent = sender.sendFrame(FrameCodec.encode(Frame.Data(reqid, chunk)))
+                if (sent) paddingInjector?.onDataSent(sender)
                 yield() // Allow other sessions to enqueue frames
             }
         } catch (e: CancellationException) {

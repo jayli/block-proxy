@@ -207,6 +207,9 @@ class TunnelWebSocket(
             is Frame.Ping -> {
                 ws?.send(ByteString.of(*FrameCodec.encode(Frame.Pong(frame.payload))))
             }
+            is Frame.Padding -> {
+                // Ignore padding during auth and continue waiting for AUTH_OK.
+            }
             else -> {
                 ws?.close(1002, "unexpected auth frame")
                 if (!deferred.isCompleted) {
