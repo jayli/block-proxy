@@ -127,4 +127,99 @@ class SliderStateMachineTest {
 
         assertEquals(SliderAction.None, machine.onRetryTick(TunnelStatus.Error))
     }
+
+    // ── initWithStatus tests ─────────────────────────────────────────
+
+    @Test
+    fun `initWithStatus Connected renders right green`() {
+        val machine = SliderStateMachine()
+
+        machine.initWithStatus(TunnelStatus.Connected)
+
+        val render = machine.render(TunnelStatus.Connected)
+        assertTrue(render.isActive)
+        assertEquals(SliderTrackTone.Connected, render.trackTone)
+    }
+
+    @Test
+    fun `initWithStatus Preparing renders right orange`() {
+        val machine = SliderStateMachine()
+
+        machine.initWithStatus(TunnelStatus.Preparing)
+
+        val render = machine.render(TunnelStatus.Preparing)
+        assertTrue(render.isActive)
+        assertEquals(SliderTrackTone.Connecting, render.trackTone)
+    }
+
+    @Test
+    fun `initWithStatus Connecting renders right orange`() {
+        val machine = SliderStateMachine()
+
+        machine.initWithStatus(TunnelStatus.Connecting)
+
+        val render = machine.render(TunnelStatus.Connecting)
+        assertTrue(render.isActive)
+        assertEquals(SliderTrackTone.Connecting, render.trackTone)
+    }
+
+    @Test
+    fun `initWithStatus Reconnecting renders right orange retry`() {
+        val machine = SliderStateMachine()
+
+        machine.initWithStatus(TunnelStatus.Reconnecting)
+
+        val render = machine.render(TunnelStatus.Reconnecting)
+        assertTrue(render.isActive)
+        assertEquals(SliderTrackTone.Retrying, render.trackTone)
+    }
+
+    @Test
+    fun `initWithStatus Error renders right orange retry`() {
+        val machine = SliderStateMachine()
+
+        machine.initWithStatus(TunnelStatus.Error)
+
+        val render = machine.render(TunnelStatus.Error)
+        assertTrue(render.isActive)
+        assertEquals(SliderTrackTone.Retrying, render.trackTone)
+        assertEquals(SliderAction.RetryStart, machine.onRetryTick(TunnelStatus.Error))
+    }
+
+    @Test
+    fun `initWithStatus Disconnected stays left grey`() {
+        val machine = SliderStateMachine()
+
+        machine.initWithStatus(TunnelStatus.Disconnected)
+
+        val render = machine.render(TunnelStatus.Disconnected)
+        assertFalse(render.isActive)
+        assertEquals(SliderTrackTone.Neutral, render.trackTone)
+    }
+
+    @Test
+    fun `initWithStatus Connected then slide left stops and moves left`() {
+        val machine = SliderStateMachine()
+        machine.initWithStatus(TunnelStatus.Connected)
+
+        machine.onUserSlideLeft()
+
+        val render = machine.render(TunnelStatus.Connected)
+        assertFalse(render.isActive)
+        assertEquals(SliderTrackTone.Neutral, render.trackTone)
+        assertEquals(SliderAction.Stop, machine.consumePendingAction())
+    }
+
+    @Test
+    fun `initWithStatus Connected then onStatusChanged Disconnected enters retry`() {
+        val machine = SliderStateMachine()
+        machine.initWithStatus(TunnelStatus.Connected)
+
+        machine.onStatusChanged(TunnelStatus.Disconnected)
+
+        val render = machine.render(TunnelStatus.Disconnected)
+        assertTrue(render.isActive)
+        assertEquals(SliderTrackTone.Retrying, render.trackTone)
+        assertEquals(SliderAction.RetryStart, machine.onRetryTick(TunnelStatus.Disconnected))
+    }
 }

@@ -38,6 +38,42 @@ class SliderStateMachine {
     private var attemptPhase = AttemptPhase.Idle
     private var pendingAction = SliderAction.None
 
+    /**
+     * Initialize the state machine based on an already-observed status.
+     *
+     * This handles the case where the app is restarted while the VPN service
+     * is still running in the same process — [BlockProxyVpnService.statusStore]
+     * retains the real status, but the slider machine is freshly created in
+     * `Reset` state.  Calling this before the first render synchronizes the
+     * slider position with the actual VPN status.
+     */
+    fun initWithStatus(status: TunnelStatus) {
+        when (status) {
+            TunnelStatus.Connected -> {
+                intent = UserIntent.WantsConnected
+                attemptPhase = AttemptPhase.Connected
+            }
+            TunnelStatus.Preparing,
+            TunnelStatus.Connecting -> {
+                intent = UserIntent.WantsConnected
+                attemptPhase = AttemptPhase.Starting
+            }
+            TunnelStatus.Reconnecting -> {
+                intent = UserIntent.WantsConnected
+                attemptPhase = AttemptPhase.Failed
+            }
+            TunnelStatus.Error,
+            TunnelStatus.AuthFailed,
+            TunnelStatus.Occupied -> {
+                intent = UserIntent.WantsConnected
+                attemptPhase = AttemptPhase.Failed
+            }
+            TunnelStatus.Disconnected -> {
+                // Default state — nothing to change
+            }
+        }
+    }
+
     fun onUserSlideRight() {
         intent = UserIntent.WantsConnected
         attemptPhase = AttemptPhase.Starting

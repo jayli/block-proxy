@@ -118,7 +118,12 @@ class MainActivity : ComponentActivity() {
 
                 var selectedTab by remember { mutableIntStateOf(0) }
 
-                val sliderMachine = remember { SliderStateMachine() }
+                // Initialize slider with current status to handle app restart
+                // while VPN service is still running (statusStore retains real
+                // status, but slider machine starts in default Reset state).
+                val sliderMachine = remember {
+                    SliderStateMachine().apply { initWithStatus(status) }
+                }
                 var sliderRender by remember {
                     mutableStateOf(sliderMachine.render(status))
                 }
