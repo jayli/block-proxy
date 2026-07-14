@@ -60,8 +60,6 @@ class TunnelClient(
             probability = config.paddingProbability,
             minBytes = config.paddingMinBytes,
             maxBytes = config.paddingMaxBytes,
-            intervalMinMs = config.paddingIntervalMinMs,
-            intervalMaxMs = config.paddingIntervalMaxMs,
         ),
     )
 
@@ -108,8 +106,6 @@ class TunnelClient(
         onCfIpChanged(null)
         mainJob?.cancel()
         mainJob = null
-        paddingInjector.stopPeriodic()
-
         // Close all active/draining/candidate senders
         for (sender in listOfNotNull(activeWs, candidateWs, drainingWs)) {
             closeSender(sender)
@@ -211,7 +207,6 @@ class TunnelClient(
 
         connected = true
         _status.value = TunnelStatus.Connected
-        paddingInjector.startPeriodic(sender)
 
         // Start frame handling for this sender
         val readJob = clientScope.launch { handleFrames(sender, frameChannel) }
@@ -238,7 +233,6 @@ class TunnelClient(
             connected = false
             rotationJob?.cancel()
             rotationJob = null
-            paddingInjector.stopPeriodic()
         }
     }
 
@@ -456,7 +450,6 @@ class TunnelClient(
             }
             drainingWs = oldWs
             activeWs = candidate
-            paddingInjector.updateSender(candidate)
         }
 
         Log.i(TAG, "Rotation: new active WS, old draining")

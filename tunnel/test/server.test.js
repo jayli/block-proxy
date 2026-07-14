@@ -101,14 +101,6 @@ function closeWs(ws) {
   }
 }
 
-function collectFrames(ws, frames) {
-  const onMessage = (chunk) => {
-    frames.push(decodeFrame(Buffer.from(chunk)));
-  };
-  ws.on('message', onMessage);
-  return () => ws.removeListener('message', onMessage);
-}
-
 async function expectPortReusable(port) {
   const probe = new TunnelServer({
     port,
@@ -332,7 +324,6 @@ describe('TunnelServer WebSocket', () => {
       paddingProbability: 1,
       paddingMinBytes: 4,
       paddingMaxBytes: 4,
-      paddingIntervalMinMs: 0,
     });
     await server.start();
 
@@ -354,43 +345,6 @@ describe('TunnelServer WebSocket', () => {
     closeWs(ws);
   });
 
-  it('sends periodic PADDING only to active connection, not draining connection', async () => {
-    const port = nextPort();
-    server = new TunnelServer({
-      port,
-      cert, key,
-      credentials: { username: 'admin', password: 'secret' },
-      rotationDrainTimeout: 1,
-      paddingProbability: 0,
-      paddingMinBytes: 3,
-      paddingMaxBytes: 3,
-      paddingIntervalMinMs: 20,
-      paddingIntervalMaxMs: 20,
-    });
-    await server.start();
-
-    const ws1 = await connectClient(port);
-    assert.equal((await authenticate(ws1)).type, FRAME_TYPES.AUTH_OK);
-
-    const ws2 = await connectClient(port);
-    assert.equal((await authenticate(ws2)).type, FRAME_TYPES.AUTH_OK);
-    await waitForCondition(() => server.getConnectionCounts().draining === 1);
-
-    const ws1Frames = [];
-    const ws2Frames = [];
-    const stopCollect1 = collectFrames(ws1, ws1Frames);
-    const stopCollect2 = collectFrames(ws2, ws2Frames);
-    await waitForCondition(() => ws2Frames.some(frame => frame.type === FRAME_TYPES.PADDING), 500);
-    await new Promise(r => setTimeout(r, 50));
-    stopCollect1();
-    stopCollect2();
-
-    assert.equal(ws1Frames.some(frame => frame.type === FRAME_TYPES.PADDING), false);
-    assert.equal(ws2Frames.some(frame => frame.type === FRAME_TYPES.PADDING), true);
-    closeWs(ws1);
-    closeWs(ws2);
-  });
-
   it('stop releases the listening port', async () => {
     const port = nextPort();
     server = new TunnelServer({
@@ -404,29 +358,6 @@ describe('TunnelServer WebSocket', () => {
     await expectPortReusable(port);
   });
 
-  it('stop clears periodic padding timer', async () => {
-    const port = nextPort();
-    server = new TunnelServer({
-      port,
-      cert, key,
-      credentials: { username: 'admin', password: 'secret' },
-      paddingIntervalMinMs: 20,
-      paddingIntervalMaxMs: 20,
-    });
-    await server.start();
-
-    const ws = await connectClient(port);
-    assert.equal((await authenticate(ws)).type, FRAME_TYPES.AUTH_OK);
-    await waitForCondition(() => server._paddingTimer !== null, 500);
-
-    const stoppedServer = server;
-    await server.stop();
-    server = null;
-    assert.equal(stoppedServer._paddingTimer, null);
-    assert.equal(server, null);
-    closeWs(ws);
-    await expectPortReusable(port);
-  });
 });
 
 describe('TunnelServer callbacks', () => {

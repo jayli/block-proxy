@@ -23,8 +23,6 @@ data class ServerConfig(
     val paddingProbability: Float = 0.3f,
     val paddingMinBytes: Int = 64,
     val paddingMaxBytes: Int = 512,
-    val paddingIntervalMinMs: Long = 5000,
-    val paddingIntervalMaxMs: Long = 15000,
 ) {
     companion object {
         /** Default tunnel server port (matches block-proxy tunnel server). */

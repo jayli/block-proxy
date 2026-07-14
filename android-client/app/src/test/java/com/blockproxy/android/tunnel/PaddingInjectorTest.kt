@@ -1,7 +1,6 @@
 package com.blockproxy.android.tunnel
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
@@ -77,58 +76,6 @@ class PaddingInjectorTest {
 
         val sizes = decodedFrames(sender).map { (it as Frame.Padding).data.size }
         assertTrue(sizes.all { it in 5..9 })
-    }
-
-    @Test
-    fun `periodic padding sends to active sender`() = runTest {
-        val sender = FakeFrameSender()
-        val injector = PaddingInjector(
-            scope = this,
-            config = PaddingConfig(enabled = true, minBytes = 3, maxBytes = 3, intervalMinMs = 10, intervalMaxMs = 10),
-        )
-
-        injector.startPeriodic(sender)
-        advanceTimeBy(10)
-        runCurrent()
-
-        val padding = decodedFrames(sender).single() as Frame.Padding
-        assertEquals(3, padding.data.size)
-        injector.stopPeriodic()
-    }
-
-    @Test
-    fun `updateSender moves periodic padding to new active sender`() = runTest {
-        val oldSender = FakeFrameSender()
-        val newSender = FakeFrameSender()
-        val injector = PaddingInjector(
-            scope = this,
-            config = PaddingConfig(enabled = true, minBytes = 3, maxBytes = 3, intervalMinMs = 10, intervalMaxMs = 10),
-        )
-
-        injector.startPeriodic(oldSender)
-        injector.updateSender(newSender)
-        advanceTimeBy(10)
-        runCurrent()
-
-        assertTrue(oldSender.writtenBytes.isEmpty())
-        assertEquals(1, newSender.writtenBytes.size)
-        injector.stopPeriodic()
-    }
-
-    @Test
-    fun `stopPeriodic cancels future sends`() = runTest {
-        val sender = FakeFrameSender()
-        val injector = PaddingInjector(
-            scope = this,
-            config = PaddingConfig(enabled = true, minBytes = 3, maxBytes = 3, intervalMinMs = 10, intervalMaxMs = 10),
-        )
-
-        injector.startPeriodic(sender)
-        injector.stopPeriodic()
-        advanceTimeBy(50)
-        runCurrent()
-
-        assertTrue(sender.writtenBytes.isEmpty())
     }
 
     @Test

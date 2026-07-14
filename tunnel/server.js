@@ -30,8 +30,6 @@ class TunnelServer {
     this.paddingProbability = Math.max(0, Math.min(1, options.paddingProbability ?? 0.3));
     this.paddingMinBytes = Math.max(0, Math.min(65534, options.paddingMinBytes ?? 64));
     this.paddingMaxBytes = Math.max(this.paddingMinBytes, Math.min(65534, options.paddingMaxBytes ?? 512));
-    this.paddingIntervalMinMs = Math.max(0, options.paddingIntervalMinMs ?? 5000);
-    this.paddingIntervalMaxMs = Math.max(this.paddingIntervalMinMs, options.paddingIntervalMaxMs ?? 15000);
     this.onConnect = options.onConnect || (() => {});
     this.onDisconnect = options.onDisconnect || (() => {});
 
@@ -42,7 +40,6 @@ class TunnelServer {
     this._clientWs = null;
     this._records = new Map();
     this._heartbeatTimer = null;
-    this._paddingTimer = null;
     this._drainCheckCallback = null;
   }
 
@@ -74,7 +71,6 @@ class TunnelServer {
 
   async stop() {
     this._stopHeartbeat();
-    this._stopPeriodicPadding();
     this._drainCheckCallback = null;
 
     const sockets = [...this._records.keys()];
@@ -228,7 +224,6 @@ class TunnelServer {
     this._sendWsFrame(ws, { type: FRAME_TYPES.AUTH_OK }).then(() => {
       console.log(`[Tunnel] Client authenticated: ${record.remoteAddress} (${record.state})`);
       this._startHeartbeat();
-      this._startPeriodicPadding();
       this.onConnect(ws, record.remoteAddress, record.remotePort);
     });
   }
@@ -273,7 +268,6 @@ class TunnelServer {
 
     if (this._clientSockets.size === 0) {
       this._stopHeartbeat();
-      this._stopPeriodicPadding();
     }
   }
 
@@ -439,49 +433,6 @@ class TunnelServer {
     }).catch(() => {});
   }
 
-  _startPeriodicPadding() {
-    if (this._paddingTimer) return;
-    this._schedulePeriodicPadding();
-  }
-
-  _schedulePeriodicPadding() {
-    this._stopPeriodicPadding();
-    if (!this.paddingEnabled || this.paddingIntervalMinMs <= 0) return;
-    if (!this._hasActiveRecord()) return;
-
-    const delay = this.paddingIntervalMinMs +
-      Math.floor(Math.random() * (this.paddingIntervalMaxMs - this.paddingIntervalMinMs + 1));
-    this._paddingTimer = setTimeout(() => {
-      this._paddingTimer = null;
-      this._sendPeriodicPadding();
-      this._schedulePeriodicPadding();
-    }, delay);
-    this._paddingTimer.unref();
-  }
-
-  _sendPeriodicPadding() {
-    for (const record of this._records.values()) {
-      if (!record.authenticated || record.state !== 'active') continue;
-      this._sendWsFrame(record.ws, {
-        type: FRAME_TYPES.PADDING,
-        data: this._randomPaddingBytes(),
-      }).catch(() => {});
-    }
-  }
-
-  _stopPeriodicPadding() {
-    if (this._paddingTimer) {
-      clearTimeout(this._paddingTimer);
-      this._paddingTimer = null;
-    }
-  }
-
-  _hasActiveRecord() {
-    for (const record of this._records.values()) {
-      if (record.authenticated && record.state === 'active') return true;
-    }
-    return false;
-  }
 }
 
 function isTextMessage(data) {
