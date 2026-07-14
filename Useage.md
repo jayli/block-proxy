@@ -511,5 +511,6 @@ A: 如果 block-proxy 部署在路由器上且配置了代理认证，iOS 会拒
 
 MITM 作为 服务中心，外围连接节点起点，远程办公/代理回家，双向访问...
 
-<img width="700" alt="image" src="https://github.com/user-attachments/assets/2b2d5b31-58aa-4d04-b22e-1b7b59ddd9e0" />
+<img width="720" alt="image" src="https://github.com/user-attachments/assets/0e65b068-438a-4b14-90a7-f5f658fdea86" />
+
 
