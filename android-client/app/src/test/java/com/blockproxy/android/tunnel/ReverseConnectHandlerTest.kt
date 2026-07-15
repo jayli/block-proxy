@@ -80,6 +80,7 @@ class ReverseConnectHandlerTest {
 
     class FakeFrameSender : FrameSender {
         @Volatile override var isOpen: Boolean = true
+        override val transportLabel: String = "test"
         val writtenBytes = CopyOnWriteArrayList<ByteArray>()
         private val closed = AtomicBoolean(false)
 

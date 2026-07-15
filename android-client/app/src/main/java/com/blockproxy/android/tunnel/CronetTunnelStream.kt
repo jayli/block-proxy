@@ -34,6 +34,7 @@ class CronetTunnelStream(
     @Volatile private var stream: BidirectionalStream? = null
     @Volatile override var isOpen: Boolean = false
         private set
+    override val transportLabel: String = "Cronet/Chrome"
     @Volatile private var engine: CronetEngine? = null
     @Volatile private var authenticated = false
     @Volatile private var readBuffer = ByteArray(0)

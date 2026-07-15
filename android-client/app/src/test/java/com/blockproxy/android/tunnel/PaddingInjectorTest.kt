@@ -15,6 +15,7 @@ class PaddingInjectorTest {
         @Volatile override var isOpen: Boolean = true,
         private val failSend: Boolean = false,
     ) : FrameSender {
+        override val transportLabel: String = "test"
         val writtenBytes = CopyOnWriteArrayList<ByteArray>()
         private val closed = AtomicBoolean(false)
 

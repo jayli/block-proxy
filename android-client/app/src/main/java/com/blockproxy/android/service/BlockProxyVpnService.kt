@@ -392,6 +392,7 @@ class BlockProxyVpnService : VpnService() {
             cfIpDns = cfIpDns,
             cfIpSelector = cfIpSelector,
             onCfIpChanged = statusStore::updateCfIp,
+            onTransportChanged = statusStore::updateTransportLabel,
         )
         tunnelClient = client
 

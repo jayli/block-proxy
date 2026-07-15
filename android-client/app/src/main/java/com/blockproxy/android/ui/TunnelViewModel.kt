@@ -91,6 +91,7 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
     // Tunnel status from the service
     val tunnelStatus: StateFlow<TunnelStatus> = BlockProxyVpnService.statusStore.status
     val currentCfIp: StateFlow<String?> = BlockProxyVpnService.statusStore.currentCfIp
+    val transportLabel: StateFlow<String?> = BlockProxyVpnService.statusStore.transportLabel
 
     // Battery exemption state
     private val _batteryExemptionState = MutableStateFlow(BatteryExemptionState())

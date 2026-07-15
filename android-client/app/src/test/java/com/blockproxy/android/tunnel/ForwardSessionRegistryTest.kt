@@ -23,6 +23,7 @@ class ForwardSessionRegistryTest {
     class FakeFrameSender : FrameSender {
         val writtenBytes = CopyOnWriteArrayList<ByteArray>()
         @Volatile override var isOpen: Boolean = true
+        override val transportLabel: String = "test"
         private val closed = AtomicBoolean(false)
 
         override suspend fun sendFrame(encoded: ByteArray): Boolean {

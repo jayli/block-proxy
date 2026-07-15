@@ -36,4 +36,33 @@ class StatusStoreTest {
 
         assertNull(store.currentCfIp.value)
     }
+
+    @Test
+    fun `transport label defaults to null`() {
+        val store = StatusStore()
+
+        assertNull(store.transportLabel.value)
+    }
+
+    @Test
+    fun `updateTransportLabel emits value`() = runTest {
+        val store = StatusStore()
+
+        store.transportLabel.test {
+            assertNull(awaitItem())
+            store.updateTransportLabel("OkHttp")
+            assertEquals("OkHttp", awaitItem())
+            cancelAndConsumeRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `disconnected status clears transport label`() {
+        val store = StatusStore()
+
+        store.updateTransportLabel("Cronet/Chrome")
+        store.update(TunnelStatus.Disconnected)
+
+        assertNull(store.transportLabel.value)
+    }
 }

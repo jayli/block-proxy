@@ -22,14 +22,27 @@ class StatusStore(initial: TunnelStatus = TunnelStatus.Disconnected) {
     /** Current CF CDN peer IP, or null when CF mode is inactive or disconnected. */
     val currentCfIp: StateFlow<String?> = _currentCfIp.asStateFlow()
 
+    private val _transportLabel = MutableStateFlow<String?>(null)
+
+    /** Current connected tunnel transport label, or null when disconnected/connecting. */
+    val transportLabel: StateFlow<String?> = _transportLabel.asStateFlow()
+
     /** Replace the current status. Triggers a StateFlow emission when the value changes. */
     fun update(newStatus: TunnelStatus) {
         _status.value = newStatus
+        if (newStatus != TunnelStatus.Connected) {
+            _transportLabel.value = null
+        }
     }
 
     /** Update the current CF CDN peer IP displayed by the UI. */
     fun updateCfIp(ip: String?) {
         _currentCfIp.value = ip
+    }
+
+    /** Update the connected tunnel transport label displayed by the UI. */
+    fun updateTransportLabel(label: String?) {
+        _transportLabel.value = label
     }
 
     /** Convenience: returns the current value without subscribing. */

@@ -36,6 +36,7 @@ class TunnelClient(
     private val cfIpDns: CfIpDns? = null,
     private val cfIpSelector: CfIpSelector? = null,
     private val onCfIpChanged: (String?) -> Unit = {},
+    private val onTransportChanged: (String?) -> Unit = {},
 ) {
     companion object {
         const val INITIAL_BACKOFF_MS = 1_000L
@@ -104,6 +105,7 @@ class TunnelClient(
         activeStream = null
         candidateStream = null
         drainingStream = null
+        onTransportChanged(null)
 
         // Close any remaining channels/jobs (safety net)
         for ((_, ch) in frameChannels) {
@@ -197,6 +199,7 @@ class TunnelClient(
         }
 
         connected = true
+        onTransportChanged(sender.transportLabel)
         _status.value = TunnelStatus.Connected
 
         // Start frame handling for this sender
@@ -248,9 +251,10 @@ class TunnelClient(
         // Pre-create frame channel — registered in onAuthSuccess before any post-auth frame arrives.
         val frameChannel = Channel<ByteArray>(Channel.UNLIMITED)
 
+        val tunnelUrl = TunnelEndpoint.h2Url(addr, port, TunnelEndpoint.DEFAULT_H2_PATH)
         val tunnelStream = CronetTunnelStream(
             context = context,
-            url = TunnelEndpoint.h2Url(addr, port, TunnelEndpoint.DEFAULT_H2_PATH),
+            url = tunnelUrl,
             allowInsecure = config.allowInsecure,
             authPayload = authPayload,
             customHeaders = config.customHeaders,
@@ -271,6 +275,29 @@ class TunnelClient(
         return try {
             tunnelStream.connect()
         } catch (e: Exception) {
+            if (InsecureH2Fallback.shouldFallback(config.allowInsecure, e)) {
+                Log.w(TAG, "Cronet certificate validation failed; retrying with insecure OkHttp HTTP/2 transport")
+                val fallbackStream = OkHttpH2TunnelStream(
+                    url = tunnelUrl,
+                    authPayload = authPayload,
+                    customHeaders = config.customHeaders,
+                    allowInsecure = true,
+                    protect = protect,
+                    onAuthSuccess = { sender ->
+                        frameChannels[sender] = frameChannel
+                        cfIpSelector?.markConnected()
+                        onCfIpChanged(null)
+                    },
+                    onFrame = { sender, frameBytes ->
+                        frameChannels[sender]?.trySend(frameBytes)
+                    },
+                    onDisconnect = { sender, error ->
+                        frameChannels[sender]?.close()
+                        handleCfDisconnect(sender)
+                    },
+                )
+                return fallbackStream.connect()
+            }
             frameChannel.close()
             cfIpSelector?.markCandidateFailed()
             throw e

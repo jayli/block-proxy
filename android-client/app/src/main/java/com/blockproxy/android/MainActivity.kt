@@ -100,6 +100,7 @@ class MainActivity : ComponentActivity() {
                 val batteryState by viewModel.batteryExemptionState.collectAsState()
                 val cfIpRefreshState by viewModel.cfIpRefreshState.collectAsState()
                 val currentCfIp by viewModel.currentCfIp.collectAsState()
+                val transportLabel by viewModel.transportLabel.collectAsState()
                 val routingState by routingViewModel.uiState.collectAsState()
                 val connectionTestState by viewModel.connectionTestState.collectAsState()
 
@@ -198,6 +199,7 @@ class MainActivity : ComponentActivity() {
                             port = config.port,
                             cfCdnEnabled = config.cfCdnEnabled,
                             currentCfIp = currentCfIp,
+                            transportLabel = transportLabel,
                             isSlideActive = sliderRender.isActive,
                             sliderTrackTone = sliderRender.trackTone,
                             onSlideActiveChange = { active ->

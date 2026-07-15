@@ -56,6 +56,7 @@ fun MainScreen(
     port: String = "",
     cfCdnEnabled: Boolean = false,
     currentCfIp: String? = null,
+    transportLabel: String? = null,
     isSlideActive: Boolean = false,
     sliderTrackTone: SliderTrackTone = SliderTrackTone.Neutral,
     onSlideActiveChange: (Boolean) -> Unit = {},
@@ -100,6 +101,7 @@ fun MainScreen(
                     port = port,
                     cfCdnEnabled = cfCdnEnabled,
                     currentCfIp = currentCfIp,
+                    transportLabel = transportLabel,
                 )
 
                 // Network info card
@@ -137,6 +139,7 @@ private fun StatusCard(
     port: String = "",
     cfCdnEnabled: Boolean = false,
     currentCfIp: String? = null,
+    transportLabel: String? = null,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -153,8 +156,13 @@ private fun StatusCard(
             StatusIndicator(status = status)
             Spacer(modifier = Modifier.width(12.dp))
             Column {
+                val statusTitle = if (status == TunnelStatus.Connected && !transportLabel.isNullOrBlank()) {
+                    "状态 · $transportLabel"
+                } else {
+                    "状态"
+                }
                 Text(
-                    text = "状态",
+                    text = statusTitle,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

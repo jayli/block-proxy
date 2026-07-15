@@ -28,6 +28,8 @@ interface FrameSender {
     fun close(code: Int, reason: String)
     /** 当前连接是否可发送 */
     val isOpen: Boolean
+    /** Transport implementation used by this connection. */
+    val transportLabel: String
 }
 
 /** Thrown when the server responds with AUTH_FAIL. */
@@ -70,6 +72,7 @@ class TunnelWebSocket(
     @Volatile private var webSocket: WebSocket? = null
     @Volatile override var isOpen: Boolean = false
         private set
+    override val transportLabel: String = "OkHttp"
 
     /** 是否为 authenticated 状态（认证已通过） */
     @Volatile private var authenticated: Boolean = false
