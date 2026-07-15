@@ -1,6 +1,7 @@
 package com.blockproxy.android.config
 
 import app.cash.turbine.test
+import com.blockproxy.android.tunnel.TunnelTransportMode
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
@@ -9,6 +10,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -16,7 +18,8 @@ import org.junit.Test
  * Avoids Android framework dependencies (DataStore requires Context).
  */
 private class FakeConfigDataSource : ConfigDataSource {
-    private var current: ServerConfig? = null
+    var current: ServerConfig? = null
+        private set
     private val listeners = mutableListOf<(ServerConfig?) -> Unit>()
 
     override fun observe(): kotlinx.coroutines.flow.Flow<ServerConfig?> = callbackFlow {
@@ -101,6 +104,64 @@ class ConfigRepositoryTest {
             assertEquals(false, awaitItem()?.cfCdnEnabled)
             cancelAndConsumeRemainingEvents()
         }
+    }
+
+    @Test
+    fun `transport mode defaults to chrome utls`() = scope.runTest {
+        repository.save(ServerConfig(serverHost = "example.com"))
+
+        repository.observe().test {
+            assertEquals(TunnelTransportMode.CHROME_UTLS, awaitItem()?.transportMode)
+            cancelAndConsumeRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `legacy okHttp transport preference is read as chrome utls`() {
+        assertEquals(
+            TunnelTransportMode.CHROME_UTLS,
+            DataStoreConfigDataSource.parseTransportMode(TunnelTransportMode.OKHTTP.name),
+        )
+    }
+
+    @Test
+    fun `utls chrome profile defaults to stable profile`() = scope.runTest {
+        repository.save(ServerConfig(serverHost = "example.com"))
+
+        repository.observe().test {
+            assertEquals("chrome_auto_stable", awaitItem()?.utlsChromeProfile)
+            cancelAndConsumeRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `save rejects chrome utls when tls disabled`() = scope.runTest {
+        try {
+            repository.save(
+                ServerConfig(
+                    serverHost = "example.com",
+                    useTls = false,
+                    transportMode = TunnelTransportMode.CHROME_UTLS,
+                )
+            )
+            throw AssertionError("Expected IllegalArgumentException")
+        } catch (error: IllegalArgumentException) {
+            assertTrue(error.message!!.contains("requires TLS"))
+        }
+    }
+
+    @Test
+    fun `save persists chrome utls transport fields`() = scope.runTest {
+        repository.save(
+            ServerConfig(
+                serverHost = "example.com",
+                transportMode = TunnelTransportMode.CHROME_UTLS,
+                utlsChromeProfile = "chrome_120",
+            )
+        )
+
+        assertEquals(TunnelTransportMode.CHROME_UTLS, fakeDataSource.current?.transportMode)
+        assertEquals("chrome_120", fakeDataSource.current?.utlsChromeProfile)
     }
 
     @Test

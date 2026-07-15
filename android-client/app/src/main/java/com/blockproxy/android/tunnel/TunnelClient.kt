@@ -40,6 +40,7 @@ class TunnelClient(
     private val cfIpDns: CfIpDns? = null,
     private val cfIpSelector: CfIpSelector? = null,
     private val onCfIpChanged: (String?) -> Unit = {},
+    private val nativeClient: UtlsWsNativeClient = GomobileUtlsWsNativeClient(),
 ) {
     companion object {
         const val INITIAL_BACKOFF_MS = 1_000L
@@ -248,10 +249,6 @@ class TunnelClient(
             performHttpDisguise(addr, port, wsClient)
         }
 
-        // WebSocket URL
-        val wsPath = config.wsPath.let { if (it.startsWith("/")) it else "/$it" }
-        val wsUrl = "wss://$addr:$port$wsPath"
-
         // Encode AUTH payload
         val authCapabilities = if (config.paddingEnabled) listOf(FrameCodec.CAP_PADDING) else emptyList()
         val authPayload = FrameCodec.encode(
@@ -263,26 +260,31 @@ class TunnelClient(
         // post-auth onFrame fires, the channel is already registered.
         val frameChannel = Channel<ByteArray>(Channel.UNLIMITED)
 
-        val tunnelWs = TunnelWebSocket(
-            url = wsUrl,
-            authPayload = authPayload,
-            customHeaders = config.customHeaders,
-            onAuthSuccess = { sender ->
-                frameChannels[sender] = frameChannel
-                cfIpSelector?.markConnected()
-                onCfIpChanged(cfIpDns?.getCurrentIp())
-            },
-            onFrame = { sender, frameBytes ->
-                frameChannels[sender]?.trySend(frameBytes)
-            },
-            onDisconnect = { sender, error ->
-                frameChannels[sender]?.close()
-                handleCfDisconnect(sender)
-            },
+        val transportFactory = TunnelTransportFactory(
+            config = config,
+            okHttpClient = okHttpClient,
+            cfIpDns = cfIpDns,
+            cfIpSelector = cfIpSelector,
+            nativeClient = nativeClient,
         )
 
         return try {
-            tunnelWs.connect(wsClient)
+            transportFactory.connect(
+                authPayload = authPayload,
+                customHeaders = config.customHeaders,
+                onAuthSuccess = { sender ->
+                frameChannels[sender] = frameChannel
+                cfIpSelector?.markConnected()
+                onCfIpChanged(cfIpSelector?.currentIp() ?: cfIpDns?.getCurrentIp())
+                },
+                onFrame = { sender, frameBytes ->
+                frameChannels[sender]?.trySend(frameBytes)
+                },
+                onDisconnect = { sender, error ->
+                frameChannels[sender]?.close()
+                handleCfDisconnect(sender)
+                },
+            )
         } catch (e: Exception) {
             frameChannel.close()
             cfIpSelector?.markCandidateFailed()

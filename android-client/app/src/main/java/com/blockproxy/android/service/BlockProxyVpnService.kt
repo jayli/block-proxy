@@ -349,8 +349,8 @@ class BlockProxyVpnService : VpnService() {
         }
 
         // Establish VPN interface with routes and DNS
-        val pfd = establishVpnInterface()
-        if (pfd == null) {
+        val vpnResult = establishVpnInterface()
+        if (vpnResult == null) {
             // User denied VPN permission or establish() failed
             releaseWakeLock()
             statusStore.update(TunnelStatus.Error)
@@ -358,11 +358,20 @@ class BlockProxyVpnService : VpnService() {
             stopSelf()
             return
         }
+        val pfd = vpnResult.descriptor
         vpnInterface = pfd
+
+        val effectiveMode = effectiveTransportMode(config.transportMode, vpnResult.appExclusionSucceeded)
+        val effectiveConfig = if (effectiveMode != config.transportMode) {
+            Log.w(TAG, "Chrome uTLS transport requires app VPN exclusion; falling back to OkHttp")
+            config.copy(transportMode = effectiveMode)
+        } else {
+            config
+        }
 
         val targetSocketFactory = RealTargetSocketFactory(protect = protectCallback)
 
-        cfIpPool = if (config.cfCdnEnabled) CfIpPool(applicationContext) else null
+        cfIpPool = if (effectiveConfig.cfCdnEnabled) CfIpPool(applicationContext) else null
         cfIpSelector = cfIpPool?.let { pool ->
             val snapshot = pool.loadSnapshot()
             CfIpSelector(snapshot) { cursor ->
@@ -370,11 +379,11 @@ class BlockProxyVpnService : VpnService() {
             }
         }
         val cfIpDns = cfIpSelector?.let { selector ->
-            CfIpDns(config.serverHost, selector)
+            CfIpDns(effectiveConfig.serverHost, selector)
         }
         if (cfIpPool != null && cfIpSelector != null) {
             CfIpRuntimeRegistry.attach(cfIpPool!!, cfIpSelector!!, protectCallback)
-            CfIpRefreshWorker.schedule(applicationContext, config.serverPort)
+            CfIpRefreshWorker.schedule(applicationContext, effectiveConfig.serverPort)
         } else {
             CfIpRefreshWorker.cancelSchedule(applicationContext)
             statusStore.updateCfIp(null)
@@ -383,7 +392,7 @@ class BlockProxyVpnService : VpnService() {
         // Create TunnelClient (needed by TunnelForwardConnector for LocalSocksServer)
         val scope = serviceScope ?: return
         val client = TunnelClient(
-            config = config,
+            config = effectiveConfig,
             credentials = credentials,
             targetSocketFactory = targetSocketFactory,
             clientScope = scope,
@@ -455,7 +464,12 @@ class BlockProxyVpnService : VpnService() {
      *
      * Returns null if the user denied VPN permission or establish() failed.
      */
-    private fun establishVpnInterface(): ParcelFileDescriptor? {
+    private data class VpnInterfaceResult(
+        val descriptor: ParcelFileDescriptor,
+        val appExclusionSucceeded: Boolean,
+    )
+
+    private fun establishVpnInterface(): VpnInterfaceResult? {
         return try {
             val builder = Builder()
                 .addAddress("10.255.0.2", 32)
@@ -476,13 +490,17 @@ class BlockProxyVpnService : VpnService() {
             // Exclude our app from VPN to prevent routing loops.
             // This ensures tunnel TLS connections and SOCKS server connections
             // bypass the TUN interface at the kernel level.
-            try {
+            val appExclusionSucceeded = try {
                 builder.addDisallowedApplication(packageName)
+                true
             } catch (e: Exception) {
                 Log.e(TAG, "addDisallowedApplication failed; relying on per-socket protect()", e)
+                false
             }
 
-            builder.establish()
+            builder.establish()?.let { descriptor ->
+                VpnInterfaceResult(descriptor, appExclusionSucceeded)
+            }
         } catch (_: Exception) {
             null
         }

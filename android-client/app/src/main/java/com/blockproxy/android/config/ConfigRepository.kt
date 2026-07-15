@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.blockproxy.android.cdn.CfCdnConfig
+import com.blockproxy.android.tunnel.TunnelTransportMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -45,6 +46,9 @@ class ConfigRepository(private val source: ConfigDataSource) {
             require(config.serverPort in CfCdnConfig.HTTPS_PORTS) {
                 "Cloudflare CDN mode requires a Cloudflare HTTPS proxy port"
             }
+        }
+        if (config.transportMode == TunnelTransportMode.CHROME_UTLS) {
+            require(config.useTls) { "Chrome uTLS transport requires TLS" }
         }
         source.save(config)
     }
@@ -84,6 +88,8 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             wsPath = prefs[KEY_WS_PATH] ?: "/websocket",
             httpDisguise = prefs[KEY_HTTP_DISGUISE] ?: true,
             cfCdnEnabled = prefs[KEY_CF_CDN_ENABLED] ?: false,
+            transportMode = parseTransportMode(prefs[KEY_TRANSPORT_MODE]),
+            utlsChromeProfile = prefs[KEY_UTLS_CHROME_PROFILE] ?: "chrome_auto_stable",
         )
     }
 
@@ -96,6 +102,8 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             prefs[KEY_WS_PATH] = config.wsPath
             prefs[KEY_HTTP_DISGUISE] = config.httpDisguise
             prefs[KEY_CF_CDN_ENABLED] = config.cfCdnEnabled
+            prefs[KEY_TRANSPORT_MODE] = config.transportMode.name
+            prefs[KEY_UTLS_CHROME_PROFILE] = config.utlsChromeProfile
         }
     }
 
@@ -103,7 +111,7 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
         store.edit { it.clear() }
     }
 
-    private companion object {
+    internal companion object {
         val KEY_HOST = stringPreferencesKey("server_host")
         val KEY_PORT = intPreferencesKey("server_port")
         val KEY_USE_TLS = booleanPreferencesKey("use_tls")
@@ -111,5 +119,11 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
         val KEY_WS_PATH = stringPreferencesKey("ws_path")
         val KEY_HTTP_DISGUISE = booleanPreferencesKey("http_disguise")
         val KEY_CF_CDN_ENABLED = booleanPreferencesKey("cf_cdn_enabled")
+        val KEY_TRANSPORT_MODE = stringPreferencesKey("transport_mode")
+        val KEY_UTLS_CHROME_PROFILE = stringPreferencesKey("utls_chrome_profile")
+
+        fun parseTransportMode(value: String?): TunnelTransportMode {
+            return TunnelTransportMode.CHROME_UTLS
+        }
     }
 }

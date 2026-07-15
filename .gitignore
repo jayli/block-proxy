@@ -43,5 +43,11 @@ yarn-error.log*
 # python
 .venv
 
+# local Go/native build caches
+.go-cache/
+.go-mod-cache/
+android-client/app/libs/utlsws.aar
+android-client/app/libs/utlsws-sources.jar
+
 # worktrees
 .worktrees/

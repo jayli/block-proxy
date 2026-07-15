@@ -421,6 +421,7 @@ class ForwardSessionRegistryTest {
         )
         val registry = ForwardSessionRegistry(this, paddingInjector = paddingInjector)
         val sender = FakeFrameSender()
+        paddingInjector.setNegotiated(sender, true)
 
         val deferred = openAsync(registry, "example.com", 80, sender); runCurrent()
         registry.handleFrame(Frame.ConnectOk(0x8000)); runCurrent()

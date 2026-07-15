@@ -250,6 +250,7 @@ class ReverseConnectHandlerTest {
         val targetSocket = FakeTargetSocket()
         factory.nextSocket = targetSocket
         val sender = FakeFrameSender()
+        paddingInjector.setNegotiated(sender, true)
 
         handler.handleFrame(sender, Frame.Connect(1, FrameAddress.IPv4("1.2.3.4"), 80))
         runCurrent()
