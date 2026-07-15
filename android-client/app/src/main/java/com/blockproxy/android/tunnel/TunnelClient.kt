@@ -248,7 +248,7 @@ class TunnelClient(
         // Pre-create frame channel — registered in onAuthSuccess before any post-auth frame arrives.
         val frameChannel = Channel<ByteArray>(Channel.UNLIMITED)
 
-        val tunnelUrl = TunnelEndpoint.h2Url(addr, port, TunnelEndpoint.DEFAULT_H2_PATH)
+        val tunnelUrl = TunnelEndpoint.grpcUrl(addr, port, TunnelEndpoint.DEFAULT_GRPC_PATH)
         val tunnelStream = CronetTunnelStream(
             context = context,
             url = tunnelUrl,

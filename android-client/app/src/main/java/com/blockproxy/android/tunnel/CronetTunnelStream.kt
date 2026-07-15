@@ -41,7 +41,7 @@ class CronetTunnelStream(
     override val transportLabel: String = "Cronet/Chrome"
     @Volatile private var engine: CronetEngine? = null
     @Volatile private var authenticated = false
-    @Volatile private var readBuffer = ByteArray(0)
+    private val grpcDecoder = GrpcFraming.Decoder()
     @Volatile private var pendingWrite: CompletableDeferred<Boolean>? = null
 
     suspend fun connect(): FrameSender {
@@ -49,7 +49,8 @@ class CronetTunnelStream(
         engine = buildEngine(context)
         val bidirectionalBuilder = engine!!.newBidirectionalStreamBuilder(url, callback(deferred), executor)
             .setHttpMethod("POST")
-            .addHeader("content-type", "application/octet-stream")
+            .addHeader("content-type", "application/grpc")
+            .addHeader("te", "trailers")
             .addHeader("cache-control", "no-store")
             .delayRequestHeadersUntilFirstFlush(false)
 
@@ -67,7 +68,7 @@ class CronetTunnelStream(
             val writeDone = CompletableDeferred<Boolean>()
             pendingWrite = writeDone
             try {
-                current.write(directBuffer(encoded), false)
+                current.write(directBuffer(GrpcFraming.encode(encoded)), false)
                 current.flush()
             } catch (t: Throwable) {
                 pendingWrite = null
@@ -159,7 +160,7 @@ class CronetTunnelStream(
 
     private fun writeAuth(stream: BidirectionalStream, deferred: CompletableDeferred<FrameSender>) {
         try {
-            stream.write(directBuffer(authPayload), false)
+            stream.write(directBuffer(GrpcFraming.encode(authPayload)), false)
             stream.flush()
         } catch (t: Throwable) {
             if (!deferred.isCompleted) deferred.completeExceptionally(t)
@@ -168,13 +169,12 @@ class CronetTunnelStream(
     }
 
     private fun handleIncoming(chunk: ByteArray, deferred: CompletableDeferred<FrameSender>) {
-        readBuffer += chunk
-        while (readBuffer.size >= 2) {
-            val length = ((readBuffer[0].toInt() and 0xff) shl 8) or (readBuffer[1].toInt() and 0xff)
-            if (readBuffer.size < 2 + length) return
-            val frameBytes = readBuffer.copyOfRange(0, 2 + length)
-            readBuffer = readBuffer.copyOfRange(2 + length, readBuffer.size)
-            handleFrame(frameBytes, deferred)
+        try {
+            for (frameBytes in grpcDecoder.feed(chunk)) {
+                handleFrame(frameBytes, deferred)
+            }
+        } catch (t: Throwable) {
+            failAuth(deferred, TunnelProtocolException(t.message ?: "Bad gRPC frame"))
         }
     }
 
@@ -199,7 +199,7 @@ class CronetTunnelStream(
             }
             is Frame.Ping -> {
                 val pong = FrameCodec.encode(Frame.Pong(frame.payload))
-                stream?.write(directBuffer(pong), false)
+                stream?.write(directBuffer(GrpcFraming.encode(pong)), false)
                 stream?.flush()
             }
             is Frame.Padding -> Unit

@@ -16,6 +16,7 @@ function nextPort() { return portCounter++; }
 
 const cert = fs.readFileSync(path.join(__dirname, '../../cert/rootCA.crt'));
 const key = fs.readFileSync(path.join(__dirname, '../../cert/rootCA.key'));
+const GRPC_TUNNEL_PATH = '/blockproxy.tunnel.TunnelService/Connect';
 
 function getHttps(port, requestPath) {
   return new Promise((resolve, reject) => {
@@ -89,6 +90,69 @@ function connectClient(port) {
   });
 }
 
+function connectGrpcClient(port) {
+  return new Promise((resolve, reject) => {
+    const client = http2.connect(`https://localhost:${port}`, {
+      rejectUnauthorized: false,
+    });
+    const stream = client.request({
+      ':method': 'POST',
+      ':path': GRPC_TUNNEL_PATH,
+      'content-type': 'application/grpc',
+      'te': 'trailers',
+      'cache-control': 'no-store',
+    }, { endStream: false });
+    const grpc = new GrpcTestClient(client, stream);
+
+    stream.on('response', (headers) => {
+      if (headers[':status'] !== 200) {
+        reject(new Error(`gRPC tunnel status ${headers[':status']}`));
+        return;
+      }
+      assert.match(headers['content-type'], /^application\/grpc/);
+      resolve(grpc);
+    });
+    stream.on('error', reject);
+    client.on('error', reject);
+    setTimeout(() => reject(new Error('gRPC connect timeout')), 1000);
+  });
+}
+
+function encodeGrpcTunnelMessage(frameBytes) {
+  const message = Buffer.concat([encodeVarintField(1, frameBytes.length), frameBytes]);
+  const header = Buffer.alloc(5);
+  header[0] = 0;
+  header.writeUInt32BE(message.length, 1);
+  return Buffer.concat([header, message]);
+}
+
+function encodeVarintField(fieldNumber, value) {
+  const parts = [Buffer.from([(fieldNumber << 3) | 2])];
+  let remaining = value;
+  while (remaining >= 0x80) {
+    parts.push(Buffer.from([(remaining & 0x7f) | 0x80]));
+    remaining >>>= 7;
+  }
+  parts.push(Buffer.from([remaining]));
+  return Buffer.concat(parts);
+}
+
+function decodeGrpcTunnelMessage(message) {
+  if (message.length < 2 || message[0] !== 0x0a) {
+    throw new Error('Unexpected TunnelFrame protobuf payload');
+  }
+  let offset = 1;
+  let length = 0;
+  let shift = 0;
+  while (offset < message.length) {
+    const b = message[offset++];
+    length |= (b & 0x7f) << shift;
+    if ((b & 0x80) === 0) break;
+    shift += 7;
+  }
+  return message.slice(offset, offset + length);
+}
+
 class H2TestClient extends EventEmitter {
   constructor(client, stream) {
     super();
@@ -124,6 +188,46 @@ class H2TestClient extends EventEmitter {
       const frameBytes = this._buffer.slice(0, 2 + len);
       this._buffer = this._buffer.slice(2 + len);
       this.emit('message', frameBytes);
+    }
+  }
+}
+
+class GrpcTestClient extends EventEmitter {
+  constructor(client, stream) {
+    super();
+    this.client = client;
+    this.stream = stream;
+    this.readyState = H2_OPEN;
+    this._buffer = Buffer.alloc(0);
+
+    stream.on('data', (chunk) => this._onData(Buffer.from(chunk)));
+    stream.on('close', () => {
+      this.readyState = H2_CLOSED;
+      this.emit('close');
+    });
+    stream.on('error', (err) => this.emit('error', err));
+  }
+
+  send(data) {
+    this.stream.write(encodeGrpcTunnelMessage(data));
+  }
+
+  close() {
+    if (this.readyState === H2_CLOSED) return;
+    this.readyState = H2_CLOSED;
+    try { this.stream.close(); } catch (_) {}
+    try { this.client.close(); } catch (_) {}
+  }
+
+  _onData(chunk) {
+    this._buffer = Buffer.concat([this._buffer, chunk]);
+    while (this._buffer.length >= 5) {
+      if (this._buffer[0] !== 0) throw new Error('Compressed gRPC messages are not supported');
+      const len = this._buffer.readUInt32BE(1);
+      if (this._buffer.length < 5 + len) return;
+      const message = this._buffer.slice(5, 5 + len);
+      this._buffer = this._buffer.slice(5 + len);
+      this.emit('message', decodeGrpcTunnelMessage(message));
     }
   }
 }
@@ -606,6 +710,29 @@ describe('TunnelServer HTTP/2 stream', () => {
     await expectPortReusable(port);
   });
 
+});
+
+describe('TunnelServer gRPC stream', () => {
+  let server;
+
+  afterEach(async () => {
+    if (server) { await server.stop(); server = null; }
+  });
+
+  it('authenticates client and sends AUTH_OK over standard gRPC stream', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' }
+    });
+    await server.start();
+
+    const ws = await connectGrpcClient(port);
+    const response = await authenticate(ws);
+    assert.equal(response.type, FRAME_TYPES.AUTH_OK);
+    closeWs(ws);
+  });
 });
 
 describe('TunnelServer HTTP/2 tunnel', () => {

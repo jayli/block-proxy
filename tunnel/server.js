@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const { FRAME_TYPES, MAX_FRAME_PAYLOAD, CAP_PADDING, encodeFrame, decodeFrame } = require('./protocol');
 
 const DEFAULT_H2_PATH = '/h2-tunnel';
+const DEFAULT_GRPC_PATH = '/blockproxy.tunnel.TunnelService/Connect';
 const DEFAULT_HEARTBEAT_MIN = 15;
 const DEFAULT_HEARTBEAT_MAX = 40;
 const DEFAULT_HEARTBEAT_TIMEOUT = 60;
@@ -16,6 +17,7 @@ class TunnelServer {
     this.key = options.key;
     this.credentials = options.credentials;
     this.h2Path = options.h2Path || options.tunnel_h2_path || DEFAULT_H2_PATH;
+    this.grpcPath = options.grpcPath || options.tunnel_grpc_path || DEFAULT_GRPC_PATH;
     this.heartbeatMin = options.heartbeatMin || options.tunnel_heartbeat_min || DEFAULT_HEARTBEAT_MIN;
     this.heartbeatMax = options.heartbeatMax || options.tunnel_heartbeat_max || DEFAULT_HEARTBEAT_MAX;
     this.heartbeatTimeout = options.heartbeatTimeout || options.tunnel_heartbeat_timeout || DEFAULT_HEARTBEAT_TIMEOUT;
@@ -100,6 +102,12 @@ class TunnelServer {
   _handleH2Stream(stream, headers) {
     const method = headers[':method'];
     const path = headers[':path'];
+    const contentType = String(headers['content-type'] || '');
+    if (method === 'POST' && path === this.grpcPath && contentType.startsWith('application/grpc')) {
+      this._handleGrpcStream(stream);
+      return;
+    }
+
     if (method !== 'POST' || path !== this.h2Path) {
       stream.respond({
         ':status': 404,
@@ -117,6 +125,18 @@ class TunnelServer {
 
     const socket = stream.session && stream.session.socket;
     const ws = new H2TunnelConnection(stream);
+    this._registerTunnelConnection(ws, socket);
+  }
+
+  _handleGrpcStream(stream) {
+    stream.respond({
+      ':status': 200,
+      'content-type': 'application/grpc',
+      'cache-control': 'no-store',
+    });
+
+    const socket = stream.session && stream.session.socket;
+    const ws = new GrpcTunnelConnection(stream);
     this._registerTunnelConnection(ws, socket);
   }
 
@@ -529,6 +549,150 @@ class H2TunnelConnection {
       this._frameHandlers.forEach(handler => handler(frameBytes));
     }
   }
+}
+
+class GrpcTunnelConnection {
+  constructor(stream) {
+    this.stream = stream;
+    this.closed = false;
+    this._buffer = Buffer.alloc(0);
+    this._frameHandlers = [];
+    this._closeHandlers = [];
+    this._errorHandlers = [];
+
+    stream.on('data', (chunk) => this._onData(Buffer.from(chunk)));
+    stream.on('close', () => {
+      this.closed = true;
+      this._closeHandlers.forEach(handler => handler());
+    });
+    stream.on('error', (err) => {
+      this._errorHandlers.forEach(handler => handler(err));
+    });
+  }
+
+  onFrame(handler) {
+    this._frameHandlers.push(handler);
+  }
+
+  onClose(handler) {
+    this._closeHandlers.push(handler);
+  }
+
+  onError(handler) {
+    this._errorHandlers.push(handler);
+  }
+
+  send(data, callback) {
+    if (this.closed || this.stream.destroyed) {
+      callback(new Error('stream closed'));
+      return;
+    }
+    this.stream.write(encodeGrpcTunnelMessage(data), callback);
+  }
+
+  close(reason) {
+    if (this.closed) return;
+    this.closed = true;
+    try {
+      this.stream.sendTrailers({ 'grpc-status': '0' });
+    } catch (_) {}
+    try {
+      this.stream.close(http2.constants.NGHTTP2_NO_ERROR);
+    } catch (_) {
+      try { this.stream.end(); } catch (_) {}
+    }
+  }
+
+  terminate() {
+    if (this.closed) return;
+    this.closed = true;
+    try { this.stream.destroy(); } catch (_) {}
+  }
+
+  _onData(chunk) {
+    this._buffer = Buffer.concat([this._buffer, chunk]);
+    while (this._buffer.length >= 5) {
+      if (this._buffer[0] !== 0) {
+        this.terminate();
+        return;
+      }
+      const messageLength = this._buffer.readUInt32BE(1);
+      if (messageLength > MAX_FRAME_PAYLOAD + 16) {
+        this.terminate();
+        return;
+      }
+      if (this._buffer.length < 5 + messageLength) return;
+      const message = this._buffer.slice(5, 5 + messageLength);
+      this._buffer = this._buffer.slice(5 + messageLength);
+
+      let frameBytes;
+      try {
+        frameBytes = decodeGrpcTunnelMessage(message);
+      } catch (_) {
+        this.terminate();
+        return;
+      }
+      this._frameHandlers.forEach(handler => handler(frameBytes));
+    }
+  }
+}
+
+function encodeGrpcTunnelMessage(frameBytes) {
+  const message = Buffer.concat([encodeBytesField(1, frameBytes), frameBytes]);
+  const header = Buffer.alloc(5);
+  header[0] = 0;
+  header.writeUInt32BE(message.length, 1);
+  return Buffer.concat([header, message]);
+}
+
+function encodeBytesField(fieldNumber, bytes) {
+  return Buffer.concat([
+    Buffer.from([(fieldNumber << 3) | 2]),
+    encodeVarint(bytes.length),
+  ]);
+}
+
+function encodeVarint(value) {
+  const parts = [];
+  let remaining = value >>> 0;
+  while (remaining >= 0x80) {
+    parts.push((remaining & 0x7f) | 0x80);
+    remaining >>>= 7;
+  }
+  parts.push(remaining);
+  return Buffer.from(parts);
+}
+
+function decodeGrpcTunnelMessage(message) {
+  let offset = 0;
+  while (offset < message.length) {
+    const tag = message[offset++];
+    const fieldNumber = tag >> 3;
+    const wireType = tag & 0x07;
+    if (wireType !== 2) throw new Error('Unsupported TunnelFrame field wire type');
+    const lengthResult = decodeVarint(message, offset);
+    offset = lengthResult.offset;
+    const end = offset + lengthResult.value;
+    if (end > message.length) throw new Error('TunnelFrame field exceeds message length');
+    if (fieldNumber === 1) {
+      return message.slice(offset, end);
+    }
+    offset = end;
+  }
+  throw new Error('TunnelFrame missing data field');
+}
+
+function decodeVarint(buffer, offset) {
+  let value = 0;
+  let shift = 0;
+  while (offset < buffer.length) {
+    const b = buffer[offset++];
+    value |= (b & 0x7f) << shift;
+    if ((b & 0x80) === 0) return { value, offset };
+    shift += 7;
+    if (shift > 28) throw new Error('Varint too long');
+  }
+  throw new Error('Incomplete varint');
 }
 
 class Http1TunnelConnection {
