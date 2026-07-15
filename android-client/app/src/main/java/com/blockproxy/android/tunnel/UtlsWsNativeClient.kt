@@ -6,7 +6,6 @@ data class UtlsWsOptions(
     val serverName: String,
     val hostHeader: String,
     val allowInsecure: Boolean,
-    val chromeProfile: String,
     val headers: List<Pair<String, String>>,
     val initialMessage: ByteArray,
     val connectTimeoutMillis: Int = 10_000,

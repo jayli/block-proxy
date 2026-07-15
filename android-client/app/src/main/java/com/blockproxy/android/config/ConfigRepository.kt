@@ -89,7 +89,6 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             httpDisguise = prefs[KEY_HTTP_DISGUISE] ?: true,
             cfCdnEnabled = prefs[KEY_CF_CDN_ENABLED] ?: false,
             transportMode = parseTransportMode(prefs[KEY_TRANSPORT_MODE]),
-            utlsChromeProfile = prefs[KEY_UTLS_CHROME_PROFILE] ?: "chrome_auto_stable",
         )
     }
 
@@ -103,7 +102,6 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             prefs[KEY_HTTP_DISGUISE] = config.httpDisguise
             prefs[KEY_CF_CDN_ENABLED] = config.cfCdnEnabled
             prefs[KEY_TRANSPORT_MODE] = config.transportMode.name
-            prefs[KEY_UTLS_CHROME_PROFILE] = config.utlsChromeProfile
         }
     }
 
@@ -120,7 +118,6 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
         val KEY_HTTP_DISGUISE = booleanPreferencesKey("http_disguise")
         val KEY_CF_CDN_ENABLED = booleanPreferencesKey("cf_cdn_enabled")
         val KEY_TRANSPORT_MODE = stringPreferencesKey("transport_mode")
-        val KEY_UTLS_CHROME_PROFILE = stringPreferencesKey("utls_chrome_profile")
 
         fun parseTransportMode(value: String?): TunnelTransportMode {
             return TunnelTransportMode.CHROME_UTLS

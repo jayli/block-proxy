@@ -10,7 +10,6 @@ class GomobileUtlsWsNativeClient : UtlsWsNativeClient {
         nativeOptions.setServerName(options.serverName)
         nativeOptions.setHostHeader(options.hostHeader)
         nativeOptions.setAllowInsecure(options.allowInsecure)
-        nativeOptions.setChromeProfile(options.chromeProfile)
         nativeOptions.setConnectTimeoutMillis(options.connectTimeoutMillis.toLong())
         nativeOptions.setReadBufferBytes(options.readBufferBytes.toLong())
         nativeOptions.setInitialBinaryMessage(options.initialMessage.copyOf())

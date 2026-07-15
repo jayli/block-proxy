@@ -140,7 +140,6 @@ class NativeUtlsWebSocketTest {
             serverName = "example.com",
             hostHeader = "example.com:8003",
             allowInsecure = true,
-            chromeProfile = "chrome_auto_stable",
             headers = emptyList(),
             initialMessage = authPayload,
         )

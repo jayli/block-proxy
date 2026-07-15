@@ -23,7 +23,6 @@ type Options struct {
 	serverName           string
 	hostHeader           string
 	allowInsecure        bool
-	chromeProfile        string
 	connectTimeoutMillis int
 	readBufferBytes      int
 	headers              [][2]string
@@ -34,7 +33,6 @@ func NewOptions() *Options {
 	return &Options{
 		connectTimeoutMillis: 10000,
 		readBufferBytes:      64 * 1024,
-		chromeProfile:        "chrome_auto_stable",
 	}
 }
 
@@ -43,7 +41,6 @@ func (o *Options) SetDialHost(value string)          { o.dialHost = value }
 func (o *Options) SetServerName(value string)        { o.serverName = value }
 func (o *Options) SetHostHeader(value string)        { o.hostHeader = value }
 func (o *Options) SetAllowInsecure(value bool)       { o.allowInsecure = value }
-func (o *Options) SetChromeProfile(value string)     { o.chromeProfile = value }
 func (o *Options) SetConnectTimeoutMillis(value int) { o.connectTimeoutMillis = value }
 func (o *Options) SetReadBufferBytes(value int)      { o.readBufferBytes = value }
 func (o *Options) AddHeader(name string, value string) {
@@ -119,12 +116,13 @@ func Connect(options *Options, listener Listener) (*Conn, error) {
 	if hostHeader == "" {
 		hostHeader = u.Host
 	}
+	origin := "https://" + hostHeader
 	key, err := newWebSocketKey()
 	if err != nil {
 		_ = tlsConn.Close()
 		return nil, err
 	}
-	if err := writeUpgradeRequest(tlsConn, requestPath(u), hostHeader, options.headers, key); err != nil {
+	if err := writeUpgradeRequest(tlsConn, requestPath(u), hostHeader, origin, options.headers, key); err != nil {
 		_ = tlsConn.Close()
 		return nil, err
 	}
@@ -223,7 +221,7 @@ func (c *Conn) writerLoop(ctx context.Context) {
 
 func (c *Conn) readLoop() {
 	for {
-		message, err := readClientBinaryMessage(c.netConn, maxTunnelMessageBytes)
+		message, err := readWebSocketMessage(c.netConn, maxTunnelMessageBytes, false, c.netConn)
 		if err != nil {
 			c.mu.Lock()
 			listener := c.listener

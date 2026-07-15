@@ -19,6 +19,172 @@ func TestAcceptKey(t *testing.T) {
 	}
 }
 
+func parseUpgradeHeaders(t *testing.T, raw string) (string, []string) {
+	t.Helper()
+	parts := strings.SplitN(raw, "\r\n\r\n", 2)
+	if len(parts) != 2 {
+		t.Fatal("missing header terminator")
+	}
+	lines := strings.Split(strings.TrimRight(parts[0], "\r\n"), "\r\n")
+	return lines[0], lines[1:]
+}
+
+func headerValue(lines []string, name string) string {
+	prefix := name + ": "
+	for _, l := range lines {
+		if strings.HasPrefix(l, prefix) {
+			return strings.TrimPrefix(l, prefix)
+		}
+	}
+	return ""
+}
+
+func headerIndex(lines []string, name string) int {
+	for i, l := range lines {
+		if strings.HasPrefix(l, name+":") {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestWriteUpgradeRequestChromeHeaders(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeUpgradeRequest(&out, "/ws", "example.com", "https://example.com", nil, "testkey123"); err != nil {
+		t.Fatal(err)
+	}
+
+	requestLine, lines := parseUpgradeHeaders(t, out.String())
+	if requestLine != "GET /ws HTTP/1.1" {
+		t.Fatalf("request line = %q", requestLine)
+	}
+
+	// All expected Chrome-like headers must be present.
+	expected := map[string]string{
+		"Host":                  "example.com",
+		"Connection":            "Upgrade",
+		"Pragma":                "no-cache",
+		"Cache-Control":         "no-cache",
+		"Upgrade":               "websocket",
+		"Origin":                "https://example.com",
+		"Sec-WebSocket-Version": "13",
+		"Accept-Language":       "en-US,en;q=0.9",
+		"Sec-WebSocket-Key":     "testkey123",
+	}
+	for name, want := range expected {
+		if got := headerValue(lines, name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+
+	// User-Agent must be the Chrome 120 Android UA.
+	ua := headerValue(lines, "User-Agent")
+	if !strings.Contains(ua, "Chrome/120.0") {
+		t.Errorf("User-Agent = %q, want Chrome/120", ua)
+	}
+	if !strings.Contains(ua, "Android") {
+		t.Errorf("User-Agent = %q, want Android", ua)
+	}
+
+	// Header order must match Chrome's real order.
+	ordered := []string{
+		"Host", "Connection", "Pragma", "Cache-Control",
+		"User-Agent", "Upgrade", "Origin", "Sec-WebSocket-Version",
+		"Accept-Language", "Sec-WebSocket-Key",
+	}
+	for i := 1; i < len(ordered); i++ {
+		prev := headerIndex(lines, ordered[i-1])
+		curr := headerIndex(lines, ordered[i])
+		if prev < 0 || curr < 0 {
+			t.Errorf("missing header: %s or %s", ordered[i-1], ordered[i])
+			continue
+		}
+		if prev >= curr {
+			t.Errorf("%s (index %d) must come before %s (index %d)",
+				ordered[i-1], prev, ordered[i], curr)
+		}
+	}
+}
+
+func TestWriteUpgradeRequestUserOverrides(t *testing.T) {
+	custom := [][2]string{
+		{"User-Agent", "CustomUA/1.0"},
+		{"Origin", "https://custom.example"},
+		{"Accept-Language", "zh-CN,zh;q=0.9"},
+		{"X-Custom-Header", "custom-value"},
+	}
+	var out bytes.Buffer
+	if err := writeUpgradeRequest(&out, "/", "h.com", "https://h.com", custom, "k"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, lines := parseUpgradeHeaders(t, out.String())
+
+	if got := headerValue(lines, "User-Agent"); got != "CustomUA/1.0" {
+		t.Errorf("User-Agent override = %q", got)
+	}
+	if got := headerValue(lines, "Origin"); got != "https://custom.example" {
+		t.Errorf("Origin override = %q", got)
+	}
+	if got := headerValue(lines, "Accept-Language"); got != "zh-CN,zh;q=0.9" {
+		t.Errorf("Accept-Language override = %q", got)
+	}
+	if got := headerValue(lines, "X-Custom-Header"); got != "custom-value" {
+		t.Errorf("X-Custom-Header = %q", got)
+	}
+
+	// Overridden headers must stay in their original Chrome position.
+	uaIdx := headerIndex(lines, "User-Agent")
+	originIdx := headerIndex(lines, "Origin")
+	if uaIdx >= originIdx {
+		t.Errorf("User-Agent (%d) must come before Origin (%d)", uaIdx, originIdx)
+	}
+}
+
+func TestWriteUpgradeRequestProtocolHeadersNotDuplicated(t *testing.T) {
+	// Even if the caller passes protocol headers, they must not be duplicated.
+	custom := [][2]string{
+		{"Host", "evil.com"},
+		{"Sec-WebSocket-Key", "evil-key"},
+		{"Upgrade", "h2c"},
+		{"Connection", "keep-alive"},
+	}
+	var out bytes.Buffer
+	if err := writeUpgradeRequest(&out, "/", "real.com", "https://real.com", custom, "realkey"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, lines := parseUpgradeHeaders(t, out.String())
+
+	// Protocol headers must use the correct values, not attacker-supplied ones.
+	if got := headerValue(lines, "Host"); got != "real.com" {
+		t.Errorf("Host = %q, want real.com", got)
+	}
+	if got := headerValue(lines, "Sec-WebSocket-Key"); got != "realkey" {
+		t.Errorf("Sec-WebSocket-Key = %q, want realkey", got)
+	}
+	if got := headerValue(lines, "Upgrade"); got != "websocket" {
+		t.Errorf("Upgrade = %q, want websocket", got)
+	}
+	if got := headerValue(lines, "Connection"); got != "Upgrade" {
+		t.Errorf("Connection = %q, want Upgrade", got)
+	}
+
+	// Each protocol header must appear exactly once.
+	protocolNames := []string{"Host", "Connection", "Upgrade", "Sec-WebSocket-Version", "Sec-WebSocket-Key"}
+	for _, name := range protocolNames {
+		count := 0
+		for _, l := range lines {
+			if strings.HasPrefix(l, name+":") {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("%s appears %d times, want 1", name, count)
+		}
+	}
+}
+
 func TestClientBinaryFrameIsMasked(t *testing.T) {
 	var out bytes.Buffer
 	payload := []byte("hello")

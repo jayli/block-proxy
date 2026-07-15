@@ -15,6 +15,9 @@ import (
 
 const websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
+// Chrome 120 Android User-Agent — matches the TLS fingerprint version.
+const chromeUserAgent = "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36"
+
 func websocketAcceptKey(key string) string {
 	sum := sha1.Sum([]byte(key + websocketGUID))
 	return base64.StdEncoding.EncodeToString(sum[:])
@@ -28,32 +31,100 @@ func newWebSocketKey() (string, error) {
 	return base64.StdEncoding.EncodeToString(nonce[:]), nil
 }
 
-func writeUpgradeRequest(w io.Writer, path string, hostHeader string, headers [][2]string, key string) error {
-	var b bytes.Buffer
+func writeUpgradeRequest(w io.Writer, path string, hostHeader string, origin string, headers [][2]string, key string) error {
 	if path == "" {
 		path = "/"
 	}
+
+	// Build a set of user-provided header names for override lookup.
+	// Names are stored in their original casing for comparison.
+	type headerEntry struct {
+		name  string
+		value string
+	}
+	var extra []headerEntry
+	// These are WebSocket protocol headers managed by this function;
+	// skip them if the caller accidentally includes them.
+	wsProtocolHeaders := map[string]bool{
+		"host":                 true,
+		"connection":           true,
+		"upgrade":              true,
+		"sec-websocket-version": true,
+		"sec-websocket-key":    true,
+	}
+	for _, h := range headers {
+		lower := strings.ToLower(h[0])
+		if wsProtocolHeaders[lower] {
+			continue
+		}
+		extra = append(extra, headerEntry{h[0], h[1]})
+	}
+
+	// lookup returns the user-provided value for a header name, or the
+	// fallback default. The entry is consumed so it won't appear twice.
+	lookup := func(name string, fallback string) string {
+		lower := strings.ToLower(name)
+		for i, e := range extra {
+			if strings.ToLower(e.name) == lower {
+				extra = append(extra[:i], extra[i+1:]...)
+				return e.value
+			}
+		}
+		return fallback
+	}
+
+	var b bytes.Buffer
 	b.WriteString("GET ")
 	b.WriteString(path)
 	b.WriteString(" HTTP/1.1\r\n")
+
+	// Chrome WebSocket Upgrade header order (Chrome 120 on Android).
 	b.WriteString("Host: ")
 	b.WriteString(hostHeader)
 	b.WriteString("\r\n")
-	for _, h := range headers {
-		if strings.EqualFold(h[0], "host") || strings.EqualFold(h[0], "sec-websocket-key") {
-			continue
-		}
-		b.WriteString(h[0])
-		b.WriteString(": ")
-		b.WriteString(h[1])
-		b.WriteString("\r\n")
-	}
-	b.WriteString("Upgrade: websocket\r\n")
+
 	b.WriteString("Connection: Upgrade\r\n")
+
+	b.WriteString("Pragma: ")
+	b.WriteString(lookup("Pragma", "no-cache"))
+	b.WriteString("\r\n")
+
+	b.WriteString("Cache-Control: ")
+	b.WriteString(lookup("Cache-Control", "no-cache"))
+	b.WriteString("\r\n")
+
+	b.WriteString("User-Agent: ")
+	b.WriteString(lookup("User-Agent", chromeUserAgent))
+	b.WriteString("\r\n")
+
+	b.WriteString("Upgrade: websocket\r\n")
+
+	if origin == "" {
+		origin = "https://" + hostHeader
+	}
+	b.WriteString("Origin: ")
+	b.WriteString(lookup("Origin", origin))
+	b.WriteString("\r\n")
+
 	b.WriteString("Sec-WebSocket-Version: 13\r\n")
+
+	b.WriteString("Accept-Language: ")
+	b.WriteString(lookup("Accept-Language", "en-US,en;q=0.9"))
+	b.WriteString("\r\n")
+
 	b.WriteString("Sec-WebSocket-Key: ")
 	b.WriteString(key)
-	b.WriteString("\r\n\r\n")
+	b.WriteString("\r\n")
+
+	// Remaining user headers not already consumed by lookup().
+	for _, e := range extra {
+		b.WriteString(e.name)
+		b.WriteString(": ")
+		b.WriteString(e.value)
+		b.WriteString("\r\n")
+	}
+
+	b.WriteString("\r\n")
 	_, err := w.Write(b.Bytes())
 	return err
 }

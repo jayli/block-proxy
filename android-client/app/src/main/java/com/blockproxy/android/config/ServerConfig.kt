@@ -22,7 +22,6 @@ data class ServerConfig(
     val customHeaders: Map<String, String> = emptyMap(),
     val cfCdnEnabled: Boolean = false,
     val transportMode: TunnelTransportMode = TunnelTransportMode.CHROME_UTLS,
-    val utlsChromeProfile: String = "chrome_auto_stable",
     val paddingEnabled: Boolean = true,
     val paddingProbability: Float = 0.05f,
     val paddingMinBytes: Int = 64,

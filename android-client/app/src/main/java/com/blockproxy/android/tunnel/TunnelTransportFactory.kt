@@ -69,7 +69,6 @@ class TunnelTransportFactory(
                 serverName = config.serverHost,
                 hostHeader = hostAuthority(config.serverHost, config.serverPort),
                 allowInsecure = config.allowInsecure,
-                chromeProfile = config.utlsChromeProfile,
                 headers = config.customHeaders.map { it.key to it.value },
                 initialMessage = authPayload.copyOf(),
             )

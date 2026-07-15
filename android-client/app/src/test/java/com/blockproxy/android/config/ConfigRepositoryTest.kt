@@ -125,16 +125,6 @@ class ConfigRepositoryTest {
     }
 
     @Test
-    fun `utls chrome profile defaults to stable profile`() = scope.runTest {
-        repository.save(ServerConfig(serverHost = "example.com"))
-
-        repository.observe().test {
-            assertEquals("chrome_auto_stable", awaitItem()?.utlsChromeProfile)
-            cancelAndConsumeRemainingEvents()
-        }
-    }
-
-    @Test
     fun `save rejects chrome utls when tls disabled`() = scope.runTest {
         try {
             repository.save(
@@ -151,17 +141,15 @@ class ConfigRepositoryTest {
     }
 
     @Test
-    fun `save persists chrome utls transport fields`() = scope.runTest {
+    fun `save persists chrome utls transport mode`() = scope.runTest {
         repository.save(
             ServerConfig(
                 serverHost = "example.com",
                 transportMode = TunnelTransportMode.CHROME_UTLS,
-                utlsChromeProfile = "chrome_120",
             )
         )
 
         assertEquals(TunnelTransportMode.CHROME_UTLS, fakeDataSource.current?.transportMode)
-        assertEquals("chrome_120", fakeDataSource.current?.utlsChromeProfile)
     }
 
     @Test
