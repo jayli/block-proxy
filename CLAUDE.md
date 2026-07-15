@@ -16,7 +16,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `node test/proxy-core-cert-lifecycle-tests.js` – 证书生命周期测试（14 项）
 - `node test/cert-lifecycle/smoke-test-rsa-signs-ecdsa.js` – RSA rootCA 签名冒烟测试
 - `npm run test:proxy` – 代理连通性/性能/吞吐量测试（需先启动代理）
-- `npm run test:android` – Android 单元测试 | `npm run test:android:emulator` – 仪器化测试
+- `npm run test:android` – Android phone flavor 单元测试 | `npm run test:android:emulator` – 仪器化测试
+- `cd android-client && ./gradlew :app:testPhoneDebugUnitTest --tests '*ClassName'` – 运行单个测试类
+- `cd android-client && go test ./native/utlsws/...` – Go uTLS 库单元测试
 
 ### Utilities
 - `npm run rm_bkconfig` – Remove backup config
@@ -30,13 +32,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 删除 `icons/app.icns` 后再 `build.sh` 可强制重新生成应用图标
 
 ### Android (`/android-client/`)
-- `npm run android:build` – 构建 debug APK
-- `npm run android:install` – adb 安装 APK
+- `npm run android:build` – 构建 phone + emulator 两个 debug APK
+- `npm run android:build:phone` – 仅构建 phone APK（armeabi-v7a, arm64-v8a）
+- `npm run android:build:emulator` – 仅构建 emulator APK（含 x86_64）
+- `npm run android:install` – adb 安装 phone APK
+- `npm run android:install:emulator` – adb 安装 emulator APK 到 emulator-5554
 - `npm run android:start` – 启动 MainActivity
 - `npm run android:logcat` – 过滤 logcat (BlockProxy|Tunnel|AndroidRuntime)
 - `npm run android:devices` – 列出 adb 设备
 - `npm run android:native:build` – 构建 tun2socks .so（需 ANDROID_NDK_HOME）
-- **Build 前提**: SDK API 35, minSdk 26; 首次需先 `android:native:build`; ABI: arm64-v8a, armeabi-v7a, x86_64
+- `cd android-client/native/utlsws && bash build-aar.sh` – 构建 uTLS WebSocket Go 库为 .aar（需 gomobile）
+- `npm run android:release:upload -- <tag>` – 构建 phone APK 并上传到 GitHub Release
+- **Build 前提**: SDK API 35, minSdk 23; 首次需先 `android:native:build`; uTLS 需先构建 .aar
+- **Product Flavors**: `phone`（手机发布, arm only）/ `emulator`（虚拟机调试, 全 ABI）
 
 ### Build & Deploy
 - `npm run build` – React frontend → `/build/`
@@ -70,13 +78,19 @@ Client → HTTP Proxy (8001) → proxy-core → MITM Rules → Target
 ### Core Components
 
 - **Proxy** (`/proxy/`) – `proxy.js` 入口, `attacker.js` 拦截判断, `domain.js` host 匹配, `fs.js` config 读写备份, `scan.js` 每 2h ARP 扫描, `mitm/rule.js` 规则 + 响应修改器(YouTube 去广告, 有道 VIP)
-- **Proxy-Core** (`/proxy/proxy-core/`) – 底层引擎: `proxy-server.js`(入口), `request-handler.js`(HTTP/S 转发核心), `https-server-mgr.js`(SNI+LRU 缓存), `cert-lifecycle.js`(预热/验证/并发去重/自愈), `cert-mgr.js`(兼容层)
-- **SOCKS5** (`/socks5/`) – SOCKS5 over TLS + UDP over TCP(自定义帧协议) + 反向隧道: `tunnel-server.js`, `tunnel-client.js`, `reverse-connect-handler.js`
+- **Proxy-Core** (`/proxy/proxy-core/`) – 从 AnyProxy fork 提取的本地模块 (非 npm 依赖): `proxy-server.js`(入口, EventEmitter), `request-handler.js`(HTTP/S/WS 转发核心, ~980 行), `https-server-mgr.js`(SNI+IP HTTPS 服务 + LRU 1000 缓存), `cert-lifecycle.js`(预热/验证/并发去重/健康检查), `cert-mgr.js`(兼容层), `util.js`(helpers), `request-error-handler.js`(内联 HTML 错误页), `ws-server-mgr.js`(WS 服务器工厂)
+  - 证书存储从 `~/.anyproxy` 迁移到项目本地 `certificates/` 目录
+  - `X-Tunnel-Relay: 1` 头注入: tunnel 域名的 CONNECT 响应自动添加
+  - ECONNRESET/EPIPE 自动重试一次 (GET/HEAD/OPTIONS)
+  - 自定义 keep-alive agent: `maxRequestsPerSocket: 50` 防止 gRPC RST_STREAM
+  - 流式响应阈值: 20MB (无 responseRules 时 64KB)
+- **SOCKS5** (`/socks5/`) – SOCKS5 over TLS + UDP over TCP(自定义帧协议): `server.js`, `start.js`
+- **Tunnel** (`/tunnel/`) – WebSocket over TLS 双向隧道 + HTTP 伪装: `server.js`(WS 服务), `protocol.js`(帧编解码), `manager.js`(连接生命周期), `disguiseResponse.js`(HTTPS 伪装)
 - **Server** (`/server/`) – Express API (8004), `start.js` 按 config 决定启动模式
 - **Frontend** (`/src/`) – CRA + CRACO 管理界面, `App.js` 主组件
 - **CLI** (`/bin/start.js`) – 全局入口, 失败自动重启(3s delay, max 10000), 退出清理全局配置
 - **Certs** (`/cert/`) – `rootCA.key` + `rootCA.crt`, 运行时同步到 `certificates/` 目录
-- **Config** (`config.json`) – 运行时配置: `block_hosts[]`, `proxy_port`, `socks5_port`, `enable_express`, `enable_socks5`, `enable_mitm`("0"/"1"), `mitm_debug_log`("0"/"1"), `devices[]`, `auth_username`, `auth_password`
+- **Config** (`config.json`) – 运行时配置: `block_hosts[]`, `proxy_port`, `socks5_port`, `enable_express`, `enable_socks5`, `enable_mitm`("0"/"1"), `mitm_debug_log`("0"/"1"), `devices[]`, `auth_username`, `auth_password`, `tunnel_domains[]`, `tunnel_ws_path`(默认 "/websocket"), `tunnel_rotation_drain_timeout`, `tunnel_rotation_drain_idle_timeout`, `chain_proxy_enabled`, `chain_proxy_type`, `chain_proxy_address`
 - **Test Suite** (`/test/`) – `run.js` 一键测试(自动启动 Mock Server), `proxy-tests.js` 连通性/延迟/并发/吞吐量, `proxy-core-connect-tests.js` 连接测试
 
 ### MITM Rule System
@@ -93,13 +107,23 @@ Host-based blocking with regex, time restrictions, MAC targeting (HTTP proxy onl
 ### SOCKS5 Proxy (`/socks5/`)
 
 SOCKS5 over TLS (port 8002):
-- TLS 握手认证 → CONNECT 隧道 → 转发至 HTTP Proxy
+- TLS 握手认证 → 转发至 HTTP Proxy
 - UDP over TCP 通过自定义帧协议承载 UDP 数据
 - 客户端: `client/proxy_core.py` (asyncio 实现)
 
-### Bidirectional Tunnel (Port 8003)
+### Bidirectional Tunnel (`/tunnel/`, Port 8003)
 
-NAT 穿透: 内网客户端 TLS 回连服务端。核心文件: `tunnel-server.js`, `tunnel-client.js`, `reverse-connect-handler.js`
+NAT 穿透 + WebSocket over TLS 协议。
+
+**核心文件**:
+- `tunnel/server.js` — WebSocket 服务端, HTTPS 伪装
+- `tunnel/protocol.js` — 帧编解码 (FRAME_TYPES, encodeFrame/decodeFrame)
+- `tunnel/manager.js` — tunnel 连接生命周期管理 (active/candidate/draining)
+- `tunnel/disguiseResponse.js` — HTTPS GET 伪装响应
+
+**双向 reqid 分配**:
+- 反向 (server→client): `0x0001–0x7FFF` (server 分配)
+- 正向 (client→server): `0x8000–0xFFFE` (client 分配)
 
 ### Deployment & Dependencies
 
@@ -116,16 +140,17 @@ NAT 穿透: 内网客户端 TLS 回连服务端。核心文件: `tunnel-server.j
 
 ## macOS Client (`/client/`)
 
-Pure Python (PyObjC UI + asyncio proxy core), Nuitka 编译为原生二进制。v0.1.3。
+Pure Python (PyObjC UI + asyncio proxy core), Nuitka 编译为原生二进制。v0.1.4。
 
 ```
 main.py (入口, 文件锁单实例, 崩溃重启) → app.py (PyObjC 状态栏)
   ├── proxy_core.py (asyncio SOCKS5/HTTP + UDP over TCP)
-  ├── tunnel_client.py (隧道 + 自动重连, 指数退避 max 60s)
+  ├── tunnel_client.py (WebSocket over TLS 隧道 + 自动重连)
   ├── routing.py / geodata_loader.py / proto_parser.py (geosite/geoip 分流, 零依赖 protobuf)
   ├── config.py (~/Library/Application Support/BlockProxyClient/)
   ├── config_window.py / routing_window.py / log_window.py (PyObjC, 独立进程)
-  └── system_proxy.py (networksetup)
+  ├── system_proxy.py (networksetup)
+  └── traffic_stats.py / traffic_view.py (流量统计与可视化)
 ```
 
 **关键设计**:
@@ -134,20 +159,24 @@ main.py (入口, 文件锁单实例, 崩溃重启) → app.py (PyObjC 状态栏)
 - 本地代理与隧道生命周期解耦：隧道断开时本地代理继续运行，隧道后台重连
 - 窗口作为独立进程（Nuitka 编译后 `sys.executable` 非 Python 解释器，用 `subprocess.Popen` + 系统 Python）
 - 私有地址直连 (127/8, 10/8, 172.16/12, 192.168/16)，可配置关闭
-- 系统唤醒: socket 探测端口存活 + 隧道线程状态恢复
+- 系统唤醒: socket 探测端口存活 + 隧道线程状态恢复，等待 3s 网络稳定后重试
 - 仅 tunnel 配置变化时只重启隧道（`_reconnect_tunnel_only()`），其他变化完整重启
 - Nuitka 构建后处理: `build.sh` 自动重命名可执行文件、修正 Info.plist (CFBundleExecutable, LSUIElement)
 - 删除 `icons/app.icns` 后再 `build.sh` 可强制重新生成应用图标
+- **三种上游连接模式**: SOCKS5 over TLS / HTTP CONNECT / UDP ASSOCIATE, 由 routing engine 选择
+- **macOS Tahoe (26+)**: `_is_tahoe_or_newer()` 检测系统版本以适配 Liquid Glass 图标处理
 
 ## Android Client (`/android-client/`)
 
-Kotlin + Jetpack Compose + VpnService + tun2socks (JNI). v0.1.3。
+Kotlin + Jetpack Compose + VpnService + tun2socks (JNI) + native Go uTLS. v0.1.4。
 
 ```
 VpnService TUN fd → tun2socks (native C, JNI) → 127.0.0.1:socksPort
   → LocalSocksServer → RoutingEngine (geosite/geoip)
     → DIRECT: protected Socket (VpnService.protect 绕过 VPN)
-    → PROXY: ForwardSession → tunnel server
+    → PROXY: ForwardSession → TunnelTransportFactory
+                                  → OKHTTP: TunnelWebSocket (OkHttp WS)
+                                  → CHROME_UTLS: NativeUtlsWebSocket (Go uTLS via gomobile)
 ```
 
 **关键设计**:
@@ -157,6 +186,16 @@ VpnService TUN fd → tun2socks (native C, JNI) → 127.0.0.1:socksPort
 - `tun2socks_jni.c`: spawns detached pthread, JNI_OnLoad 缓存 JavaVM + protect method ID
 - DataStore 持久化配置/凭据/分流, WorkManager TunnelWatchdogWorker (15min)
 - UI: ConfigScreen, RoutingScreen, StatusCard; StatusStore 全局 StateFlow (Preparing/Connecting/Connected/Disconnected/Error)
+- **minSdk 23 + Core Library Desugaring**: 通过 `desugar_jdk_libs:2.1.5` 支持 Android 6.0+, Java 17 编译
+- **Product Flavors**: `phone`（arm only, 发布用）/ `emulator`（全 ABI, 调试用），APK 固定命名区分
+
+### CF CDN IP 轮换
+
+`CfIpPool` + `CfIpSelector` + `CfIpDns` 实现 Cloudflare CDN 边缘 IP 轮换:
+- DNS 层: `CfIpDns` 将 serverHost 解析为选中的 CF 边缘 IP
+- NAT 轮换: `CfIpSelector` 维护游标, tunnel 连接轮换时同步切换 IP
+- 刷新: `CfIpRefreshWorker` 通过 WorkManager 定期刷新 IP 池
+- 运行时: `CfIpRuntimeRegistry` 全局注册, 支持 protect callback 绕过 VPN
 
 ## Important Notes
 
@@ -166,11 +205,15 @@ VpnService TUN fd → tun2socks (native C, JNI) → 127.0.0.1:socksPort
 - iOS Safari: 带认证的代理不能和网关 IP 相同
 - 路由表每 2 小时刷新；新设备可能需手动刷新
 - ACR 推送前需先 `docker login --username=hi50078584@aliyun.com crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com`
-- **Android 构建顺序**: 修改 native C 代码后需先 `android:native:build` 重新编译 .so，再 `android:build` 打包 APK
-- **Android APK 命名**: 手机/GitHub Release 包固定为 `app/build/outputs/apk/phone/debug/BlockProxyClient-android.apk`；虚拟机调试包为 `app/build/outputs/apk/emulator/debug/BlockProxyClient-android-emulator.apk`
-- **Android 发布**: 发布到 GitHub Release 时使用 debug 签名的 phone 包，运行 `npm run android:release:upload -- <tag>`；不要上传未签名的 release APK
+- **Android 构建顺序**: 修改 native C 代码后需先 `android:native:build` 重新编译 .so; 修改 Go uTLS 代码后需先 `build-aar.sh` 重新生成 .aar; 最后 `android:build` 打包 APK
+- **Android uTLS 构建前提**: 需要 Go 1.25+, gomobile (`go install golang.org/x/mobile/cmd/gomobile@latest && gomobile init`), 构建产物 `app/libs/utlsws.aar` 已被 .gitignore 排除
+- **Android Product Flavors**: `phone`（arm only, 发布包）/ `emulator`（全 ABI, 调试包）, 构建命令不同, APK 命名自动区分
+- **Android 发布**: 发布到 GitHub Release 时运行 `npm run android:release:upload -- <tag>`，脚本自动构建 phone debug APK 并上传；不要上传未签名的 release APK
 - **Android logcat 调试**: `npm run android:logcat` 过滤 BlockProxy/Tunnel/AndroidRuntime 标签，崩溃堆栈在 AndroidRuntime 中
 - **Backup config**: `config_backup.json`（`npm run rm_bkconfig` 可删除）
+- **Chain proxy**: `config.json` 支持 `chain_proxy_enabled`/`chain_proxy_type`(http/socks5)/`chain_proxy_address`([user:pass@]host:port) 将所有代理流量经上游代理转发
+- **CLI 自定义证书**: `block-proxy --pubkey <path> --privkey <path>` 指定隧道 TLS 证书路径 (设置 `TUNNEL_PUBKEY`/`TUNNEL_PRIVKEY` 环境变量)
+- **新增测试**: `node test/tunnel-integration.test.js` – 隧道端到端测试; `node test/server-config-validation-tests.js` – config import 验证; `node test/mitm-registry-tests.js` – 规则注册; `node test/mitm-runtime-tests.js` – MITM 运行时
 
 ## Project Skills (`.claude/skills/`)
 
