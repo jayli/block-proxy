@@ -15,6 +15,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.blockproxy.android.cdn.CfCdnConfig
+import com.blockproxy.android.cdn.CfIpPool
 import com.blockproxy.android.cdn.CfIpRuntimeRegistry
 import com.blockproxy.android.cdn.CfIpRefreshWorker
 import com.blockproxy.android.config.ConfigRepository
@@ -370,23 +371,22 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
-        // CF CDN 模式下直连 CF IP，避免 DNS 被公司网关劫持到 MITM 代理
-        val ipOverride = if (state.cfCdnEnabled) {
-            val cfIp = CfIpRuntimeRegistry.currentIp()
-            if (cfIp != null) {
-                Log.d(TAG, "TLS test: using CF IP $cfIp for host $host")
-                cfIp
-            } else {
-                Log.w(TAG, "TLS test: CF CDN enabled but no IP available, falling back to DNS")
-                null
-            }
-        } else {
-            null
-        }
-
         _connectionTestState.value = ConnectionTestState.Testing
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                // CF CDN 模式下直连 CF IP，避免 DNS 被公司网关劫持到 MITM 代理。
+                val ipOverride = if (state.cfCdnEnabled) {
+                    val cfIp = CfIpRuntimeRegistry.currentIp() ?: CfIpPool(context).loadCurrentIp()
+                    if (cfIp != null) {
+                        Log.d(TAG, "TLS test: using CF IP $cfIp for host $host")
+                        cfIp
+                    } else {
+                        Log.w(TAG, "TLS test: CF CDN enabled but no IP available, falling back to DNS")
+                        null
+                    }
+                } else {
+                    null
+                }
                 val result = TlsTester.test(host, port, ipOverride = ipOverride)
                 _connectionTestState.value = ConnectionTestState.Success(result)
             } catch (e: Exception) {

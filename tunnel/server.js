@@ -44,9 +44,10 @@ class TunnelServer {
         cert: this.cert,
         minVersion: 'TLSv1.2',
         sessionTimeout: 300,
-        allowHTTP1: false,
+        allowHTTP1: true,
       });
       this._server.on('stream', (stream, headers) => this._handleH2Stream(stream, headers));
+      this._server.on('request', (req, res) => this._handleHttp1Request(req, res));
 
       this._server.once('error', reject);
       this._server.listen(this.port, () => {
@@ -116,13 +117,37 @@ class TunnelServer {
 
     const socket = stream.session && stream.session.socket;
     const ws = new H2TunnelConnection(stream);
+    this._registerTunnelConnection(ws, socket);
+  }
 
+  _handleHttp1Request(req, res) {
+    if (req.httpVersionMajor !== 1) return;
+    const requestUrl = new URL(req.url, 'https://localhost');
+    if (req.method !== 'POST' || requestUrl.pathname !== this.h2Path) {
+      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('Forbidden');
+      req.resume();
+      return;
+    }
+
+    res.writeHead(200, {
+      'content-type': 'application/octet-stream',
+      'cache-control': 'no-store',
+      'x-tunnel-relay': '1',
+    });
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+    const ws = new Http1TunnelConnection(req, res);
+    this._registerTunnelConnection(ws, req.socket);
+  }
+
+  _registerTunnelConnection(ws, socket) {
     const record = {
       ws,
       authenticated: false,
       state: 'candidate',
-      remoteAddress: socket.remoteAddress,
-      remotePort: socket.remotePort,
+      remoteAddress: socket && socket.remoteAddress,
+      remotePort: socket && socket.remotePort,
       connectedAt: Date.now(),
       pongTime: Date.now(),
       pendingPingPayload: null,
@@ -488,6 +513,83 @@ class H2TunnelConnection {
     if (this.closed) return;
     this.closed = true;
     try { this.stream.destroy(); } catch (_) {}
+  }
+
+  _onData(chunk) {
+    this._buffer = Buffer.concat([this._buffer, chunk]);
+    while (this._buffer.length >= 2) {
+      const length = this._buffer.readUInt16BE(0);
+      if (length > MAX_FRAME_PAYLOAD) {
+        this.terminate();
+        return;
+      }
+      if (this._buffer.length < 2 + length) return;
+      const frameBytes = this._buffer.slice(0, 2 + length);
+      this._buffer = this._buffer.slice(2 + length);
+      this._frameHandlers.forEach(handler => handler(frameBytes));
+    }
+  }
+}
+
+class Http1TunnelConnection {
+  constructor(req, res) {
+    this.req = req;
+    this.res = res;
+    this.closed = false;
+    this._buffer = Buffer.alloc(0);
+    this._frameHandlers = [];
+    this._closeHandlers = [];
+    this._errorHandlers = [];
+
+    req.on('data', (chunk) => this._onData(Buffer.from(chunk)));
+    req.on('close', () => this._emitClose());
+    req.on('error', (err) => this._emitError(err));
+    res.on('close', () => this._emitClose());
+    res.on('error', (err) => this._emitError(err));
+  }
+
+  onFrame(handler) {
+    this._frameHandlers.push(handler);
+  }
+
+  onClose(handler) {
+    this._closeHandlers.push(handler);
+  }
+
+  onError(handler) {
+    this._errorHandlers.push(handler);
+  }
+
+  send(data, callback) {
+    if (this.closed || this.res.destroyed) {
+      callback(new Error('stream closed'));
+      return;
+    }
+    this.res.write(data, callback);
+  }
+
+  close(reason) {
+    if (this.closed) return;
+    this.closed = true;
+    try { this.res.end(); } catch (_) {}
+    try { this.req.destroy(); } catch (_) {}
+  }
+
+  terminate() {
+    if (this.closed) return;
+    this.closed = true;
+    try { this.res.destroy(); } catch (_) {}
+    try { this.req.destroy(); } catch (_) {}
+  }
+
+  _emitClose() {
+    if (this.closed) return;
+    this.closed = true;
+    this._closeHandlers.forEach(handler => handler());
+  }
+
+  _emitError(err) {
+    this._errorHandlers.forEach(handler => handler(err));
   }
 
   _onData(chunk) {

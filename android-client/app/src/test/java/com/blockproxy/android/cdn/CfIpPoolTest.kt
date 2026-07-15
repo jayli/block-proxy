@@ -103,6 +103,14 @@ class CfIpPoolTest {
     }
 
     @Test
+    fun `loadCurrentIp returns ip at normalized cursor`() = runTest {
+        val storage = FakeCfIpStorage(internalGoodIps = "1.1.1.1\n2.2.2.2\n")
+        val pool = CfIpPool(storage, FakeCursorStore(initial = 5))
+
+        assertEquals("2.2.2.2", pool.loadCurrentIp())
+    }
+
+    @Test
     fun `missing assets produce empty lists`() {
         val pool = CfIpPool(FakeCfIpStorage(), FakeCursorStore())
 

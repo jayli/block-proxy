@@ -116,6 +116,11 @@ class CfIpPool(
         )
     }
 
+    suspend fun loadCurrentIp(): String? {
+        val snapshot = loadSnapshot()
+        return snapshot.goodIps.getOrNull(snapshot.normalizedCursor())
+    }
+
     private fun parseIpList(text: String?): List<String> {
         if (text.isNullOrBlank()) return emptyList()
         return text.lineSequence()

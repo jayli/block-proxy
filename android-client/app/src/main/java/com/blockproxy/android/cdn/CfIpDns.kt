@@ -19,11 +19,22 @@ class CfIpDns(
         }
 
         return runCatching {
-            listOf(InetAddress.getByName(selectedIp))
+            val ipBytes = InetAddress.getByName(selectedIp).address
+            listOf(InetAddress.getByAddress(hostname, ipBytes))
         }.getOrElse {
             delegate.lookup(hostname)
         }
     }
 
     fun getCurrentIp(): String? = selector.currentIp()
+
+    fun cronetHostResolverRule(): String? {
+        val selectedIp = selector.selectForLookup()
+        if (selectedIp.isNullOrBlank()) return null
+
+        return runCatching {
+            InetAddress.getByName(selectedIp)
+            "MAP $serverHost $selectedIp"
+        }.getOrNull()
+    }
 }

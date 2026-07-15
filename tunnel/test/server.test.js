@@ -38,6 +38,31 @@ function getHttps(port, requestPath) {
   });
 }
 
+function connectHttp1Client(port) {
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'localhost',
+      port,
+      path: '/h2-tunnel',
+      method: 'POST',
+      rejectUnauthorized: false,
+      headers: {
+        'content-type': 'application/octet-stream',
+        'cache-control': 'no-store',
+      },
+    }, (res) => {
+      if (res.statusCode !== 200) {
+        reject(new Error(`HTTP/1.1 tunnel status ${res.statusCode}`));
+        return;
+      }
+      resolve(new Http1TestClient(req, res));
+    });
+    req.setTimeout(1000, () => req.destroy(new Error('HTTP/1.1 connect timeout')));
+    req.on('error', reject);
+    req.flushHeaders();
+  });
+}
+
 function connectClient(port) {
   return new Promise((resolve, reject) => {
     const client = http2.connect(`https://localhost:${port}`, {
@@ -89,6 +114,45 @@ class H2TestClient extends EventEmitter {
     this.readyState = H2_CLOSED;
     try { this.stream.close(); } catch (_) {}
     try { this.client.close(); } catch (_) {}
+  }
+
+  _onData(chunk) {
+    this._buffer = Buffer.concat([this._buffer, chunk]);
+    while (this._buffer.length >= 2) {
+      const len = this._buffer.readUInt16BE(0);
+      if (this._buffer.length < 2 + len) return;
+      const frameBytes = this._buffer.slice(0, 2 + len);
+      this._buffer = this._buffer.slice(2 + len);
+      this.emit('message', frameBytes);
+    }
+  }
+}
+
+class Http1TestClient extends EventEmitter {
+  constructor(req, res) {
+    super();
+    this.req = req;
+    this.res = res;
+    this.readyState = H2_OPEN;
+    this._buffer = Buffer.alloc(0);
+
+    res.on('data', (chunk) => this._onData(Buffer.from(chunk)));
+    res.on('close', () => {
+      this.readyState = H2_CLOSED;
+      this.emit('close');
+    });
+    res.on('error', (err) => this.emit('error', err));
+  }
+
+  send(data) {
+    this.req.write(data);
+  }
+
+  close() {
+    if (this.readyState === H2_CLOSED) return;
+    this.readyState = H2_CLOSED;
+    try { this.req.end(); } catch (_) {}
+    try { this.res.destroy(); } catch (_) {}
   }
 
   _onData(chunk) {
@@ -257,6 +321,21 @@ describe('TunnelServer HTTP/1.1 compatibility', () => {
 
     const res = await getHttps(port, '/products/2026/report.html');
     assert.equal(res.statusCode, 403);
+  });
+
+  it('authenticates HTTP/1.1 POST /h2-tunnel for Cloudflare origin compatibility', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' }
+    });
+    await server.start();
+
+    const ws = await connectHttp1Client(port);
+    const response = await authenticate(ws);
+    assert.equal(response.type, FRAME_TYPES.AUTH_OK);
+    closeWs(ws);
   });
 });
 

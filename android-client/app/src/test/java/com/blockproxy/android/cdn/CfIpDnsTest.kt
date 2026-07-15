@@ -38,6 +38,17 @@ class CfIpDnsTest {
 
         assertEquals(emptyList<String>(), delegate.lookups)
         assertEquals("104.16.4.14", result.single().hostAddress)
+        assertEquals("tunnel.example.com", result.single().hostName)
+        assertEquals("104.16.4.14", dns.getCurrentIp())
+    }
+
+    @Test
+    fun `server host builds cronet host resolver rule for selected cf ip`() {
+        val delegate = FakeDns()
+        val selector = CfIpSelector(CfIpSnapshot(listOf("104.16.4.14"), 0)) {}
+        val dns = CfIpDns("tunnel.example.com", selector, delegate)
+
+        assertEquals("MAP tunnel.example.com 104.16.4.14", dns.cronetHostResolverRule())
         assertEquals("104.16.4.14", dns.getCurrentIp())
     }
 
@@ -63,6 +74,7 @@ class CfIpDnsTest {
 
         assertEquals(listOf("tunnel.example.com"), delegate.lookups)
         assertEquals("203.0.113.10", result.single().hostAddress)
+        assertEquals(null, dns.cronetHostResolverRule())
     }
 
     @Test
@@ -75,5 +87,6 @@ class CfIpDnsTest {
 
         assertEquals(listOf("tunnel.example.com"), delegate.lookups)
         assertEquals("203.0.113.10", result.single().hostAddress)
+        assertEquals(null, dns.cronetHostResolverRule())
     }
 }

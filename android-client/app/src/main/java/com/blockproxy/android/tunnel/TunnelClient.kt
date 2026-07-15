@@ -235,9 +235,6 @@ class TunnelClient(
         val port = config.serverPort
 
         Log.i(TAG, "Connecting to HTTP/2 tunnel $addr:$port")
-        if (cfIpDns != null) {
-            Log.w(TAG, "CF IP DNS override is not supported by Cronet tunnel transport")
-        }
         if (protect != null) {
             Log.w(TAG, "Cronet tunnel transport cannot use the OkHttp SocketFactory protect hook")
         }
@@ -256,12 +253,13 @@ class TunnelClient(
             context = context,
             url = tunnelUrl,
             allowInsecure = config.allowInsecure,
+            cfIpDns = cfIpDns,
             authPayload = authPayload,
             customHeaders = config.customHeaders,
             onAuthSuccess = { sender ->
                 frameChannels[sender] = frameChannel
                 cfIpSelector?.markConnected()
-                onCfIpChanged(null)
+                onCfIpChanged(cfIpDns?.getCurrentIp())
             },
             onFrame = { sender, frameBytes ->
                 frameChannels[sender]?.trySend(frameBytes)
@@ -275,7 +273,7 @@ class TunnelClient(
         return try {
             tunnelStream.connect()
         } catch (e: Exception) {
-            if (InsecureH2Fallback.shouldFallback(config.allowInsecure, e)) {
+            if (cfIpDns == null && InsecureH2Fallback.shouldFallback(config.allowInsecure, e)) {
                 Log.w(TAG, "Cronet certificate validation failed; retrying with insecure OkHttp HTTP/2 transport")
                 val fallbackStream = OkHttpH2TunnelStream(
                     url = tunnelUrl,

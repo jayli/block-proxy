@@ -2,13 +2,16 @@ package com.blockproxy.android.tunnel
 
 import android.content.Context
 import android.util.Log
+import com.blockproxy.android.cdn.CfIpDns
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.json.JSONObject
 import org.chromium.base.CommandLine
 import org.chromium.net.BidirectionalStream
 import org.chromium.net.CronetEngine
 import org.chromium.net.CronetException
+import org.chromium.net.ExperimentalCronetEngine
 import org.chromium.net.UrlResponseInfo
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -19,6 +22,7 @@ class CronetTunnelStream(
     private val context: Context,
     private val url: String,
     private val allowInsecure: Boolean,
+    private val cfIpDns: CfIpDns? = null,
     private val authPayload: ByteArray,
     private val customHeaders: Map<String, String>,
     private val onAuthSuccess: (FrameSender) -> Unit,
@@ -244,11 +248,23 @@ class CronetTunnelStream(
                 CommandLine.getInstance().appendSwitch("ignore-certificate-errors")
             }
         }
-        return CronetEngine.Builder(context.applicationContext)
-            .enableHttp2(true)
-            .enableQuic(false)
-            .enableBrotli(true)
-            .build()
+        val builder = ExperimentalCronetEngine.Builder(context.applicationContext)
+        builder.enableHttp2(true)
+        builder.enableQuic(false)
+        builder.enableBrotli(true)
+
+        cfIpDns?.cronetHostResolverRule()?.let { rule ->
+            val options = JSONObject()
+                .put(
+                    "HostResolverRules",
+                    JSONObject().put("host_resolver_rules", rule),
+                )
+                .toString()
+            Log.i(TAG, "Using Cronet host resolver rule: $rule")
+            builder.setExperimentalOptions(options)
+        }
+
+        return builder.build()
     }
 
     private fun shutdown() {
