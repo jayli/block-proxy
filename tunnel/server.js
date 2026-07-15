@@ -103,6 +103,10 @@ class TunnelServer {
     const method = headers[':method'];
     const path = headers[':path'];
     const contentType = String(headers['content-type'] || '');
+    console.log(
+      `[Tunnel] HTTP/2 ingress: method=${method} path=${path} content-type=${contentType || '-'} ` +
+      `authority=${headers[':authority'] || '-'} cf-ray=${headers['cf-ray'] || '-'}`
+    );
     if (method === 'POST' && path === this.grpcPath && contentType.startsWith('application/grpc')) {
       this._handleGrpcStream(stream);
       return;
@@ -143,6 +147,11 @@ class TunnelServer {
   _handleHttp1Request(req, res) {
     if (req.httpVersionMajor !== 1) return;
     const requestUrl = new URL(req.url, 'https://localhost');
+    console.log(
+      `[Tunnel] HTTP/1.1 ingress: method=${req.method} path=${requestUrl.pathname} ` +
+      `content-type=${req.headers['content-type'] || '-'} host=${req.headers.host || '-'} ` +
+      `cf-ray=${req.headers['cf-ray'] || '-'}`
+    );
     if (req.method !== 'POST' || requestUrl.pathname !== this.h2Path) {
       res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' });
       res.end('Forbidden');
