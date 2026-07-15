@@ -2,42 +2,58 @@
 
 ## 前置条件
 
-1. Android 设备（API 26+，Android 8.0 或更高版本）
+1. Android 设备（API 23+，Android 6.0 或更高版本）
 2. 已安装 `adb`（Android Debug Bridge）并可通过 USB 或 WiFi 连接设备
 3. block-proxy 服务端已运行，tunnel 端口（默认 8003）可访问
 4. 设备与服务端在同一网络中，或可通过公网访问 tunnel 端口
 
 ## 构建
 
-### Debug APK
+### 手机 APK（GitHub Release 使用）
 
 ```bash
 cd android-client
-./gradlew :app:assembleDebug
+./gradlew :app:assemblePhoneDebug
 ```
 
-输出路径：`app/build/outputs/apk/debug/app-debug.apk`
+输出路径：`app/build/outputs/apk/phone/debug/BlockProxyClient-android.apk`
 
-### Release APK（需配置签名）
+该 APK 使用 debug 签名，下载后可直接安装到手机。GitHub Release 只上传这个文件。
+
+### 虚拟机 APK（本地调试使用）
 
 ```bash
-./gradlew :app:assembleRelease
+./gradlew :app:assembleEmulatorDebug
 ```
 
-需在 `app/build.gradle.kts` 中配置 `signingConfigs`。
+输出路径：`app/build/outputs/apk/emulator/debug/BlockProxyClient-android-emulator.apk`
+
+该 APK 保留 x86/x86_64 native 库，专门用于 Android 虚拟机。
 
 ## 安装
 
 ### adb 安装
 
 ```bash
-adb install app/build/outputs/apk/debug/app-debug.apk
+adb install app/build/outputs/apk/phone/debug/BlockProxyClient-android.apk
 ```
 
 如果已安装旧版本：
 
 ```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/phone/debug/BlockProxyClient-android.apk
+```
+
+虚拟机调试包：
+
+```bash
+adb -s emulator-5554 install -r app/build/outputs/apk/emulator/debug/BlockProxyClient-android-emulator.apk
+```
+
+## 发布到 GitHub Release
+
+```bash
+npm run android:release:upload -- v0.1.4
 ```
 
 ### 卸载

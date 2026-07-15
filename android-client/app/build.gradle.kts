@@ -17,6 +17,21 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    flavorDimensions += "target"
+
+    productFlavors {
+        create("phone") {
+            dimension = "target"
+            ndk {
+                abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+            }
+        }
+
+        create("emulator") {
+            dimension = "target"
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
@@ -48,8 +63,13 @@ android {
 
     applicationVariants.all {
         outputs.all {
-            (this as com.android.build.gradle.internal.api.ApkVariantOutputImpl).outputFileName =
+            val targetName = if (flavorName == "emulator") {
+                "BlockProxyClient-android-emulator.apk"
+            } else {
                 "BlockProxyClient-android.apk"
+            }
+            (this as com.android.build.gradle.internal.api.ApkVariantOutputImpl).outputFileName =
+                targetName
         }
     }
 }

@@ -167,7 +167,8 @@ VpnService TUN fd → tun2socks (native C, JNI) → 127.0.0.1:socksPort
 - 路由表每 2 小时刷新；新设备可能需手动刷新
 - ACR 推送前需先 `docker login --username=hi50078584@aliyun.com crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com`
 - **Android 构建顺序**: 修改 native C 代码后需先 `android:native:build` 重新编译 .so，再 `android:build` 打包 APK
-- **Android APK 命名**: 发布时 APK 固定命名为 `BlockProxyClient-android.apk`（通过 gradle `archivesBaseName` + `outputFileName` 配置）
+- **Android APK 命名**: 手机/GitHub Release 包固定为 `app/build/outputs/apk/phone/debug/BlockProxyClient-android.apk`；虚拟机调试包为 `app/build/outputs/apk/emulator/debug/BlockProxyClient-android-emulator.apk`
+- **Android 发布**: 发布到 GitHub Release 时使用 debug 签名的 phone 包，运行 `npm run android:release:upload -- <tag>`；不要上传未签名的 release APK
 - **Android logcat 调试**: `npm run android:logcat` 过滤 BlockProxy/Tunnel/AndroidRuntime 标签，崩溃堆栈在 AndroidRuntime 中
 - **Backup config**: `config_backup.json`（`npm run rm_bkconfig` 可删除）
 

@@ -6,36 +6,44 @@ Android tunnel client for block-proxy. Establishes 1-2 TLS tunnels to a block-pr
 
 - Android Studio Hedgehog (2023.1.1) or later
 - JDK 17 (included with Android Studio)
-- Android SDK with API 35 (compileSdk) and minSdk 26
-- Android device or emulator (API 26+, Android 8.0+)
+- Android SDK with API 35 (compileSdk) and minSdk 23
+- Android device or emulator (API 23+, Android 6.0+)
 - `adb` installed and accessible
 
 ## Build
 
-### Debug APK
+### Phone APK
 
 ```bash
-./gradlew :app:assembleDebug
+./gradlew :app:assemblePhoneDebug
 ```
 
-Output: `app/build/outputs/apk/debug/app-debug.apk`
+Output: `app/build/outputs/apk/phone/debug/BlockProxyClient-android.apk`
 
-### Release APK
+This is the GitHub Release artifact. It is debug-signed so users can install it
+directly after downloading.
+
+### Emulator APK
 
 ```bash
-./gradlew :app:assembleRelease
+./gradlew :app:assembleEmulatorDebug
 ```
 
-Requires signing configuration in `app/build.gradle.kts`.
+Output: `app/build/outputs/apk/emulator/debug/BlockProxyClient-android-emulator.apk`
+
+This package keeps x86/x86_64 native libraries for Android emulators.
 
 ## Install
 
 ```bash
-# Install (first time)
-adb install app/build/outputs/apk/debug/app-debug.apk
+# Install phone package
+adb install app/build/outputs/apk/phone/debug/BlockProxyClient-android.apk
 
-# Reinstall (upgrade)
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+# Reinstall phone package
+adb install -r app/build/outputs/apk/phone/debug/BlockProxyClient-android.apk
+
+# Reinstall emulator package
+adb -s emulator-5554 install -r app/build/outputs/apk/emulator/debug/BlockProxyClient-android-emulator.apk
 
 # Uninstall
 adb uninstall com.blockproxy.android
@@ -46,28 +54,28 @@ adb uninstall com.blockproxy.android
 ### Run all unit tests
 
 ```bash
-./gradlew :app:testDebugUnitTest
+./gradlew :app:testPhoneDebugUnitTest
 ```
 
 ### Run specific test class
 
 ```bash
 # Run a single test class
-./gradlew :app:testDebugUnitTest --tests '*FrameCodecTest'
+./gradlew :app:testPhoneDebugUnitTest --tests '*FrameCodecTest'
 
 # Run a single test method
-./gradlew :app:testDebugUnitTest --tests '*FrameCodecTest.encode*'
+./gradlew :app:testPhoneDebugUnitTest --tests '*FrameCodecTest.encode*'
 ```
 
 ### Run integration tests
 
 ```bash
-./gradlew :app:testDebugUnitTest --tests '*TunnelProtocolIntegrationTest'
+./gradlew :app:testPhoneDebugUnitTest --tests '*TunnelProtocolIntegrationTest'
 ```
 
 ### Test reports
 
-HTML report: `app/build/reports/tests/testDebugUnitTest/index.html`
+HTML report: `app/build/reports/tests/testPhoneDebugUnitTest/index.html`
 
 ### Test coverage
 
