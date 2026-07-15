@@ -14,9 +14,8 @@ data class ServerConfig(
     val serverPort: Int = DEFAULT_PORT,
     val useTls: Boolean = true,
     val allowInsecure: Boolean = true,
-    // WebSocket tunnel 新增
-    val wsPath: String = "/websocket",
-    val httpDisguise: Boolean = true,
+    val wsPath: String = "/h2-tunnel",
+    val httpDisguise: Boolean = false,
     val customHeaders: Map<String, String> = emptyMap(),
     val cfCdnEnabled: Boolean = false,
     val paddingEnabled: Boolean = true,

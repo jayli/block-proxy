@@ -1,13 +1,15 @@
 const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const https = require('https');
+const http2 = require('http2');
 const fs = require('fs');
 const path = require('path');
-const wsModule = require('ws');
+const { EventEmitter } = require('events');
 const TunnelServer = require('../server');
 const { FRAME_TYPES, encodeFrame, decodeFrame } = require('../protocol');
 
-const WebSocket = wsModule.WebSocket || wsModule;
+const H2_OPEN = 1;
+const H2_CLOSED = 3;
 
 let portCounter = 18004 + (process.pid % 1000);
 function nextPort() { return portCounter++; }
@@ -38,13 +40,67 @@ function getHttps(port, requestPath) {
 
 function connectClient(port) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://localhost:${port}/websocket`, {
+    const client = http2.connect(`https://localhost:${port}`, {
       rejectUnauthorized: false,
     });
-    ws.once('open', () => resolve(ws));
-    ws.once('error', reject);
-    setTimeout(() => reject(new Error('WebSocket connect timeout')), 1000);
+    const stream = client.request({
+      ':method': 'POST',
+      ':path': '/h2-tunnel',
+      'content-type': 'application/octet-stream',
+      'cache-control': 'no-store',
+    }, { endStream: false });
+    const h2 = new H2TestClient(client, stream);
+
+    stream.on('response', (headers) => {
+      if (headers[':status'] !== 200) {
+        reject(new Error(`HTTP/2 tunnel status ${headers[':status']}`));
+        return;
+      }
+      resolve(h2);
+    });
+    stream.on('error', reject);
+    client.on('error', reject);
+    setTimeout(() => reject(new Error('HTTP/2 connect timeout')), 1000);
   });
+}
+
+class H2TestClient extends EventEmitter {
+  constructor(client, stream) {
+    super();
+    this.client = client;
+    this.stream = stream;
+    this.readyState = H2_OPEN;
+    this._buffer = Buffer.alloc(0);
+
+    stream.on('data', (chunk) => this._onData(Buffer.from(chunk)));
+    stream.on('close', () => {
+      this.readyState = H2_CLOSED;
+      this.emit('close');
+    });
+    stream.on('error', (err) => this.emit('error', err));
+  }
+
+  send(data) {
+    this.stream.write(data);
+  }
+
+  close() {
+    if (this.readyState === H2_CLOSED) return;
+    this.readyState = H2_CLOSED;
+    try { this.stream.close(); } catch (_) {}
+    try { this.client.close(); } catch (_) {}
+  }
+
+  _onData(chunk) {
+    this._buffer = Buffer.concat([this._buffer, chunk]);
+    while (this._buffer.length >= 2) {
+      const len = this._buffer.readUInt16BE(0);
+      if (this._buffer.length < 2 + len) return;
+      const frameBytes = this._buffer.slice(0, 2 + len);
+      this._buffer = this._buffer.slice(2 + len);
+      this.emit('message', frameBytes);
+    }
+  }
 }
 
 function readFrame(ws) {
@@ -65,11 +121,11 @@ function readFrame(ws) {
 
 function waitForClose(ws) {
   return new Promise((resolve, reject) => {
-    if (ws.readyState === WebSocket.CLOSED) {
+    if (ws.readyState === H2_CLOSED) {
       resolve();
       return;
     }
-    const timer = setTimeout(() => reject(new Error('WebSocket close timeout')), 1000);
+    const timer = setTimeout(() => reject(new Error('HTTP/2 stream close timeout')), 1000);
     ws.once('close', () => {
       clearTimeout(timer);
       resolve();
@@ -109,7 +165,7 @@ function sendAuth(ws, username = 'admin', password = 'secret') {
 }
 
 function closeWs(ws) {
-  if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+  if (ws.readyState === H2_OPEN) {
     ws.close();
   }
 }
@@ -157,14 +213,14 @@ async function waitForCondition(predicate, timeout = 1000) {
   throw new Error('condition timeout');
 }
 
-describe('TunnelServer HTTP disguise', () => {
+describe('TunnelServer HTTP/1.1 compatibility', () => {
   let server;
 
   afterEach(async () => {
     if (server) { await server.stop(); server = null; }
   });
 
-  it('GET / returns a plausible site homepage', async () => {
+  it('rejects HTTP/1.1 GET / because tunnel port is HTTP/2 only', async () => {
     const port = nextPort();
     server = new TunnelServer({
       port,
@@ -174,20 +230,10 @@ describe('TunnelServer HTTP disguise', () => {
     await server.start();
 
     const res = await getHttps(port, '/');
-    assert.equal(res.statusCode, 200);
-    assert.match(res.headers['content-type'], /text\/html/);
-    assert.match(res.headers['cache-control'], /no-cache|no-store|max-age/i);
-    assert.ok(Number(res.headers['content-length']) > 0);
-    const body = res.body.toString('utf8');
-    assert.match(body, /<!doctype html>/i);
-    assert.match(body, /Northstar Digital/i);
-    assert.match(body, /Insights/i);
-    assert.match(body, /<style>/i);
-    assert.doesNotMatch(body, /<title>OK<\/title>|<body>OK<\/body>/i);
-    assert.doesNotMatch(body, /tunnel|websocket|proxy/i);
+    assert.equal(res.statusCode, 403);
   });
 
-  it('GET /index.html returns the same plausible homepage', async () => {
+  it('rejects HTTP/1.1 GET /index.html', async () => {
     const port = nextPort();
     server = new TunnelServer({
       port,
@@ -197,12 +243,10 @@ describe('TunnelServer HTTP disguise', () => {
     await server.start();
 
     const res = await getHttps(port, '/index.html');
-    assert.equal(res.statusCode, 200);
-    assert.match(res.headers['content-type'], /text\/html/);
-    assert.match(res.body.toString('utf8'), /Northstar Digital/i);
+    assert.equal(res.statusCode, 403);
   });
 
-  it('GET unknown path is not disguised', async () => {
+  it('rejects HTTP/1.1 GET unknown path', async () => {
     const port = nextPort();
     server = new TunnelServer({
       port,
@@ -212,20 +256,18 @@ describe('TunnelServer HTTP disguise', () => {
     await server.start();
 
     const res = await getHttps(port, '/products/2026/report.html');
-    assert.equal(res.statusCode, 404);
-    assert.match(res.headers['content-type'], /text\/plain/);
-    assert.equal(res.body.toString('utf8'), 'Not found');
+    assert.equal(res.statusCode, 403);
   });
 });
 
-describe('TunnelServer WebSocket', () => {
+describe('TunnelServer HTTP/2 stream', () => {
   let server;
 
   afterEach(async () => {
     if (server) { await server.stop(); server = null; }
   });
 
-  it('authenticates client and sends AUTH_OK over /websocket', async () => {
+  it('authenticates client and sends AUTH_OK over /h2-tunnel', async () => {
     const port = nextPort();
     server = new TunnelServer({
       port,
@@ -240,7 +282,7 @@ describe('TunnelServer WebSocket', () => {
     closeWs(ws);
   });
 
-  it('accepts a maximum-sized DATA frame over WebSocket', async () => {
+  it('accepts a maximum-sized DATA frame over HTTP/2 stream', async () => {
     const port = nextPort();
     let receivedFrame = null;
     server = new TunnelServer({
@@ -317,7 +359,7 @@ describe('TunnelServer WebSocket', () => {
     assert.ok(ping.payload.length >= 8);
     ws.send(encodeFrame({ type: FRAME_TYPES.PONG, payload: ping.payload }));
     await new Promise(r => setTimeout(r, 50));
-    assert.equal(ws.readyState, WebSocket.OPEN);
+    assert.equal(ws.readyState, H2_OPEN);
     closeWs(ws);
   });
 
@@ -339,7 +381,7 @@ describe('TunnelServer WebSocket', () => {
     await new Promise(r => setTimeout(r, 50));
 
     assert.equal(handlerCalls, 0);
-    assert.equal(ws.readyState, WebSocket.OPEN);
+    assert.equal(ws.readyState, H2_OPEN);
     closeWs(ws);
   });
 
@@ -487,6 +529,35 @@ describe('TunnelServer WebSocket', () => {
 
 });
 
+describe('TunnelServer HTTP/2 tunnel', () => {
+  let server;
+
+  afterEach(async () => {
+    if (server) { await server.stop(); server = null; }
+  });
+
+  it('authenticates client and sends AUTH_OK over /h2-tunnel', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' }
+    });
+    await server.start();
+
+    const h2 = await connectClient(port);
+    const pending = readFrame(h2);
+    h2.send(encodeFrame({
+      type: FRAME_TYPES.AUTH,
+      username: 'admin',
+      password: 'secret',
+    }));
+    const response = await pending;
+    assert.equal(response.type, FRAME_TYPES.AUTH_OK);
+    h2.close();
+  });
+});
+
 describe('TunnelServer callbacks', () => {
   let server;
 
@@ -545,7 +616,7 @@ describe('TunnelServer rotation state', () => {
     if (server) { await server.stop(); server = null; }
   });
 
-  it('promotes a second authenticated WS to active and drains the old active', async () => {
+  it('promotes a second authenticated H2 stream to active and drains the old active', async () => {
     const port = nextPort();
     server = new TunnelServer({
       port,
@@ -577,7 +648,7 @@ describe('TunnelServer rotation state', () => {
     closeWs(ws2);
   });
 
-  it('rejects a third authenticated WS while active and draining already exist', async () => {
+  it('rejects a third authenticated H2 stream while active and draining already exist', async () => {
     const port = nextPort();
     server = new TunnelServer({
       port,
@@ -602,7 +673,7 @@ describe('TunnelServer rotation state', () => {
     closeWs(ws3);
   });
 
-  it('keeps draining WS open after timeout while bound requests remain', async () => {
+  it('keeps draining H2 stream open after timeout while bound requests remain', async () => {
     const port = nextPort();
     let oldWs;
     let activeRequests = 1;
@@ -625,7 +696,7 @@ describe('TunnelServer rotation state', () => {
 
     await new Promise(r => setTimeout(r, 120));
     assert.equal(server.getConnectionCounts().draining, 1);
-    assert.notEqual(ws1.readyState, WebSocket.CLOSED);
+    assert.notEqual(ws1.readyState, H2_CLOSED);
 
     activeRequests = 0;
     await waitForCondition(() => server.getConnectionCounts().draining === 0);
@@ -635,7 +706,7 @@ describe('TunnelServer rotation state', () => {
     closeWs(ws2);
   });
 
-  it('closes draining WS after bound requests become idle', async () => {
+  it('closes draining H2 stream after bound requests become idle', async () => {
     const port = nextPort();
     let oldWs;
     let lastActivityAt = Date.now();
@@ -662,7 +733,7 @@ describe('TunnelServer rotation state', () => {
     lastActivityAt = Date.now();
     await new Promise(r => setTimeout(r, 80));
     assert.equal(server.getConnectionCounts().draining, 1);
-    assert.notEqual(ws1.readyState, WebSocket.CLOSED);
+    assert.notEqual(ws1.readyState, H2_CLOSED);
 
     lastActivityAt = Date.now() - 1000;
     await waitForCondition(() => server.getConnectionCounts().draining === 0, 1500);

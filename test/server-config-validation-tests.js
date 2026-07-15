@@ -18,7 +18,7 @@ function minimalConfig(overrides = {}) {
     rule_modules: {},
     enable_tunnel: '1',
     tunnel_port: 8003,
-    tunnel_ws_path: '/websocket',
+    tunnel_h2_path: '/h2-tunnel',
     tunnel_domains: [],
     chain_proxy_enabled: '0',
     chain_proxy_type: 'http',
@@ -60,30 +60,30 @@ function testImportValidationAcceptsValidChainProxyConfig() {
   assert.deepStrictEqual(result.details, []);
 }
 
-function testImportValidationBackfillsTunnelWsPath() {
+function testImportValidationBackfillsTunnelH2Path() {
   const config = minimalConfig();
-  delete config.tunnel_ws_path;
+  delete config.tunnel_h2_path;
 
   const result = Server._test.validateImportedConfig(config);
 
   assert.strictEqual(result.ok, true);
-  assert.strictEqual(result.config.tunnel_ws_path, '/websocket');
+  assert.strictEqual(result.config.tunnel_h2_path, '/h2-tunnel');
 }
 
-function testImportValidationRejectsInvalidTunnelWsPath() {
+function testImportValidationRejectsInvalidTunnelH2Path() {
   const result = Server._test.validateImportedConfig(minimalConfig({
-    tunnel_ws_path: 123,
+    tunnel_h2_path: 123,
   }));
 
   assert.strictEqual(result.ok, false);
-  assert(result.details.some((detail) => detail.includes('隧道 WebSocket 路径')));
+  assert(result.details.some((detail) => detail.includes('隧道 HTTP/2 路径')));
 }
 
 function run() {
-  testImportValidationBackfillsTunnelWsPath();
-  console.log('PASS testImportValidationBackfillsTunnelWsPath');
-  testImportValidationRejectsInvalidTunnelWsPath();
-  console.log('PASS testImportValidationRejectsInvalidTunnelWsPath');
+  testImportValidationBackfillsTunnelH2Path();
+  console.log('PASS testImportValidationBackfillsTunnelH2Path');
+  testImportValidationRejectsInvalidTunnelH2Path();
+  console.log('PASS testImportValidationRejectsInvalidTunnelH2Path');
   testImportValidationRejectsInvalidChainProxyType();
   console.log('PASS testImportValidationRejectsInvalidChainProxyType');
   testImportValidationRejectsEnabledChainProxyWithoutAddress();

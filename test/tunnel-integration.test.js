@@ -1,14 +1,13 @@
 const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { once } = require('node:events');
+const { EventEmitter } = require('node:events');
 const fs = require('fs');
+const http2 = require('http2');
 const path = require('path');
-const wsModule = require('ws');
 const TunnelServer = require('../tunnel/server');
 const TunnelManager = require('../tunnel/manager');
 const { FRAME_TYPES, ATYP, encodeFrame, decodeFrame } = require('../tunnel/protocol');
-
-const WebSocket = wsModule.WebSocket || wsModule;
 
 const PORT = 28004;
 const cert = fs.readFileSync(path.join(__dirname, '../cert/rootCA.crt'));
@@ -16,23 +15,69 @@ const key = fs.readFileSync(path.join(__dirname, '../cert/rootCA.key'));
 
 function connectClient(port) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`wss://localhost:${port}/websocket`, {
+    const client = http2.connect(`https://localhost:${port}`, {
       rejectUnauthorized: false,
     });
-    ws.once('open', () => resolve(ws));
-    ws.once('error', reject);
+    const stream = client.request({
+      ':method': 'POST',
+      ':path': '/h2-tunnel',
+      'content-type': 'application/octet-stream',
+    }, { endStream: false });
+    const h2 = new H2TestClient(client, stream);
+    stream.on('response', (headers) => {
+      if (headers[':status'] !== 200) {
+        reject(new Error(`HTTP/2 tunnel status ${headers[':status']}`));
+        return;
+      }
+      resolve(h2);
+    });
+    stream.once('error', reject);
+    client.once('error', reject);
   });
 }
 
-function readFrame(ws) {
+class H2TestClient extends EventEmitter {
+  constructor(client, stream) {
+    super();
+    this.client = client;
+    this.stream = stream;
+    this._buffer = Buffer.alloc(0);
+    stream.on('data', (chunk) => this._onData(Buffer.from(chunk)));
+    stream.on('close', () => this.emit('close'));
+    stream.on('error', (err) => this.emit('error', err));
+  }
+
+  send(data) {
+    this.stream.write(data);
+  }
+
+  close() {
+    try { this.stream.close(); } catch (_) {}
+    try { this.stream.destroy(); } catch (_) {}
+    try { this.client.destroy(); } catch (_) {}
+  }
+
+  _onData(chunk) {
+    this._buffer = Buffer.concat([this._buffer, chunk]);
+    while (this._buffer.length >= 2) {
+      const length = this._buffer.readUInt16BE(0);
+      if (this._buffer.length < 2 + length) return;
+      const frameBytes = this._buffer.slice(0, 2 + length);
+      this._buffer = this._buffer.slice(2 + length);
+      this.emit('message', frameBytes);
+    }
+  }
+}
+
+function readFrame(client) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('readFrame timeout')), 5000);
     const onMessage = (chunk) => {
       clearTimeout(timer);
-      ws.removeListener('message', onMessage);
+      client.removeListener('message', onMessage);
       try { resolve(decodeFrame(Buffer.from(chunk))); } catch (e) { reject(e); }
     };
-    ws.on('message', onMessage);
+    client.on('message', onMessage);
   });
 }
 
@@ -183,6 +228,8 @@ describe('Tunnel end-to-end', () => {
     }
     await new Promise(r => setTimeout(r, 20));
 
+    stream1.destroy();
+    stream2.destroy();
     clientSocket1.close();
     clientSocket2.close();
   });

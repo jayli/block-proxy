@@ -1,5 +1,6 @@
 package com.blockproxy.android.tunnel
 
+import android.content.Context
 import android.util.Log
 import com.blockproxy.android.cdn.CfIpDns
 import com.blockproxy.android.cdn.CfIpSelector
@@ -8,7 +9,6 @@ import com.blockproxy.android.config.TunnelCredentials
 import com.blockproxy.android.status.TunnelStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -19,19 +19,15 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
-import kotlin.random.nextLong
 
 private const val TAG = "TunnelClient"
 
 class TunnelClient(
+    private val context: Context,
     private val config: ServerConfig,
     private val credentials: TunnelCredentials,
     private val targetSocketFactory: TargetSocketFactory,
@@ -66,15 +62,10 @@ class TunnelClient(
     private val handler = ReverseConnectHandler(clientScope, targetSocketFactory, paddingInjector = paddingInjector)
     private val forwardRegistry = ForwardSessionRegistry(clientScope, paddingInjector = paddingInjector)
 
-    private val okHttpClient = TunnelWebSocket.createOkHttpClient(
-        allowInsecure = config.allowInsecure,
-        protect = protect,
-    )
-
-    // WebSocket state
-    @Volatile private var activeWs: FrameSender? = null
-    @Volatile private var candidateWs: FrameSender? = null
-    @Volatile private var drainingWs: FrameSender? = null
+    // Tunnel stream state
+    @Volatile private var activeStream: FrameSender? = null
+    @Volatile private var candidateStream: FrameSender? = null
+    @Volatile private var drainingStream: FrameSender? = null
 
     @Volatile private var stopped = true
     @Volatile private var connected = false
@@ -107,12 +98,12 @@ class TunnelClient(
         mainJob?.cancel()
         mainJob = null
         // Close all active/draining/candidate senders
-        for (sender in listOfNotNull(activeWs, candidateWs, drainingWs)) {
+        for (sender in listOfNotNull(activeStream, candidateStream, drainingStream)) {
             closeSender(sender)
         }
-        activeWs = null
-        candidateWs = null
-        drainingWs = null
+        activeStream = null
+        candidateStream = null
+        drainingStream = null
 
         // Close any remaining channels/jobs (safety net)
         for ((_, ch) in frameChannels) {
@@ -129,14 +120,14 @@ class TunnelClient(
     }
 
     suspend fun openForwardSession(host: String, port: Int): ForwardSession {
-        val sender = activeWs
+        val sender = activeStream
             ?: throw IllegalStateException("No active tunnel connection")
         return forwardRegistry.open(host, port, sender)
     }
 
     /** Measures tunnel RTT in milliseconds. Returns null on failure. */
     suspend fun measureLatency(): Long? {
-        val sender = activeWs ?: return null
+        val sender = activeStream ?: return null
         val start = System.currentTimeMillis()
         val session = try {
             forwardRegistry.open("127.0.0.1", 80, sender)
@@ -197,12 +188,12 @@ class TunnelClient(
         rotationJob = clientScope.launch { rotationLoop() }
 
         stateMutex.withLock {
-            activeWs?.let { old ->
-                Log.w(TAG, "Replacing existing active WS during establish")
-                drainingWs = old
+            activeStream?.let { old ->
+                Log.w(TAG, "Replacing existing active stream during establish")
+                drainingStream = old
             }
-            activeWs = sender
-            candidateWs = null
+            activeStream = sender
+            candidateStream = null
         }
 
         connected = true
@@ -220,15 +211,15 @@ class TunnelClient(
         }
 
         // Wait until stopped, or until the active connection is lost and needs reconnecting.
-        // When rotation replaces this sender, closeSender() sets drainingWs=null but
-        // activeWs is set to the candidate — so activeWs stays non-null and we keep waiting.
-        // When the active sender genuinely disconnects, closeSender() sets activeWs=null
+        // When rotation replaces this sender, closeSender() sets drainingStream=null but
+        // activeStream is set to the candidate — so activeStream stays non-null and we keep waiting.
+        // When the active sender genuinely disconnects, closeSender() sets activeStream=null
         // and this loop exits, triggering a reconnect in mainLoop().
         try {
-            while (clientScope.isActive && !stopped && activeWs != null) {
+            while (clientScope.isActive && !stopped && activeStream != null) {
                 delay(500)
             }
-            Log.i(TAG, "Poll loop exited: stopped=$stopped, activeWs=$activeWs, isActive=${clientScope.isActive}")
+            Log.i(TAG, "Poll loop exited: stopped=$stopped, activeStream=$activeStream, isActive=${clientScope.isActive}")
         } finally {
             connected = false
             rotationJob?.cancel()
@@ -239,18 +230,14 @@ class TunnelClient(
     private suspend fun establishConnection(): FrameSender {
         val addr = config.serverHost
         val port = config.serverPort
-        val wsClient = connectionClient()
 
-        Log.i(TAG, "Connecting to tunnel $addr:$port")
-
-        // HTTP disguise
-        if (config.httpDisguise) {
-            performHttpDisguise(addr, port, wsClient)
+        Log.i(TAG, "Connecting to HTTP/2 tunnel $addr:$port")
+        if (cfIpDns != null) {
+            Log.w(TAG, "CF IP DNS override is not supported by Cronet tunnel transport")
         }
-
-        // WebSocket URL
-        val wsPath = config.wsPath.let { if (it.startsWith("/")) it else "/$it" }
-        val wsUrl = "wss://$addr:$port$wsPath"
+        if (protect != null) {
+            Log.w(TAG, "Cronet tunnel transport cannot use the OkHttp SocketFactory protect hook")
+        }
 
         // Encode AUTH payload
         val authCapabilities = if (config.paddingEnabled) listOf(FrameCodec.CAP_PADDING) else emptyList()
@@ -259,18 +246,18 @@ class TunnelClient(
         )
 
         // Pre-create frame channel — registered in onAuthSuccess before any post-auth frame arrives.
-        // OkHttp serializes onMessage callbacks on a single thread, so by the time the first
-        // post-auth onFrame fires, the channel is already registered.
         val frameChannel = Channel<ByteArray>(Channel.UNLIMITED)
 
-        val tunnelWs = TunnelWebSocket(
-            url = wsUrl,
+        val tunnelStream = CronetTunnelStream(
+            context = context,
+            url = TunnelEndpoint.h2Url(addr, port, TunnelEndpoint.DEFAULT_H2_PATH),
+            allowInsecure = config.allowInsecure,
             authPayload = authPayload,
             customHeaders = config.customHeaders,
             onAuthSuccess = { sender ->
                 frameChannels[sender] = frameChannel
                 cfIpSelector?.markConnected()
-                onCfIpChanged(cfIpDns?.getCurrentIp())
+                onCfIpChanged(null)
             },
             onFrame = { sender, frameBytes ->
                 frameChannels[sender]?.trySend(frameBytes)
@@ -282,7 +269,7 @@ class TunnelClient(
         )
 
         return try {
-            tunnelWs.connect(wsClient)
+            tunnelStream.connect()
         } catch (e: Exception) {
             frameChannel.close()
             cfIpSelector?.markCandidateFailed()
@@ -290,43 +277,13 @@ class TunnelClient(
         }
     }
 
-    private fun connectionClient(): OkHttpClient {
-        return if (cfIpDns != null) {
-            okHttpClient.newBuilder().dns(cfIpDns).build()
-        } else {
-            okHttpClient
-        }
-    }
-
     private fun handleCfDisconnect(sender: FrameSender) {
         val selector = cfIpSelector ?: return
         if (stopped) return
         when {
-            sender === drainingWs -> Unit
-            sender === activeWs -> selector.markActiveDisconnectedUnexpectedly()
+            sender === drainingStream -> Unit
+            sender === activeStream -> selector.markActiveDisconnectedUnexpectedly()
             else -> selector.markCandidateFailed()
-        }
-    }
-
-    private suspend fun performHttpDisguise(addr: String, port: Int, client: OkHttpClient) {
-        val base = "https://$addr:$port"
-        val disguiseClient = client.newBuilder()
-            .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(5, TimeUnit.SECONDS)
-            .build()
-
-        try {
-            withContext(Dispatchers.IO) {
-                disguiseClient.newCall(Request.Builder().url(base + "/").build()).execute().close()
-            }
-            delay(Random.nextLong(500, 2000))
-            withContext(Dispatchers.IO) {
-                disguiseClient.newCall(Request.Builder().url(base + "/favicon.ico").build()).execute().close()
-            }
-            delay(Random.nextLong(500, 2000))
-        } catch (_: Exception) {
-            // HTTP disguise best-effort — continue regardless
-            Log.d(TAG, "HTTP disguise request failed (non-fatal)")
         }
     }
 
@@ -358,7 +315,7 @@ class TunnelClient(
                     }
                     is Frame.Padding -> { /* silently discard */ }
                     is Frame.Connect -> {
-                        if (sender === drainingWs) {
+                        if (sender === drainingStream) {
                             // Reject new reverse requests on draining connection
                             try {
                                 sender.sendFrame(FrameCodec.encode(Frame.ConnectFailed(frame.reqid)))
@@ -421,8 +378,8 @@ class TunnelClient(
     }
 
     private suspend fun rotationCycle() {
-        val oldWs = activeWs ?: return
-        if (!oldWs.isOpen) return
+        val oldStream = activeStream ?: return
+        if (!oldStream.isOpen) return
 
         cfIpSelector?.forceNextOnNextLookup()
 
@@ -452,21 +409,21 @@ class TunnelClient(
 
         // Atomic switch: old → draining, candidate → active
         stateMutex.withLock {
-            candidateWs = null
-            // If a previous draining ws is still lingering, close it now
-            drainingWs?.let { prior ->
+            candidateStream = null
+            // If a previous draining stream is still lingering, close it now
+            drainingStream?.let { prior ->
                 clientScope.launch { closeSender(prior) }
             }
-            drainingWs = oldWs
-            activeWs = candidate
+            drainingStream = oldStream
+            activeStream = candidate
         }
 
-        Log.i(TAG, "Rotation: new active WS, old draining")
+        Log.i(TAG, "Rotation: new active HTTP/2 stream, old draining")
 
         // Wait drain timeout, then poll until idle
         try {
             delay(DEFAULT_DRAIN_TIMEOUT_MS)
-            while (isStillDraining(oldWs, DEFAULT_DRAIN_IDLE_TIMEOUT_MS)) {
+            while (isStillDraining(oldStream, DEFAULT_DRAIN_IDLE_TIMEOUT_MS)) {
                 delay(1000)
                 if (stopped) break
             }
@@ -474,11 +431,11 @@ class TunnelClient(
             // Continue to cleanup
         } finally {
             stateMutex.withLock {
-                if (drainingWs === oldWs) {
-                    drainingWs = null
+                if (drainingStream === oldStream) {
+                    drainingStream = null
                 }
             }
-            closeSender(oldWs)
+            closeSender(oldStream)
         }
     }
 
@@ -507,9 +464,9 @@ class TunnelClient(
         forwardRegistry.closeSessionsFor(sender)
 
         stateMutex.withLock {
-            if (activeWs === sender) activeWs = null
-            if (drainingWs === sender) drainingWs = null
-            if (candidateWs === sender) candidateWs = null
+            if (activeStream === sender) activeStream = null
+            if (drainingStream === sender) drainingStream = null
+            if (candidateStream === sender) candidateStream = null
         }
 
         try { sender.close(1000, "done") } catch (_: Exception) {}

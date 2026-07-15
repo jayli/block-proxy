@@ -1,13 +1,8 @@
-const https = require('https');
+const http2 = require('http2');
 const crypto = require('crypto');
-const wsModule = require('ws');
 const { FRAME_TYPES, MAX_FRAME_PAYLOAD, CAP_PADDING, encodeFrame, decodeFrame } = require('./protocol');
-const { handleDisguiseRequest } = require('./disguiseResponse');
 
-const WebSocketServer = wsModule.WebSocketServer || wsModule.Server;
-const WebSocket = wsModule.WebSocket || wsModule;
-
-const DEFAULT_WS_PATH = '/websocket';
+const DEFAULT_H2_PATH = '/h2-tunnel';
 const DEFAULT_HEARTBEAT_MIN = 15;
 const DEFAULT_HEARTBEAT_MAX = 40;
 const DEFAULT_HEARTBEAT_TIMEOUT = 60;
@@ -20,7 +15,7 @@ class TunnelServer {
     this.cert = options.cert;
     this.key = options.key;
     this.credentials = options.credentials;
-    this.wsPath = options.wsPath || options.tunnel_ws_path || DEFAULT_WS_PATH;
+    this.h2Path = options.h2Path || options.tunnel_h2_path || DEFAULT_H2_PATH;
     this.heartbeatMin = options.heartbeatMin || options.tunnel_heartbeat_min || DEFAULT_HEARTBEAT_MIN;
     this.heartbeatMax = options.heartbeatMax || options.tunnel_heartbeat_max || DEFAULT_HEARTBEAT_MAX;
     this.heartbeatTimeout = options.heartbeatTimeout || options.tunnel_heartbeat_timeout || DEFAULT_HEARTBEAT_TIMEOUT;
@@ -36,7 +31,6 @@ class TunnelServer {
     this._frameHandlers = [];
     this._clientSockets = new Set();
     this._server = null;
-    this._wss = null;
     this._clientWs = null;
     this._records = new Map();
     this._heartbeatTimer = null;
@@ -45,19 +39,14 @@ class TunnelServer {
 
   start() {
     return new Promise((resolve, reject) => {
-      this._server = https.createServer({
+      this._server = http2.createSecureServer({
         key: this.key,
         cert: this.cert,
         minVersion: 'TLSv1.2',
         sessionTimeout: 300,
-      }, (req, res) => this._handleHttpRequest(req, res));
-
-      this._wss = new WebSocketServer({
-        server: this._server,
-        path: this.wsPath,
-        maxPayload: MAX_FRAME_PAYLOAD + 2,
+        allowHTTP1: false,
       });
-      this._wss.on('connection', (ws, req) => this._handleWsConnection(ws, req));
+      this._server.on('stream', (stream, headers) => this._handleH2Stream(stream, headers));
 
       this._server.once('error', reject);
       this._server.listen(this.port, () => {
@@ -81,28 +70,16 @@ class TunnelServer {
       }
     }
     for (const ws of sockets) {
-      this._closeWs(ws, 1001, 'server stopping');
+      this._closeConnection(ws, 'server stopping');
     }
     setTimeout(() => {
       for (const ws of sockets) {
-        if (ws.readyState !== WebSocket.CLOSED) ws.terminate();
+        if (!ws.closed) ws.terminate();
       }
     }, 50).unref();
     this._records.clear();
     this._clientSockets.clear();
     this._clientWs = null;
-
-    const closeWss = this._wss
-      ? new Promise((resolve) => {
-        const wss = this._wss;
-        this._wss = null;
-        const timer = setTimeout(resolve, 500);
-        wss.close(() => {
-          clearTimeout(timer);
-          resolve();
-        });
-      })
-      : Promise.resolve();
 
     const closeServer = this._server
       ? new Promise((resolve) => {
@@ -116,17 +93,29 @@ class TunnelServer {
       })
       : Promise.resolve();
 
-    await Promise.all([closeWss, closeServer]);
+    await closeServer;
   }
 
-  _handleHttpRequest(req, res) {
-    handleDisguiseRequest(req, res);
-  }
+  _handleH2Stream(stream, headers) {
+    const method = headers[':method'];
+    const path = headers[':path'];
+    if (method !== 'POST' || path !== this.h2Path) {
+      stream.respond({
+        ':status': 404,
+        'content-type': 'text/plain; charset=utf-8',
+      });
+      stream.end('Not found');
+      return;
+    }
 
-  _handleWsConnection(ws, req) {
-    const socket = req.socket;
-    socket.setNoDelay(true);
-    socket.setKeepAlive(true, 60000);
+    stream.respond({
+      ':status': 200,
+      'content-type': 'application/octet-stream',
+      'cache-control': 'no-store',
+    });
+
+    const socket = stream.session && stream.session.socket;
+    const ws = new H2TunnelConnection(stream);
 
     const record = {
       ws,
@@ -142,18 +131,13 @@ class TunnelServer {
     };
     this._records.set(ws, record);
 
-    ws.on('message', (data, isBinary) => {
-      const binary = typeof isBinary === 'boolean' ? isBinary : !isTextMessage(data);
-      if (!binary) {
-        this._closeWs(ws, 1003, 'binary frames required');
-        return;
-      }
-      this._handleWsMessage(ws, Buffer.from(data));
+    ws.onFrame((data) => {
+      this._handleWsMessage(ws, data);
     });
 
-    ws.on('close', () => this._handleWsClose(ws));
-    ws.on('error', (err) => {
-      console.error('[Tunnel] WebSocket error:', err.message);
+    ws.onClose(() => this._handleWsClose(ws));
+    ws.onError((err) => {
+      console.error('[Tunnel] HTTP/2 stream error:', err.message);
     });
   }
 
@@ -172,7 +156,7 @@ class TunnelServer {
 
     if (!record.authenticated) {
       if (frame.type !== FRAME_TYPES.AUTH) {
-        this._closeWs(ws, 1008, 'auth required');
+        this._closeConnection(ws, 'auth required');
         return;
       }
       this._handleAuth(record, frame);
@@ -205,7 +189,7 @@ class TunnelServer {
 
     if (username !== this.credentials.username || password !== this.credentials.password) {
       this._sendWsFrame(ws, { type: FRAME_TYPES.AUTH_FAIL }).finally(() => {
-        this._closeWs(ws, 1008, 'auth failed');
+        this._closeConnection(ws, 'auth failed');
       });
       return;
     }
@@ -213,7 +197,7 @@ class TunnelServer {
     const counts = this.getConnectionCounts();
     if (counts.active >= 1 && counts.draining >= 1) {
       this._sendWsFrame(ws, { type: FRAME_TYPES.ERROR, message: 'Tunnel connection limit (2)' }).finally(() => {
-        this._closeWs(ws, 1008, 'connection limit');
+        this._closeConnection(ws, 'connection limit');
       });
       return;
     }
@@ -310,15 +294,15 @@ class TunnelServer {
   }
 
   _sendWsFrame(ws, frame) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (!ws || ws.closed) {
       return Promise.resolve(false);
     }
 
     const data = encodeFrame(frame);
     return new Promise((resolve) => {
-      ws.send(data, { binary: true }, (err) => {
+      ws.send(data, (err) => {
         if (err) {
-          console.warn('[Tunnel] WebSocket send failed:', err.message);
+          console.warn('[Tunnel] HTTP/2 send failed:', err.message);
           resolve(false);
           return;
         }
@@ -327,16 +311,12 @@ class TunnelServer {
     });
   }
 
-  _closeWs(ws, code, reason) {
+  _closeConnection(ws, reason) {
     if (!ws) return;
-    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-      try {
-        ws.close(code, reason);
-      } catch (err) {
-        ws.terminate();
-      }
+    if (!ws.closed) {
+      try { ws.close(reason); } catch (err) { ws.terminate(); }
       setTimeout(() => {
-        if (ws.readyState !== WebSocket.CLOSED) ws.terminate();
+        if (!ws.closed) ws.terminate();
       }, 100).unref();
     }
   }
@@ -346,7 +326,7 @@ class TunnelServer {
   }
 
   getActiveSocket() {
-    return this._clientWs && this._clientWs.readyState === WebSocket.OPEN ? this._clientWs : null;
+    return this._clientWs && !this._clientWs.closed ? this._clientWs : null;
   }
 
   setActiveRequestChecker(fn) {
@@ -373,7 +353,7 @@ class TunnelServer {
         record.drainTimer = null;
       }
     }
-    if (record.ws.readyState !== WebSocket.CLOSED) {
+    if (!record.ws.closed) {
       record.ws.terminate();
     }
   }
@@ -417,8 +397,8 @@ class TunnelServer {
     for (const record of this._records.values()) {
       if (!record.authenticated || (record.state !== 'active' && record.state !== 'draining')) continue;
       if (now - record.pongTime > timeoutMs) {
-        console.log(`[Tunnel] Heartbeat timeout (${this.heartbeatTimeout}s no valid PONG), closing WS`);
-        this._closeWs(record.ws, 1001, 'heartbeat timeout');
+        console.log(`[Tunnel] Heartbeat timeout (${this.heartbeatTimeout}s no valid PONG), closing H2 stream`);
+        this._closeConnection(record.ws, 'heartbeat timeout');
         continue;
       }
 
@@ -455,8 +435,75 @@ class TunnelServer {
 
 }
 
-function isTextMessage(data) {
-  return typeof data === 'string';
+class H2TunnelConnection {
+  constructor(stream) {
+    this.stream = stream;
+    this.closed = false;
+    this._buffer = Buffer.alloc(0);
+    this._frameHandlers = [];
+    this._closeHandlers = [];
+    this._errorHandlers = [];
+
+    stream.on('data', (chunk) => this._onData(Buffer.from(chunk)));
+    stream.on('close', () => {
+      this.closed = true;
+      this._closeHandlers.forEach(handler => handler());
+    });
+    stream.on('error', (err) => {
+      this._errorHandlers.forEach(handler => handler(err));
+    });
+  }
+
+  onFrame(handler) {
+    this._frameHandlers.push(handler);
+  }
+
+  onClose(handler) {
+    this._closeHandlers.push(handler);
+  }
+
+  onError(handler) {
+    this._errorHandlers.push(handler);
+  }
+
+  send(data, callback) {
+    if (this.closed || this.stream.destroyed) {
+      callback(new Error('stream closed'));
+      return;
+    }
+    this.stream.write(data, callback);
+  }
+
+  close(reason) {
+    if (this.closed) return;
+    this.closed = true;
+    try {
+      this.stream.close(http2.constants.NGHTTP2_NO_ERROR);
+    } catch (_) {
+      try { this.stream.end(); } catch (_) {}
+    }
+  }
+
+  terminate() {
+    if (this.closed) return;
+    this.closed = true;
+    try { this.stream.destroy(); } catch (_) {}
+  }
+
+  _onData(chunk) {
+    this._buffer = Buffer.concat([this._buffer, chunk]);
+    while (this._buffer.length >= 2) {
+      const length = this._buffer.readUInt16BE(0);
+      if (length > MAX_FRAME_PAYLOAD) {
+        this.terminate();
+        return;
+      }
+      if (this._buffer.length < 2 + length) return;
+      const frameBytes = this._buffer.slice(0, 2 + length);
+      this._buffer = this._buffer.slice(2 + length);
+      this._frameHandlers.forEach(handler => handler(frameBytes));
+    }
+  }
 }
 
 module.exports = TunnelServer;

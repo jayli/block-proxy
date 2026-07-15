@@ -383,6 +383,7 @@ class BlockProxyVpnService : VpnService() {
         // Create TunnelClient (needed by TunnelForwardConnector for LocalSocksServer)
         val scope = serviceScope ?: return
         val client = TunnelClient(
+            context = applicationContext,
             config = config,
             credentials = credentials,
             targetSocketFactory = targetSocketFactory,
@@ -439,6 +440,7 @@ class BlockProxyVpnService : VpnService() {
         // Start the tunnel client (establishes TLS connections to remote server)
         statusStore.update(TunnelStatus.Connecting)
         updateNotification(TunnelStatus.Connecting)
+        TunnelStartupDelay.waitForVpnNetworkSettle()
         client.start()
     }
 

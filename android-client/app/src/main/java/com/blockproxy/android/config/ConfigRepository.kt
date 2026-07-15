@@ -81,8 +81,8 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             serverPort = prefs[KEY_PORT] ?: ServerConfig.DEFAULT_PORT,
             useTls = prefs[KEY_USE_TLS] ?: true,
             allowInsecure = prefs[KEY_ALLOW_INSECURE] ?: true,
-            wsPath = prefs[KEY_WS_PATH] ?: "/websocket",
-            httpDisguise = prefs[KEY_HTTP_DISGUISE] ?: true,
+            wsPath = prefs[KEY_WS_PATH] ?: "/h2-tunnel",
+            httpDisguise = prefs[KEY_HTTP_DISGUISE] ?: false,
             cfCdnEnabled = prefs[KEY_CF_CDN_ENABLED] ?: false,
         )
     }
