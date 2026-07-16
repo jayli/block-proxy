@@ -64,6 +64,10 @@ data class ConfigUiState(
     val password: String = "",
     val isSaved: Boolean = false,
     val cfCdnEnabled: Boolean = false,
+    val silentModeEnabled: Boolean = false,
+    val sseHost: String = "",
+    val ssePort: String = "8003",
+    val ssePath: String = "/api/v1/events",
 )
 
 /**
@@ -128,6 +132,10 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
                         useTls = cfg.useTls,
                         allowInsecure = cfg.allowInsecure,
                         cfCdnEnabled = cfg.cfCdnEnabled,
+                        silentModeEnabled = cfg.silentModeEnabled,
+                        sseHost = cfg.sseHost,
+                        ssePort = cfg.ssePort.toString(),
+                        ssePath = cfg.ssePath,
                         isSaved = true,
                     )
                 }
@@ -235,6 +243,8 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
         val state = _configUiState.value
         return state.host.isNotBlank() &&
             state.port.toIntOrNull() in 1..65535 &&
+            (!state.silentModeEnabled ||
+                (state.ssePort.toIntOrNull() in 1..65535 && state.ssePath.isNotBlank())) &&
             isCfConfigValid(state) &&
             state.username.isNotBlank() &&
             state.password.isNotBlank() &&
@@ -271,6 +281,22 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
         _configUiState.value = _configUiState.value.copy(cfCdnEnabled = enabled, isSaved = false)
     }
 
+    fun updateSilentModeEnabled(enabled: Boolean) {
+        _configUiState.value = _configUiState.value.copy(silentModeEnabled = enabled, isSaved = false)
+    }
+
+    fun updateSseHost(host: String) {
+        _configUiState.value = _configUiState.value.copy(sseHost = host, isSaved = false)
+    }
+
+    fun updateSsePort(port: String) {
+        _configUiState.value = _configUiState.value.copy(ssePort = port, isSaved = false)
+    }
+
+    fun updateSsePath(path: String) {
+        _configUiState.value = _configUiState.value.copy(ssePath = path, isSaved = false)
+    }
+
     /**
      * Saves the current config and credentials to persistent storage.
      */
@@ -284,6 +310,10 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
                 useTls = state.useTls,
                 allowInsecure = state.allowInsecure,
                 cfCdnEnabled = state.cfCdnEnabled,
+                silentModeEnabled = state.silentModeEnabled,
+                sseHost = state.sseHost,
+                ssePort = state.ssePort.toIntOrNull() ?: ServerConfig.DEFAULT_PORT,
+                ssePath = state.ssePath.ifBlank { "/api/v1/events" },
             )
             configRepository.save(config)
 

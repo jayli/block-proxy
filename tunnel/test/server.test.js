@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const wsModule = require('ws');
 const TunnelServer = require('../server');
-const { FRAME_TYPES, encodeFrame, decodeFrame } = require('../protocol');
+const { FRAME_TYPES, CAP_SILENT_MODE, encodeFrame, decodeFrame } = require('../protocol');
 
 const WebSocket = wsModule.WebSocket || wsModule;
 
@@ -237,6 +237,60 @@ describe('TunnelServer WebSocket', () => {
     const ws = await connectClient(port);
     const response = await authenticate(ws);
     assert.equal(response.type, FRAME_TYPES.AUTH_OK);
+    closeWs(ws);
+  });
+
+  it('uses 210-270s heartbeat interval with 300s timeout by default', () => {
+    server = new TunnelServer({
+      port: nextPort(),
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' }
+    });
+
+    assert.equal(server.heartbeatMin, 210);
+    assert.equal(server.heartbeatMax, 270);
+    assert.equal(server.heartbeatTimeout, 300);
+  });
+
+  it('records silent mode when AUTH carries silent_mode capability', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' }
+    });
+    await server.start();
+
+    const ws = await connectClient(port);
+    const pending = readFrame(ws);
+    ws.send(encodeFrame({
+      type: FRAME_TYPES.AUTH,
+      username: 'admin',
+      password: 'secret',
+      capabilities: [CAP_SILENT_MODE],
+    }));
+    assert.equal((await pending).type, FRAME_TYPES.AUTH_OK);
+
+    const record = [...server._records.values()].find(r => r.authenticated);
+    assert.equal(record.silentMode, true);
+    assert.ok(record.lastDataActivityAt > 0);
+    closeWs(ws);
+  });
+
+  it('leaves silent mode disabled when AUTH omits silent_mode capability', async () => {
+    const port = nextPort();
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' }
+    });
+    await server.start();
+
+    const ws = await connectClient(port);
+    assert.equal((await authenticate(ws)).type, FRAME_TYPES.AUTH_OK);
+
+    const record = [...server._records.values()].find(r => r.authenticated);
+    assert.equal(record.silentMode, false);
     closeWs(ws);
   });
 

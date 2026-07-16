@@ -1,6 +1,8 @@
 const { Duplex } = require('stream');
 const net = require('net');
+const crypto = require('crypto');
 const { FRAME_TYPES, ATYP, MAX_DATA_CHUNK } = require('./protocol');
+const WakeBuffer = require('./wakeBuffer');
 
 const MAX_FORWARD_CONNECTIONS = 100;
 const FORWARD_IDLE_TIMEOUT = 300 * 1000; // 5 min idle timeout for established connections
@@ -15,8 +17,21 @@ class TunnelManager {
     this._forwardCount = 0;
     this._connected = false;
     this._clientAddress = null;
+    this._clientTokens = new Map();
+    this._silentModeClients = new Set();
+    this._sleepingClients = new Set();
+    this._sseControlHandler = typeof tunnelServer.getSseControlHandler === 'function'
+      ? tunnelServer.getSseControlHandler()
+      : null;
+    this._wakeBuffer = new WakeBuffer({
+      sseControlHandler: this._sseControlHandler,
+      wakeTimeout: config.tunnel_wake_timeout || 10_000,
+    });
 
     this._server.onFrame((frame, socket) => this._handleFrame(frame, socket));
+    if (typeof this._server.setTunnelManager === 'function') {
+      this._server.setTunnelManager(this);
+    }
   }
 
   matchesTunnelDomain(host) {
@@ -39,13 +54,24 @@ class TunnelManager {
       return stream;
     };
 
-    if (!this._connected) return createErrorStream('tunnel-disconnected');
+    if (!this._connected) {
+      const clientToken = this._getSleepingClientToken();
+      if (clientToken && this._isSleepingClient(clientToken)) {
+        return this._createPendingWakeStream(clientToken, host, port, callback);
+      }
+      return createErrorStream('tunnel-disconnected');
+    }
 
     const socket = this._selectSocket();
     if (!socket) return createErrorStream('tunnel-disconnected');
 
+    return this._createReverseForwardStream(socket, host, port, callback);
+  }
+
+  _createReverseForwardStream(socket, host, port, callback, existingStream = null) {
     const reqid = this._allocateReqid();
-    const stream = new TunnelDuplex(this, reqid);
+    const stream = existingStream || new TunnelDuplex(this, reqid);
+    stream.setReqid(reqid);
 
     this._activeRequests.set(reqid, {
       reqid, stream, confirmed: false, timeout: null, direction: 'reverse',
@@ -82,6 +108,36 @@ class TunnelManager {
     return stream;
   }
 
+  _createPendingWakeStream(clientToken, host, port, callback) {
+    const stream = new TunnelDuplex(this, null);
+    stream.isPendingWakeStream = true;
+    this._waitAndForward(clientToken, host, port, callback, stream).catch((err) => {
+      stream.destroy(err);
+    });
+    return stream;
+  }
+
+  async _waitAndForward(clientToken, host, port, callback, pendingStream) {
+    try {
+      await this._wakeBuffer.waitForTunnel(clientToken);
+      const socket = this._selectSocket();
+      if (!socket) {
+        pendingStream.destroy(new Error('tunnel-disconnected'));
+        return;
+      }
+      this._bindForwardStreamAfterWake(pendingStream, socket, host, port, callback);
+    } catch (err) {
+      pendingStream.destroy(err.message === 'client-offline'
+        ? new Error('client-offline')
+        : new Error('tunnel-wake-timeout'));
+    }
+  }
+
+  _bindForwardStreamAfterWake(pendingStream, socket, host, port, callback) {
+    pendingStream.isPendingWakeStream = false;
+    this._createReverseForwardStream(socket, host, port, callback, pendingStream);
+  }
+
   _selectSocket() {
     if (typeof this._server.getActiveSocket === 'function') {
       return this._server.getActiveSocket();
@@ -94,6 +150,32 @@ class TunnelManager {
     this._reqidCounter++;
     if (this._reqidCounter > 0x7FFF) this._reqidCounter = 1;
     return this._reqidCounter;
+  }
+
+  _computeToken() {
+    const credentials = this._server.credentials || {};
+    return crypto
+      .createHash('sha256')
+      .update(`${credentials.username}:${credentials.password}`)
+      .digest('hex');
+  }
+
+  _getSleepingClientToken() {
+    const token = this._computeToken();
+    return this._sleepingClients.has(token) ? token : null;
+  }
+
+  _isSleepingClient(clientToken) {
+    return this._sleepingClients.has(clientToken);
+  }
+
+  markClientSleeping(clientToken) {
+    this._silentModeClients.add(clientToken);
+    this._sleepingClients.add(clientToken);
+  }
+
+  markClientSseDisconnected(clientToken) {
+    this._sleepingClients.delete(clientToken);
   }
 
   _handleFrame(frame, socket) {
@@ -370,7 +452,20 @@ class TunnelManager {
     if (connected) {
       this._connected = true;
       this._clientAddress = clientAddress || this._clientAddress;
+      const token = this._computeToken();
+      this._clientTokens.set(socket, token);
+      const record = this._server._records && this._server._records.get(socket);
+      if (record && record.silentMode) {
+        this._silentModeClients.add(token);
+      }
+      this._sleepingClients.delete(token);
+      this._wakeBuffer.onTunnelReconnected(token);
     } else {
+      const token = this._clientTokens.get(socket);
+      if (token) {
+        this._wakeBuffer.onClientDisconnected(token);
+        this._clientTokens.delete(socket);
+      }
       // 只清理该 socket 上的请求
       for (const [reqid, entry] of this._activeRequests) {
         if (entry.socket === socket) {
@@ -402,23 +497,31 @@ class TunnelDuplex extends Duplex {
     this.isTunnelStream = true;
   }
 
+  setReqid(reqid) {
+    this._reqid = reqid;
+  }
+
   _read() {
     // Data is pushed via manager._handleFrame
   }
 
   _write(chunk, encoding, callback) {
+    if (this._reqid == null) {
+      callback(new Error('tunnel-pending-wake'));
+      return;
+    }
     this._manager._sendData(this._reqid, chunk)
       .then(() => callback())
       .catch(() => callback());
   }
 
   _final(callback) {
-    this._manager._sendClose(this._reqid);
+    if (this._reqid != null) this._manager._sendClose(this._reqid);
     callback();
   }
 
   _destroy(err, callback) {
-    this._manager._sendClose(this._reqid);
+    if (this._reqid != null) this._manager._sendClose(this._reqid);
     callback(err);
   }
 }

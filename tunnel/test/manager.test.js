@@ -10,13 +10,21 @@ function createMockServer() {
   const socketB = { name: 'active-b' };
   const sockets = new Set([socketA]);
   let activeSocket = socketA;
+  let wakeCount = 0;
 
   return {
+    credentials: { username: 'admin', password: 'secret' },
     onFrame: (h) => handlers.push(h),
     sendFrame: (frame, socket) => {
       sentFrames.push({ frame, socket });
       return Promise.resolve(true);
     },
+    getSseControlHandler: () => ({
+      sendWakeSignal: () => {
+        wakeCount += 1;
+        return true;
+      },
+    }),
     getActiveSocket: () => activeSocket,
     getConnectionCounts: () => ({
       active: activeSocket ? 1 : 0,
@@ -31,6 +39,7 @@ function createMockServer() {
     _emit: (frame, socket = socketA) => handlers.forEach(h => h(frame, socket)),
     _handlers: handlers,
     _sentFrames: sentFrames,
+    _wakeCount: () => wakeCount,
     _clientSockets: sockets,
     _socketA: socketA,
     _socketB: socketB,
@@ -198,6 +207,35 @@ describe('TunnelManager.forward', () => {
     assert.equal(status.connections, 2);
     assert.equal(status.activeConnections, 1);
     assert.equal(status.drainingConnections, 1);
+  });
+
+  it('wakes a sleeping client when disconnected instead of returning tunnel-disconnected', async () => {
+    const server = createMockServer();
+    server._setActiveSocket(null);
+    const manager = new TunnelManager(server, { tunnel_domains: [] });
+    const token = manager._computeToken();
+    manager.markClientSleeping(token);
+
+    const stream = manager.forward('sleep.test', 443, () => {});
+
+    assert.ok(stream.isPendingWakeStream);
+    assert.equal(server._wakeCount(), 1);
+    stream.destroy();
+  });
+
+  it('reuses the in-flight wake promise for concurrent sleeping forwards', async () => {
+    const server = createMockServer();
+    server._setActiveSocket(null);
+    const manager = new TunnelManager(server, { tunnel_domains: [] });
+    const token = manager._computeToken();
+    manager.markClientSleeping(token);
+
+    const stream1 = manager.forward('one.test', 443, () => {});
+    const stream2 = manager.forward('two.test', 443, () => {});
+
+    assert.equal(server._wakeCount(), 1);
+    stream1.destroy();
+    stream2.destroy();
   });
 
   it('counts active requests only for the selected socket', () => {

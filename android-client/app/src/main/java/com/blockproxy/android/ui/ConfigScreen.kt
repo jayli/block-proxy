@@ -89,6 +89,10 @@ fun ConfigScreen(
     onUpdateUsername: (String) -> Unit,
     onUpdatePassword: (String) -> Unit,
     onUpdateCfCdnEnabled: (Boolean) -> Unit,
+    onUpdateSilentModeEnabled: (Boolean) -> Unit,
+    onUpdateSseHost: (String) -> Unit,
+    onUpdateSsePort: (String) -> Unit,
+    onUpdateSsePath: (String) -> Unit,
     onRefreshCfIpPool: () -> Unit,
     cfIpRefreshState: CfIpRefreshState,
     connectionTestState: ConnectionTestState,
@@ -288,6 +292,77 @@ fun ConfigScreen(
                                     )
                                 }
                                 CfIpRefreshState.Idle -> Unit
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "静默模式",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "启用静默监听",
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        Switch(
+                            checked = config.silentModeEnabled,
+                            onCheckedChange = onUpdateSilentModeEnabled,
+                        )
+                    }
+
+                    AnimatedVisibility(visible = config.silentModeEnabled) {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            OutlinedTextField(
+                                value = config.sseHost,
+                                onValueChange = onUpdateSseHost,
+                                label = { Text("SSE 地址") },
+                                placeholder = { Text(config.host.ifBlank { "example.com" }) },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                OutlinedTextField(
+                                    value = config.ssePort,
+                                    onValueChange = onUpdateSsePort,
+                                    label = { Text("SSE 端口") },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                )
+                                OutlinedTextField(
+                                    value = config.ssePath,
+                                    onValueChange = onUpdateSsePath,
+                                    label = { Text("SSE 路径") },
+                                    modifier = Modifier.weight(2f),
+                                    singleLine = true,
+                                )
                             }
                         }
                     }

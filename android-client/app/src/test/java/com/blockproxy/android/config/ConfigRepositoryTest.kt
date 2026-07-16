@@ -163,6 +163,21 @@ class ConfigRepositoryTest {
     }
 
     @Test
+    fun `silent mode and sse config have expected defaults`() = scope.runTest {
+        repository.save(ServerConfig(serverHost = "example.com"))
+
+        repository.observe().test {
+            val config = awaitItem()!!
+            assertEquals(false, config.silentModeEnabled)
+            assertEquals("", config.sseHost)
+            assertEquals(ServerConfig.DEFAULT_PORT, config.ssePort)
+            assertEquals("/api/v1/events", config.ssePath)
+            assertEquals(3_000_000L, config.silentIdleTimeoutMs)
+            cancelAndConsumeRemainingEvents()
+        }
+    }
+
+    @Test
     fun `padding probability defaults to five percent`() = scope.runTest {
         repository.save(ServerConfig(serverHost = "example.com"))
 
@@ -239,6 +254,17 @@ class ConfigRepositoryTest {
     @Test(expected = IllegalArgumentException::class)
     fun `save rejects invalid port`() = scope.runTest {
         repository.save(ServerConfig(serverHost = "host.example.com", serverPort = 0))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `save rejects invalid sse port when silent mode enabled`() = scope.runTest {
+        repository.save(
+            ServerConfig(
+                serverHost = "host.example.com",
+                silentModeEnabled = true,
+                ssePort = 0,
+            )
+        )
     }
 
 }

@@ -24,6 +24,7 @@ const MAX_FRAME_PAYLOAD = 0xFFFF;
 const DATA_HEADER_LEN = 3; // type(1) + reqid(2)
 const MAX_DATA_CHUNK = MAX_FRAME_PAYLOAD - DATA_HEADER_LEN;
 const CAP_PADDING = 'padding';
+const CAP_SILENT_MODE = 'silent_mode';
 
 function encodeCapabilities(capabilities) {
   const caps = Array.isArray(capabilities) ? capabilities : [];
@@ -261,6 +262,7 @@ module.exports = {
   MAX_FRAME_PAYLOAD,
   MAX_DATA_CHUNK,
   CAP_PADDING,
+  CAP_SILENT_MODE,
   encodeFrame,
   decodeFrame,
   encodeAddress,

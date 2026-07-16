@@ -15,11 +15,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.ConcurrentHashMap
@@ -79,6 +81,7 @@ class TunnelClient(
 
     @Volatile private var stopped = true
     @Volatile private var connected = false
+    @Volatile private var lastActivityAt = System.currentTimeMillis()
 
     private var mainJob: Job? = null
     private var rotationJob: Job? = null
@@ -93,6 +96,18 @@ class TunnelClient(
     // ── Public API ──────────────────────────────────────────────────────
 
     fun isConnected(): Boolean = connected
+
+    fun globalLastActivityAt(): Long = lastActivityAt
+
+    suspend fun awaitConnected(timeoutMs: Long): Boolean {
+        return withTimeoutOrNull(timeoutMs) {
+            status.first {
+                it == TunnelStatus.Connected ||
+                    it == TunnelStatus.AuthFailed ||
+                    it == TunnelStatus.Occupied
+            }
+        }?.let { it == TunnelStatus.Connected } ?: false
+    }
 
     fun start() {
         if (!stopped) return
@@ -129,9 +144,21 @@ class TunnelClient(
         _status.value = TunnelStatus.Disconnected
     }
 
+    suspend fun disconnectForSilentMode() {
+        for (sender in listOfNotNull(activeWs, candidateWs, drainingWs)) {
+            closeSender(sender)
+        }
+        activeWs = null
+        candidateWs = null
+        drainingWs = null
+        connected = false
+        _status.value = TunnelStatus.Disconnected
+    }
+
     suspend fun openForwardSession(host: String, port: Int): ForwardSession {
         val sender = activeWs
             ?: throw IllegalStateException("No active tunnel connection")
+        lastActivityAt = System.currentTimeMillis()
         return forwardRegistry.open(host, port, sender)
     }
 
@@ -207,6 +234,7 @@ class TunnelClient(
         }
 
         connected = true
+        lastActivityAt = System.currentTimeMillis()
         _status.value = TunnelStatus.Connected
 
         // Start frame handling for this sender
@@ -250,7 +278,10 @@ class TunnelClient(
         }
 
         // Encode AUTH payload
-        val authCapabilities = if (config.paddingEnabled) listOf(FrameCodec.CAP_PADDING) else emptyList()
+        val authCapabilities = buildList {
+            if (config.paddingEnabled) add(FrameCodec.CAP_PADDING)
+            if (config.silentModeEnabled) add(FrameCodec.CAP_SILENT_MODE)
+        }
         val authPayload = FrameCodec.encode(
             Frame.Auth(credentials.username, credentials.password, authCapabilities)
         )
@@ -342,6 +373,10 @@ class TunnelClient(
                 } catch (t: Throwable) {
                     Log.w(TAG, "Failed to decode frame: ${t.message}")
                     continue
+                }
+
+                if (frame is Frame.Connect || frame is Frame.Data || frame is Frame.Close) {
+                    lastActivityAt = System.currentTimeMillis()
                 }
 
                 when (frame) {

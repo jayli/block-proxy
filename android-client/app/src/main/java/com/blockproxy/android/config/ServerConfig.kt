@@ -26,6 +26,11 @@ data class ServerConfig(
     val paddingProbability: Float = 0.05f,
     val paddingMinBytes: Int = 64,
     val paddingMaxBytes: Int = 512,
+    val silentModeEnabled: Boolean = false,
+    val sseHost: String = "",
+    val ssePort: Int = DEFAULT_PORT,
+    val ssePath: String = "/api/v1/events",
+    val silentIdleTimeoutMs: Long = 3_000_000L,
 ) {
     companion object {
         /** Default tunnel server port (matches block-proxy tunnel server). */

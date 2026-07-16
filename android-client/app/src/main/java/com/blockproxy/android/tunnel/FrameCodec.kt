@@ -7,6 +7,7 @@ object FrameCodec {
     const val MAX_PAYLOAD_SIZE = 65535
     const val MAX_DATA_CHUNK = 65532
     const val CAP_PADDING = "padding"
+    const val CAP_SILENT_MODE = "silent_mode"
 
     fun encode(frame: Frame): ByteArray {
         val payload = encodePayload(frame)

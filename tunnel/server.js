@@ -1,16 +1,18 @@
 const https = require('https');
 const crypto = require('crypto');
 const wsModule = require('ws');
-const { FRAME_TYPES, MAX_FRAME_PAYLOAD, CAP_PADDING, encodeFrame, decodeFrame } = require('./protocol');
+const { FRAME_TYPES, MAX_FRAME_PAYLOAD, CAP_PADDING, CAP_SILENT_MODE, encodeFrame, decodeFrame } = require('./protocol');
 const { handleDisguiseRequest } = require('./disguiseResponse');
+const SseControlHandler = require('./sseControl');
 
 const WebSocketServer = wsModule.WebSocketServer || wsModule.Server;
 const WebSocket = wsModule.WebSocket || wsModule;
 
 const DEFAULT_WS_PATH = '/websocket';
-const DEFAULT_HEARTBEAT_MIN = 15;
-const DEFAULT_HEARTBEAT_MAX = 40;
-const DEFAULT_HEARTBEAT_TIMEOUT = 60;
+const DEFAULT_HEARTBEAT_MIN = 210;
+const DEFAULT_HEARTBEAT_MAX = 270;
+const DEFAULT_HEARTBEAT_TIMEOUT = 300;
+const DEFAULT_SILENT_IDLE_TIMEOUT = 3000;
 const DEFAULT_ROTATION_DRAIN_TIMEOUT = 10;
 const DEFAULT_ROTATION_DRAIN_IDLE_TIMEOUT = 20;
 
@@ -26,6 +28,7 @@ class TunnelServer {
     this.heartbeatTimeout = options.heartbeatTimeout || options.tunnel_heartbeat_timeout || DEFAULT_HEARTBEAT_TIMEOUT;
     this.rotationDrainTimeout = options.rotationDrainTimeout || options.tunnel_rotation_drain_timeout || DEFAULT_ROTATION_DRAIN_TIMEOUT;
     this.rotationDrainIdleTimeout = options.rotationDrainIdleTimeout || options.tunnel_rotation_drain_idle_timeout || DEFAULT_ROTATION_DRAIN_IDLE_TIMEOUT;
+    this.silentIdleTimeout = options.silentIdleTimeout || options.tunnel_silent_idle_timeout || DEFAULT_SILENT_IDLE_TIMEOUT;
     this.paddingEnabled = options.paddingEnabled ?? true;
     this.paddingProbability = Math.max(0, Math.min(1, options.paddingProbability ?? 0.3));
     this.paddingMinBytes = Math.max(0, Math.min(65534, options.paddingMinBytes ?? 64));
@@ -41,6 +44,23 @@ class TunnelServer {
     this._records = new Map();
     this._heartbeatTimer = null;
     this._drainCheckCallback = null;
+    this._tunnelManager = null;
+    this._sseControlHandler = new SseControlHandler({
+      path: options.ssePath || options.tunnel_sse_path || '/api/v1/events',
+      keepaliveMinMs: options.sseKeepaliveMinMs || options.tunnel_sse_keepalive_min_ms || 35_000,
+      keepaliveMaxMs: options.sseKeepaliveMaxMs || options.tunnel_sse_keepalive_max_ms || 45_000,
+      onAuthenticated: (token) => {
+        if (this._tunnelManager && typeof this._tunnelManager.markClientSleeping === 'function') {
+          this._tunnelManager.markClientSleeping(token);
+        }
+      },
+      onDisconnected: (token) => {
+        if (this._tunnelManager && typeof this._tunnelManager.markClientSseDisconnected === 'function') {
+          this._tunnelManager.markClientSseDisconnected(token);
+        }
+      },
+    });
+    this._sseControlHandler.setCredentials(this.credentials);
   }
 
   start() {
@@ -120,6 +140,7 @@ class TunnelServer {
   }
 
   _handleHttpRequest(req, res) {
+    if (this._sseControlHandler.handleRequest(req, res)) return;
     handleDisguiseRequest(req, res);
   }
 
@@ -138,6 +159,8 @@ class TunnelServer {
       pongTime: Date.now(),
       pendingPingPayload: null,
       capabilities: new Set(),
+      silentMode: false,
+      lastDataActivityAt: Date.now(),
       drainTimer: null,
     };
     this._records.set(ws, record);
@@ -196,6 +219,10 @@ class TunnelServer {
       return;
     }
 
+    if (frame.type === FRAME_TYPES.DATA || frame.type === FRAME_TYPES.CONNECT || frame.type === FRAME_TYPES.CLOSE) {
+      record.lastDataActivityAt = Date.now();
+    }
+
     this._frameHandlers.forEach(handler => handler(frame, ws));
   }
 
@@ -220,7 +247,9 @@ class TunnelServer {
 
     record.authenticated = true;
     record.pongTime = Date.now();
+    record.lastDataActivityAt = Date.now();
     const clientCapabilities = new Set(frame.capabilities || []);
+    record.silentMode = clientCapabilities.has(CAP_SILENT_MODE);
     if (this.paddingEnabled && clientCapabilities.has(CAP_PADDING)) {
       record.capabilities.add(CAP_PADDING);
     }
@@ -390,6 +419,14 @@ class TunnelServer {
     return counts;
   }
 
+  setTunnelManager(manager) {
+    this._tunnelManager = manager;
+  }
+
+  getSseControlHandler() {
+    return this._sseControlHandler;
+  }
+
   _startHeartbeat() {
     if (this._heartbeatTimer) return;
     this._scheduleHeartbeat();
@@ -416,6 +453,11 @@ class TunnelServer {
 
     for (const record of this._records.values()) {
       if (!record.authenticated || (record.state !== 'active' && record.state !== 'draining')) continue;
+      if (record.silentMode && now - record.lastDataActivityAt >= this.silentIdleTimeout * 1000) {
+        console.log(`[Tunnel] Silent idle timeout (${this.silentIdleTimeout}s no tunnel data), closing WS`);
+        this._closeWs(record.ws, 1000, 'silent idle timeout');
+        continue;
+      }
       if (now - record.pongTime > timeoutMs) {
         console.log(`[Tunnel] Heartbeat timeout (${this.heartbeatTimeout}s no valid PONG), closing WS`);
         this._closeWs(record.ws, 1001, 'heartbeat timeout');

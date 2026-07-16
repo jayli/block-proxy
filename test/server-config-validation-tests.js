@@ -19,6 +19,10 @@ function minimalConfig(overrides = {}) {
     enable_tunnel: '1',
     tunnel_port: 8003,
     tunnel_ws_path: '/websocket',
+    tunnel_sse_path: '/api/v1/events',
+    tunnel_sse_keepalive_min_ms: 35000,
+    tunnel_sse_keepalive_max_ms: 45000,
+    tunnel_silent_idle_timeout: 3000,
     tunnel_domains: [],
     chain_proxy_enabled: '0',
     chain_proxy_type: 'http',
@@ -70,6 +74,22 @@ function testImportValidationBackfillsTunnelWsPath() {
   assert.strictEqual(result.config.tunnel_ws_path, '/websocket');
 }
 
+function testImportValidationBackfillsSseSilentDefaults() {
+  const config = minimalConfig();
+  delete config.tunnel_sse_path;
+  delete config.tunnel_sse_keepalive_min_ms;
+  delete config.tunnel_sse_keepalive_max_ms;
+  delete config.tunnel_silent_idle_timeout;
+
+  const result = Server._test.validateImportedConfig(config);
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.config.tunnel_sse_path, '/api/v1/events');
+  assert.strictEqual(result.config.tunnel_sse_keepalive_min_ms, 35000);
+  assert.strictEqual(result.config.tunnel_sse_keepalive_max_ms, 45000);
+  assert.strictEqual(result.config.tunnel_silent_idle_timeout, 3000);
+}
+
 function testImportValidationRejectsInvalidTunnelWsPath() {
   const result = Server._test.validateImportedConfig(minimalConfig({
     tunnel_ws_path: 123,
@@ -84,6 +104,8 @@ function run() {
   console.log('PASS testImportValidationBackfillsTunnelWsPath');
   testImportValidationRejectsInvalidTunnelWsPath();
   console.log('PASS testImportValidationRejectsInvalidTunnelWsPath');
+  testImportValidationBackfillsSseSilentDefaults();
+  console.log('PASS testImportValidationBackfillsSseSilentDefaults');
   testImportValidationRejectsInvalidChainProxyType();
   console.log('PASS testImportValidationRejectsInvalidChainProxyType');
   testImportValidationRejectsEnabledChainProxyWithoutAddress();

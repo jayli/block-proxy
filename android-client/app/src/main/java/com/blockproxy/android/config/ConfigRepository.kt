@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.blockproxy.android.cdn.CfCdnConfig
@@ -50,6 +51,10 @@ class ConfigRepository(private val source: ConfigDataSource) {
         if (config.transportMode == TunnelTransportMode.CHROME_UTLS) {
             require(config.useTls) { "Chrome uTLS transport requires TLS" }
         }
+        if (config.silentModeEnabled) {
+            require(config.ssePort in 1..65535) { "ssePort must be in 1..65535" }
+            require(config.ssePath.isNotBlank()) { "ssePath must not be blank" }
+        }
         source.save(config)
     }
 
@@ -89,6 +94,11 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             httpDisguise = prefs[KEY_HTTP_DISGUISE] ?: true,
             cfCdnEnabled = prefs[KEY_CF_CDN_ENABLED] ?: false,
             transportMode = parseTransportMode(prefs[KEY_TRANSPORT_MODE]),
+            silentModeEnabled = prefs[KEY_SILENT_MODE_ENABLED] ?: false,
+            sseHost = prefs[KEY_SSE_HOST] ?: "",
+            ssePort = prefs[KEY_SSE_PORT] ?: ServerConfig.DEFAULT_PORT,
+            ssePath = prefs[KEY_SSE_PATH] ?: "/api/v1/events",
+            silentIdleTimeoutMs = prefs[KEY_SILENT_IDLE_TIMEOUT_MS] ?: 3_000_000L,
         )
     }
 
@@ -102,6 +112,11 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             prefs[KEY_HTTP_DISGUISE] = config.httpDisguise
             prefs[KEY_CF_CDN_ENABLED] = config.cfCdnEnabled
             prefs[KEY_TRANSPORT_MODE] = config.transportMode.name
+            prefs[KEY_SILENT_MODE_ENABLED] = config.silentModeEnabled
+            prefs[KEY_SSE_HOST] = config.sseHost
+            prefs[KEY_SSE_PORT] = config.ssePort
+            prefs[KEY_SSE_PATH] = config.ssePath
+            prefs[KEY_SILENT_IDLE_TIMEOUT_MS] = config.silentIdleTimeoutMs
         }
     }
 
@@ -118,6 +133,11 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
         val KEY_HTTP_DISGUISE = booleanPreferencesKey("http_disguise")
         val KEY_CF_CDN_ENABLED = booleanPreferencesKey("cf_cdn_enabled")
         val KEY_TRANSPORT_MODE = stringPreferencesKey("transport_mode")
+        val KEY_SILENT_MODE_ENABLED = booleanPreferencesKey("silent_mode_enabled")
+        val KEY_SSE_HOST = stringPreferencesKey("sse_host")
+        val KEY_SSE_PORT = intPreferencesKey("sse_port")
+        val KEY_SSE_PATH = stringPreferencesKey("sse_path")
+        val KEY_SILENT_IDLE_TIMEOUT_MS = longPreferencesKey("silent_idle_timeout_ms")
 
         fun parseTransportMode(value: String?): TunnelTransportMode {
             return TunnelTransportMode.CHROME_UTLS

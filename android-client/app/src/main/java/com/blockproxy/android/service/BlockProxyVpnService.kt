@@ -38,7 +38,11 @@ import com.blockproxy.android.status.StatusStore
 import com.blockproxy.android.status.TunnelStatus
 import com.blockproxy.android.tun.Tun2Socks
 import com.blockproxy.android.tunnel.RealTargetSocketFactory
+import com.blockproxy.android.tunnel.SilentModeController
+import com.blockproxy.android.tunnel.SseControlClient
+import com.blockproxy.android.tunnel.SseControlLoop
 import com.blockproxy.android.tunnel.TunnelClient
+import com.blockproxy.android.tunnel.TunnelClientSilentLifecycle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -102,6 +106,7 @@ class BlockProxyVpnService : VpnService() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tunnelClient: TunnelClient? = null
+    private var silentModeController: SilentModeController? = null
     private var localSocksServer: LocalSocksServer? = null
     @Volatile
     private var cfIpPool: CfIpPool? = null
@@ -171,6 +176,15 @@ class BlockProxyVpnService : VpnService() {
 
             // Stop tunnel client
             val client = tunnelClient
+            val controller = silentModeController
+            if (controller != null) {
+                runBlocking {
+                    withTimeoutOrNull(STOP_TIMEOUT_MS) {
+                        controller.stop()
+                    }
+                }
+                silentModeController = null
+            }
             if (client != null) {
                 runBlocking {
                     withTimeoutOrNull(STOP_TIMEOUT_MS) {
@@ -259,6 +273,15 @@ class BlockProxyVpnService : VpnService() {
 
         // Stop tunnel client with timeout
         val client = tunnelClient
+        val controller = silentModeController
+        if (controller != null) {
+            runBlocking {
+                withTimeoutOrNull(STOP_TIMEOUT_MS) {
+                    controller.stop()
+                }
+            }
+            silentModeController = null
+        }
         if (client != null) {
             runBlocking {
                 withTimeoutOrNull(STOP_TIMEOUT_MS) {
@@ -347,7 +370,6 @@ class BlockProxyVpnService : VpnService() {
             Log.i(TAG, "VpnService.protect(${socket.hashCode()}) = $ok")
             ok
         }
-
         // Establish VPN interface with routes and DNS
         val vpnResult = establishVpnInterface()
         if (vpnResult == null) {
@@ -402,6 +424,23 @@ class BlockProxyVpnService : VpnService() {
             onCfIpChanged = statusStore::updateCfIp,
         )
         tunnelClient = client
+        val controller = if (effectiveConfig.silentModeEnabled) {
+            SilentModeController(
+                config = effectiveConfig,
+                tunnel = TunnelClientSilentLifecycle(client),
+                sseLoop = SseControlLoop(
+                    SseControlClient(
+                        config = effectiveConfig,
+                        credentials = credentials,
+                        okHttpClient = SseControlClient.createUnsafeOkHttpClient(),
+                    )
+                ),
+                scope = scope,
+            )
+        } else {
+            null
+        }
+        silentModeController = controller
 
         // Start local SOCKS5 server on loopback.
         // tun2socks will forward TUN traffic to this server, which applies
@@ -448,7 +487,11 @@ class BlockProxyVpnService : VpnService() {
         // Start the tunnel client (establishes TLS connections to remote server)
         statusStore.update(TunnelStatus.Connecting)
         updateNotification(TunnelStatus.Connecting)
-        client.start()
+        if (controller != null) {
+            controller.start()
+        } else {
+            client.start()
+        }
     }
 
     /**
