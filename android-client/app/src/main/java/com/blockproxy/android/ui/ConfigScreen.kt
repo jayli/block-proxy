@@ -92,7 +92,6 @@ fun ConfigScreen(
     onUpdateSilentModeEnabled: (Boolean) -> Unit,
     onUpdateSseHost: (String) -> Unit,
     onUpdateSsePort: (String) -> Unit,
-    onUpdateSsePath: (String) -> Unit,
     onRefreshCfIpPool: () -> Unit,
     cfIpRefreshState: CfIpRefreshState,
     connectionTestState: ConnectionTestState,
@@ -355,13 +354,6 @@ fun ConfigScreen(
                                     modifier = Modifier.weight(1f),
                                     singleLine = true,
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                )
-                                OutlinedTextField(
-                                    value = config.ssePath,
-                                    onValueChange = onUpdateSsePath,
-                                    label = { Text("SSE 路径") },
-                                    modifier = Modifier.weight(2f),
-                                    singleLine = true,
                                 )
                             }
                         }

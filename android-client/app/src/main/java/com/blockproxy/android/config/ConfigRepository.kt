@@ -100,7 +100,7 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             ssePort = prefs[KEY_SSE_PORT] ?: ServerConfig.DEFAULT_PORT,
             ssePath = prefs[KEY_SSE_PATH] ?: "/api/v1/events",
             silentIdleTimeoutMs = if (BuildConfig.FLAVOR == "emulator") {
-                30_000L
+                30 * 60 * 1000L
             } else {
                 prefs[KEY_SILENT_IDLE_TIMEOUT_MS] ?: 3_000_000L
             },

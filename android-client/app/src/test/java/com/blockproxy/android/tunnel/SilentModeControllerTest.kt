@@ -92,6 +92,32 @@ class SilentModeControllerTest {
         controller.stop()
     }
 
+    @Test
+    fun `sse rotation reconnects immediately without retry delay`() = scope.runTest {
+        var now = 0L
+        val tunnel = FakeTunnelLifecycle { now }
+        val sse = FakeSseLoop(SseControlResult.Rotated, SseControlResult.Disconnected)
+        val controller = SilentModeController(
+            config = ServerConfig(serverHost = "example.com", silentModeEnabled = true, silentIdleTimeoutMs = 1_000L),
+            tunnel = tunnel,
+            sseLoop = sse,
+            scope = this,
+            checkIntervalMs = 100L,
+            randomDelayMs = { 3_000L },
+            nowMs = { now },
+        )
+
+        controller.start()
+        runCurrent()
+        now = 1_200L
+        advanceTimeBy(1_200L)
+        runCurrent()
+
+        assertEquals(2, sse.connects)
+        assertEquals(SilentModeState.Sleeping, controller.state.value)
+        controller.stop()
+    }
+
     private class FakeTunnelLifecycle(
         private val nowMs: () -> Long = { 0L },
     ) : SilentModeTunnelLifecycle {

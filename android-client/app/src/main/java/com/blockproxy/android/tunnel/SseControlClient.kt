@@ -5,6 +5,10 @@ import com.blockproxy.android.config.ServerConfig
 import com.blockproxy.android.config.TunnelCredentials
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.OkHttpClient
@@ -20,11 +24,16 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+import kotlin.random.Random
+import kotlin.random.nextLong
 
 private const val SSE_TAG = "SseControlClient"
+private const val DEFAULT_ROTATION_MIN_MS = 13 * 60 * 1000L
+private const val DEFAULT_ROTATION_MAX_MS = 17 * 60 * 1000L
 
 enum class SseControlResult {
     Wake,
+    Rotated,
     Disconnected,
     AuthFailed,
     NotSupported,
@@ -36,6 +45,9 @@ class SseControlClient(
     private val credentials: TunnelCredentials,
     private val okHttpClient: OkHttpClient,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    private val rotationDelayMs: () -> Long = {
+        Random.nextLong(DEFAULT_ROTATION_MIN_MS..DEFAULT_ROTATION_MAX_MS)
+    },
 ) {
     @Volatile private var currentCall: Call? = null
 
@@ -60,7 +72,7 @@ class SseControlClient(
                             Log.w(SSE_TAG, "SSE failed: unexpected content type")
                             SseControlResult.Failed
                         } else {
-                            readSseEvents(response.body?.byteStream()).also {
+                            readSseEventsWithRotation(response.body?.byteStream()).also {
                                 Log.i(SSE_TAG, "SSE stream ended with result=$it")
                             }
                         }
@@ -94,6 +106,27 @@ class SseControlClient(
         Log.i(SSE_TAG, "Stopping SSE control stream")
         currentCall?.cancel()
         currentCall = null
+    }
+
+    private suspend fun readSseEventsWithRotation(stream: InputStream?): SseControlResult = coroutineScope {
+        val reader = async(dispatcher) { readSseEvents(stream) }
+        val rotation = async {
+            delay(rotationDelayMs())
+            SseControlResult.Rotated
+        }
+
+        select {
+            reader.onAwait { result ->
+                rotation.cancel()
+                result
+            }
+            rotation.onAwait { result ->
+                Log.i(SSE_TAG, "SSE rotation deadline reached")
+                currentCall?.cancel()
+                reader.cancel()
+                result
+            }
+        }
     }
 
     private fun readSseEvents(stream: InputStream?): SseControlResult {

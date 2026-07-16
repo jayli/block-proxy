@@ -129,6 +129,9 @@ class SilentModeController(
                     tunnel.start()
                     return
                 }
+                SseControlResult.Rotated -> {
+                    Log.i(SILENT_TAG, "SSE rotated; reconnecting immediately")
+                }
                 SseControlResult.Disconnected,
                 SseControlResult.Failed -> {
                     Log.w(SILENT_TAG, "SSE disconnected/failed; retrying")

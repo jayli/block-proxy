@@ -243,8 +243,7 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
         val state = _configUiState.value
         return state.host.isNotBlank() &&
             state.port.toIntOrNull() in 1..65535 &&
-            (!state.silentModeEnabled ||
-                (state.ssePort.toIntOrNull() in 1..65535 && state.ssePath.isNotBlank())) &&
+            (!state.silentModeEnabled || state.ssePort.toIntOrNull() in 1..65535) &&
             isCfConfigValid(state) &&
             state.username.isNotBlank() &&
             state.password.isNotBlank() &&
@@ -293,10 +292,6 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
         _configUiState.value = _configUiState.value.copy(ssePort = port, isSaved = false)
     }
 
-    fun updateSsePath(path: String) {
-        _configUiState.value = _configUiState.value.copy(ssePath = path, isSaved = false)
-    }
-
     /**
      * Saves the current config and credentials to persistent storage.
      */
@@ -313,7 +308,7 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
                 silentModeEnabled = state.silentModeEnabled,
                 sseHost = state.sseHost,
                 ssePort = state.ssePort.toIntOrNull() ?: ServerConfig.DEFAULT_PORT,
-                ssePath = state.ssePath.ifBlank { "/api/v1/events" },
+                ssePath = "/api/v1/events",
             )
             configRepository.save(config)
 

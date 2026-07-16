@@ -246,7 +246,6 @@ class MainActivity : ComponentActivity() {
                                     onUpdateSilentModeEnabled = viewModel::updateSilentModeEnabled,
                                     onUpdateSseHost = viewModel::updateSseHost,
                                     onUpdateSsePort = viewModel::updateSsePort,
-                                    onUpdateSsePath = viewModel::updateSsePath,
                                     onRefreshCfIpPool = viewModel::refreshCfIpPool,
                                     cfIpRefreshState = cfIpRefreshState,
                                     connectionTestState = connectionTestState,

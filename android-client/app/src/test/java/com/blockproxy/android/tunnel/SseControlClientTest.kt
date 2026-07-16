@@ -21,7 +21,7 @@ class SseControlClientTest {
 
     @Before
     fun setup() {
-        server = SimpleHttpServer { responseCode to (contentType to responseBody) }
+        server = SimpleHttpServer(response = { responseCode to (contentType to responseBody) })
     }
 
     @After
@@ -69,7 +69,18 @@ class SseControlClientTest {
         assertEquals(SseControlResult.Failed, client().connectAndRead())
     }
 
-    private fun client(): SseControlClient {
+    @Test
+    fun `connectAndRead returns Rotated when healthy stream exceeds rotation deadline`() = runBlocking {
+        server.close()
+        server = SimpleHttpServer(
+            response = { responseCode to (contentType to "retry: 5000\n\n") },
+            keepOpen = true,
+        )
+
+        assertEquals(SseControlResult.Rotated, client(rotationDelayMs = { 25L }).connectAndRead())
+    }
+
+    private fun client(rotationDelayMs: () -> Long = { 60_000L }): SseControlClient {
         return SseControlClient(
             config = ServerConfig(
                 serverHost = "unused.example",
@@ -81,11 +92,13 @@ class SseControlClientTest {
             credentials = TunnelCredentials("admin", "secret"),
             okHttpClient = OkHttpClient.Builder().build(),
             dispatcher = Dispatchers.IO,
+            rotationDelayMs = rotationDelayMs,
         )
     }
 
     private class SimpleHttpServer(
         private val response: () -> Pair<Int, Pair<String, String>>,
+        private val keepOpen: Boolean = false,
     ) : AutoCloseable {
         private val socket = ServerSocket(0)
         private val ready = CountDownLatch(1)
@@ -100,13 +113,21 @@ class SseControlClientTest {
                     val (contentType, body) = content
                     val bytes = body.toByteArray(Charsets.UTF_8)
                     val status = if (code == 200) "OK" else "ERR"
+                    val lengthHeader = if (keepOpen) "" else "Content-Length: ${bytes.size}\r\n"
+                    val connectionHeader = if (keepOpen) "Connection: keep-alive" else "Connection: close"
                     val headers = "HTTP/1.1 $code $status\r\n" +
                         "Content-Type: $contentType\r\n" +
-                        "Content-Length: ${bytes.size}\r\n" +
-                        "Connection: close\r\n\r\n"
+                        lengthHeader +
+                        "$connectionHeader\r\n\r\n"
                     client.getOutputStream().use {
                         it.write(headers.toByteArray(Charsets.US_ASCII))
                         it.write(bytes)
+                        it.flush()
+                        if (keepOpen) {
+                            while (!socket.isClosed && !client.isClosed) {
+                                Thread.sleep(50)
+                            }
+                        }
                     }
                     client.close()
                 } catch (_: Exception) {
