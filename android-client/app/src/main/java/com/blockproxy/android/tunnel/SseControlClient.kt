@@ -1,5 +1,6 @@
 package com.blockproxy.android.tunnel
 
+import android.util.Log
 import com.blockproxy.android.config.ServerConfig
 import com.blockproxy.android.config.TunnelCredentials
 import kotlinx.coroutines.CoroutineDispatcher
@@ -19,6 +20,8 @@ import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+
+private const val SSE_TAG = "SseControlClient"
 
 enum class SseControlResult {
     Wake,
@@ -47,24 +50,40 @@ class SseControlClient(
         try {
             val call = okHttpClient.newCall(request)
             currentCall = call
+            Log.i(SSE_TAG, "Connecting SSE control stream to ${request.url.encodedPath}")
             call.execute().use { response ->
+                Log.i(SSE_TAG, "SSE HTTP response code=${response.code} contentType=${response.header("Content-Type").orEmpty()}")
                 when (response.code) {
                     200 -> {
                         val contentType = response.header("Content-Type").orEmpty()
                         if (!contentType.startsWith("text/event-stream")) {
+                            Log.w(SSE_TAG, "SSE failed: unexpected content type")
                             SseControlResult.Failed
                         } else {
-                            readSseEvents(response.body?.byteStream())
+                            readSseEvents(response.body?.byteStream()).also {
+                                Log.i(SSE_TAG, "SSE stream ended with result=$it")
+                            }
                         }
                     }
-                    401 -> SseControlResult.AuthFailed
-                    404 -> SseControlResult.NotSupported
-                    else -> SseControlResult.Failed
+                    401 -> {
+                        Log.w(SSE_TAG, "SSE auth failed")
+                        SseControlResult.AuthFailed
+                    }
+                    404 -> {
+                        Log.w(SSE_TAG, "SSE endpoint not supported")
+                        SseControlResult.NotSupported
+                    }
+                    else -> {
+                        Log.w(SSE_TAG, "SSE failed: HTTP ${response.code}")
+                        SseControlResult.Failed
+                    }
                 }
             }
-        } catch (_: IOException) {
+        } catch (e: IOException) {
+            Log.w(SSE_TAG, "SSE request failed: ${e.javaClass.simpleName}: ${e.message}")
             SseControlResult.Failed
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(SSE_TAG, "SSE request failed: ${e.javaClass.simpleName}: ${e.message}")
             SseControlResult.Failed
         } finally {
             currentCall = null
@@ -72,6 +91,7 @@ class SseControlClient(
     }
 
     fun stop() {
+        Log.i(SSE_TAG, "Stopping SSE control stream")
         currentCall?.cancel()
         currentCall = null
     }
@@ -85,7 +105,10 @@ class SseControlClient(
             while (true) {
                 val line = reader.readLine() ?: return SseControlResult.Disconnected
                 if (line.isEmpty()) {
-                    if (eventType == "wake") return SseControlResult.Wake
+                    if (eventType == "wake") {
+                        Log.i(SSE_TAG, "Received SSE wake event")
+                        return SseControlResult.Wake
+                    }
                     eventType = null
                     continue
                 }

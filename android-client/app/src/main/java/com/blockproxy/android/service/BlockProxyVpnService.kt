@@ -38,6 +38,7 @@ import com.blockproxy.android.status.StatusStore
 import com.blockproxy.android.status.TunnelStatus
 import com.blockproxy.android.tun.Tun2Socks
 import com.blockproxy.android.tunnel.RealTargetSocketFactory
+import com.blockproxy.android.tunnel.SilentModeState
 import com.blockproxy.android.tunnel.SilentModeController
 import com.blockproxy.android.tunnel.SseControlClient
 import com.blockproxy.android.tunnel.SseControlLoop
@@ -479,8 +480,26 @@ class BlockProxyVpnService : VpnService() {
         // Observe client status and update notification
         scope.launch {
             client.status.collect { status ->
-                statusStore.update(status)
-                updateNotification(status)
+                val effectiveStatus = if (
+                    status == TunnelStatus.Disconnected &&
+                    controller?.state?.value == SilentModeState.Sleeping
+                ) {
+                    TunnelStatus.SilentListening
+                } else {
+                    status
+                }
+                statusStore.update(effectiveStatus)
+                updateNotification(effectiveStatus)
+            }
+        }
+        if (controller != null) {
+            scope.launch {
+                controller.state.collect { state ->
+                    if (state == SilentModeState.Sleeping) {
+                        statusStore.update(TunnelStatus.SilentListening)
+                        updateNotification(TunnelStatus.SilentListening)
+                    }
+                }
             }
         }
 

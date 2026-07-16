@@ -116,6 +116,20 @@ class SliderStateMachineTest {
     }
 
     @Test
+    fun `silent listening while active renders connected without outer restart`() {
+        val machine = SliderStateMachine()
+        machine.onUserSlideRight()
+        machine.consumePendingAction()
+
+        machine.onStatusChanged(TunnelStatus.SilentListening)
+
+        val render = machine.render(TunnelStatus.SilentListening)
+        assertTrue(render.isActive)
+        assertEquals(SliderTrackTone.Connected, render.trackTone)
+        assertEquals(SliderAction.None, machine.onRetryTick(TunnelStatus.SilentListening))
+    }
+
+    @Test
     fun `retry stops after user slides left`() {
         val machine = SliderStateMachine()
         machine.onUserSlideRight()

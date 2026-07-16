@@ -26,12 +26,14 @@ class SseControlHandler {
 
     const token = url.searchParams.get('token');
     if (!this._verifyToken(token)) {
+      console.warn('[Tunnel/SSE] authentication failed');
       this._send(res, 401, { error: 'invalid token' });
       return true;
     }
 
     this._closeExistingConnection(token);
     this._onAuthenticated(token);
+    console.log('[Tunnel/SSE] authenticated, opening event stream');
 
     res.writeHead(200, {
       'content-type': 'text/event-stream',
@@ -50,6 +52,7 @@ class SseControlHandler {
         if (this._connections.get(token) === connection) {
           this._closeExistingConnection(token);
           this._onDisconnected(token);
+          console.log('[Tunnel/SSE] event stream disconnected');
         }
       });
     }
@@ -59,8 +62,12 @@ class SseControlHandler {
 
   sendWakeSignal(token) {
     const connection = this._connections.get(token);
-    if (!connection) return false;
+    if (!connection) {
+      console.log('[Tunnel/SSE] wake skipped: no active event stream');
+      return false;
+    }
     connection.res.write('event: wake\ndata: {}\n\n');
+    console.log('[Tunnel/SSE] wake event sent');
     return true;
   }
 

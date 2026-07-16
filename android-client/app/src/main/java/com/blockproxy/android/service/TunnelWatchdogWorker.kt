@@ -21,8 +21,8 @@ import kotlinx.coroutines.flow.first
  *
  * **Restart criteria (all must be true):**
  * 1. A server configuration is persisted (the user previously configured a tunnel).
- * 2. The last known status was [TunnelStatus.Connected] or
- *    [TunnelStatus.Reconnecting] (i.e., the user intended the tunnel to be active).
+ * 2. The last known status was an active tunnel state (i.e., the user intended
+ *    the tunnel to be active).
  * 3. The [BlockProxyVpnService] is **not** currently running.
  *
  * If any condition is false the worker does nothing.
@@ -49,7 +49,11 @@ class TunnelWatchdogWorker(
             isServiceRunning: Boolean,
         ): Boolean {
             return hasConfig &&
-                lastStatus in setOf(TunnelStatus.Connected, TunnelStatus.Reconnecting) &&
+                lastStatus in setOf(
+                    TunnelStatus.Connected,
+                    TunnelStatus.SilentListening,
+                    TunnelStatus.Reconnecting,
+                ) &&
                 !isServiceRunning
         }
     }

@@ -11,6 +11,7 @@ enum class TunnelStatus(val displayText: String) {
     Preparing("准备中"),
     Connecting("正在连接..."),
     Connected("已连接"),
+    SilentListening("静默监听中"),
     Reconnecting("重连中"),
     Occupied("端口被占用"),
     AuthFailed("认证失败"),

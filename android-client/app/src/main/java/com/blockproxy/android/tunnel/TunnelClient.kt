@@ -145,6 +145,9 @@ class TunnelClient(
     }
 
     suspend fun disconnectForSilentMode() {
+        stopped = true
+        mainJob?.cancel()
+        mainJob = null
         for (sender in listOfNotNull(activeWs, candidateWs, drainingWs)) {
             closeSender(sender)
         }

@@ -1,6 +1,5 @@
 package com.blockproxy.android.tunnel
 
-import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,8 +17,6 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-
-private const val TAG = "ReverseConnect"
 
 /**
  * Abstraction over a target (downstream) TCP socket for reverse CONNECT.
@@ -221,13 +218,10 @@ class ReverseConnectHandler(
                 return
             }
         }
-        Log.i(TAG, "CONNECT reqid=$reqid target=$host:${frame.port}")
-
         try {
             withTimeout(connectTimeoutMs) {
                 targetSocket.connect(host, frame.port, connectTimeoutMs)
             }
-            Log.i(TAG, "CONNECT_OK reqid=$reqid target=$host:${frame.port}")
             // Check if session was closed during connect (e.g., by closeSessionsFor)
             if (session.closed.get()) {
                 sessions.remove(reqid, session)
@@ -237,7 +231,6 @@ class ReverseConnectHandler(
             sender.sendFrame(FrameCodec.encode(Frame.ConnectOk(reqid)))
             session.startRelay()
         } catch (e: TimeoutCancellationException) {
-            Log.w(TAG, "CONNECT_TIMEOUT reqid=$reqid target=$host:${frame.port}")
             // Connect timed out - send CONNECT_FAILED
             sessions.remove(reqid, session)
             try { targetSocket.close() } catch (_: Exception) {}
@@ -247,8 +240,7 @@ class ReverseConnectHandler(
             sessions.remove(reqid, session)
             try { targetSocket.close() } catch (_: Exception) {}
             throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "CONNECT_FAILED reqid=$reqid target=$host:${frame.port}: ${e.javaClass.simpleName}: ${e.message}")
+        } catch (_: Exception) {
             // Connect failed
             sessions.remove(reqid, session)
             try { targetSocket.close() } catch (_: Exception) {}
@@ -291,8 +283,6 @@ internal class RequestSession(
     private val writeChannel = Channel<ByteArray>(Channel.UNLIMITED)
     private var writeJob: Job? = null
     private var relayJob: Job? = null
-    private var loggedFirstTunnelWrite = false
-    private var loggedFirstTargetRead = false
 
     /** Timestamp of last activity (DATA sent/received), used for drain tracking. */
     @Volatile
@@ -336,16 +326,11 @@ internal class RequestSession(
     private suspend fun writeLoop() {
         try {
             for (data in writeChannel) {
-                if (!loggedFirstTunnelWrite) {
-                    loggedFirstTunnelWrite = true
-                    Log.i(TAG, "DATA tunnel->target reqid=$reqid len=${data.size} first=${data.hexPreview()}")
-                }
                 targetSocket.write(data)
             }
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "WRITE_FAILED reqid=$reqid: ${e.javaClass.simpleName}: ${e.message}")
+        } catch (_: Exception) {
             // Target write failed — close the target socket so the relay
             // detects the failure and triggers cleanup.
             try { targetSocket.close() } catch (_: Exception) {}
@@ -366,10 +351,6 @@ internal class RequestSession(
                 val n = targetSocket.read(buffer)
                 if (n <= 0) break
                 val chunk = if (n == buffer.size) buffer.copyOf() else buffer.copyOfRange(0, n)
-                if (!loggedFirstTargetRead) {
-                    loggedFirstTargetRead = true
-                    Log.i(TAG, "DATA target->tunnel reqid=$reqid len=$n first=${chunk.hexPreview()}")
-                }
                 lastActivityAt = System.currentTimeMillis()
                 val sent = sender.sendFrame(FrameCodec.encode(Frame.Data(reqid, chunk)))
                 if (sent) paddingInjector?.onDataSent(sender)
@@ -377,8 +358,7 @@ internal class RequestSession(
             }
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "READ_FAILED reqid=$reqid: ${e.javaClass.simpleName}: ${e.message}")
+        } catch (_: Exception) {
             // Target read failed — fall through to cleanup
         } finally {
             // Only send CLOSE and clean up if we weren't already closed
@@ -393,6 +373,3 @@ internal class RequestSession(
         }
     }
 }
-
-private fun ByteArray.hexPreview(limit: Int = 16): String =
-    take(limit).joinToString(" ") { byte -> "%02x".format(byte.toInt() and 0xff) }

@@ -57,8 +57,10 @@ class TunnelManager {
     if (!this._connected) {
       const clientToken = this._getSleepingClientToken();
       if (clientToken && this._isSleepingClient(clientToken)) {
+        console.log(`[Tunnel/Wake] forwarding ${host}:${port} requires sleeping client wake`);
         return this._createPendingWakeStream(clientToken, host, port, callback);
       }
+      console.log(`[Tunnel] Forward rejected: tunnel disconnected for ${host}:${port}`);
       return createErrorStream('tunnel-disconnected');
     }
 
@@ -122,11 +124,14 @@ class TunnelManager {
       await this._wakeBuffer.waitForTunnel(clientToken);
       const socket = this._selectSocket();
       if (!socket) {
+        console.log('[Tunnel/Wake] wake completed but no active tunnel socket is available');
         pendingStream.destroy(new Error('tunnel-disconnected'));
         return;
       }
+      console.log(`[Tunnel/Wake] wake completed, binding pending forward ${host}:${port}`);
       this._bindForwardStreamAfterWake(pendingStream, socket, host, port, callback);
     } catch (err) {
+      console.log(`[Tunnel/Wake] wake failed for ${host}:${port}: ${err.message}`);
       pendingStream.destroy(err.message === 'client-offline'
         ? new Error('client-offline')
         : new Error('tunnel-wake-timeout'));
@@ -172,10 +177,12 @@ class TunnelManager {
   markClientSleeping(clientToken) {
     this._silentModeClients.add(clientToken);
     this._sleepingClients.add(clientToken);
+    console.log('[Tunnel/Silent] client entered sleeping state');
   }
 
   markClientSseDisconnected(clientToken) {
     this._sleepingClients.delete(clientToken);
+    console.log('[Tunnel/Silent] client left sleeping state: SSE disconnected');
   }
 
   _handleFrame(frame, socket) {
@@ -460,6 +467,7 @@ class TunnelManager {
       }
       this._sleepingClients.delete(token);
       this._wakeBuffer.onTunnelReconnected(token);
+      console.log(`[Tunnel] Client tunnel connected: silentMode=${record ? record.silentMode : false}`);
     } else {
       const token = this._clientTokens.get(socket);
       if (token) {

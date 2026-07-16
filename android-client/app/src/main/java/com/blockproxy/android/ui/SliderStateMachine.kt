@@ -49,7 +49,8 @@ class SliderStateMachine {
      */
     fun initWithStatus(status: TunnelStatus) {
         when (status) {
-            TunnelStatus.Connected -> {
+            TunnelStatus.Connected,
+            TunnelStatus.SilentListening -> {
                 intent = UserIntent.WantsConnected
                 attemptPhase = AttemptPhase.Connected
             }
@@ -91,7 +92,8 @@ class SliderStateMachine {
         when (status) {
             TunnelStatus.Preparing,
             TunnelStatus.Connecting -> attemptPhase = AttemptPhase.Starting
-            TunnelStatus.Connected -> {
+            TunnelStatus.Connected,
+            TunnelStatus.SilentListening -> {
                 attemptPhase = AttemptPhase.Connected
                 pendingAction = SliderAction.None
             }
@@ -134,7 +136,8 @@ class SliderStateMachine {
                 AttemptPhase.Connected -> SliderTrackTone.Connected
                 AttemptPhase.Failed -> SliderTrackTone.Retrying
                 AttemptPhase.Idle -> when (status) {
-                    TunnelStatus.Connected -> SliderTrackTone.Connected
+                    TunnelStatus.Connected,
+                    TunnelStatus.SilentListening -> SliderTrackTone.Connected
                     TunnelStatus.Preparing,
                     TunnelStatus.Connecting -> SliderTrackTone.Connecting
                     TunnelStatus.Reconnecting,
@@ -150,6 +153,7 @@ class SliderStateMachine {
     private fun TunnelStatus.shouldRetryStart(): Boolean {
         return when (this) {
             TunnelStatus.Connected,
+            TunnelStatus.SilentListening,
             TunnelStatus.Preparing,
             TunnelStatus.Connecting,
             TunnelStatus.Reconnecting -> false

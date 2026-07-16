@@ -9,10 +9,14 @@ class WakeBuffer {
 
   waitForTunnel(clientToken) {
     let buf = this._buffers.get(clientToken);
-    if (buf && buf.promise) return buf.promise;
+    if (buf && buf.promise) {
+      console.log('[Tunnel/Wake] reusing pending wake');
+      return buf.promise;
+    }
 
     buf = { promise: null, resolve: null, reject: null, timer: null };
     this._buffers.set(clientToken, buf);
+    console.log('[Tunnel/Wake] waiting for tunnel reconnect');
 
     const promise = this._wakeWithRetry(clientToken, buf).finally(() => {
       this._cleanup(clientToken);
@@ -25,12 +29,14 @@ class WakeBuffer {
     const buf = this._buffers.get(clientToken);
     if (!buf) return;
     if (buf.timer) clearTimeout(buf.timer);
+    console.log('[Tunnel/Wake] tunnel reconnected');
     if (buf.resolve) buf.resolve();
   }
 
   onClientDisconnected(clientToken) {
     const buf = this._buffers.get(clientToken);
     if (buf && buf.reject) {
+      console.log('[Tunnel/Wake] client went offline while waking');
       buf.reject(new Error('client-offline'));
     }
     this._cleanup(clientToken);
@@ -45,6 +51,7 @@ class WakeBuffer {
 
   async _wakeWithRetry(clientToken, buf) {
     for (let attempt = 1; attempt <= this._maxWakeAttempts; attempt += 1) {
+      console.log(`[Tunnel/Wake] wake attempt ${attempt}/${this._maxWakeAttempts}`);
       const result = await this._tryWake(clientToken, buf);
       if (result === 'ready') return;
       if (result === 'client-offline') throw new Error('client-offline');
@@ -52,6 +59,7 @@ class WakeBuffer {
         await delay(this._retryIntervalMs);
       }
     }
+    console.log('[Tunnel/Wake] wake timeout after retries');
     throw new Error('wake-timeout after 3 attempts');
   }
 

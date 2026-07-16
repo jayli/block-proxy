@@ -164,6 +164,8 @@ private fun StatusCard(
                     } else {
                         "已连接 · $host:$port"
                     }
+                } else if (status == TunnelStatus.SilentListening) {
+                    "静默监听中 · $host:$port"
                 } else {
                     status.displayText
                 }
@@ -185,7 +187,8 @@ private fun StatusCard(
 @Composable
 private fun StatusIndicator(status: TunnelStatus) {
     val color = when (status) {
-        TunnelStatus.Connected -> Color(0xFF4CAF50) // Green
+        TunnelStatus.Connected,
+        TunnelStatus.SilentListening -> Color(0xFF4CAF50) // Green
         TunnelStatus.Connecting, TunnelStatus.Reconnecting, TunnelStatus.Preparing ->
             Color(0xFFFFC107) // Amber
         TunnelStatus.Disconnected -> Color(0xFF9E9E9E) // Grey

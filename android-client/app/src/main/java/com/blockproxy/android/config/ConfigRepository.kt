@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.blockproxy.android.BuildConfig
 import com.blockproxy.android.cdn.CfCdnConfig
 import com.blockproxy.android.tunnel.TunnelTransportMode
 import kotlinx.coroutines.flow.Flow
@@ -98,7 +99,11 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             sseHost = prefs[KEY_SSE_HOST] ?: "",
             ssePort = prefs[KEY_SSE_PORT] ?: ServerConfig.DEFAULT_PORT,
             ssePath = prefs[KEY_SSE_PATH] ?: "/api/v1/events",
-            silentIdleTimeoutMs = prefs[KEY_SILENT_IDLE_TIMEOUT_MS] ?: 3_000_000L,
+            silentIdleTimeoutMs = if (BuildConfig.FLAVOR == "emulator") {
+                30_000L
+            } else {
+                prefs[KEY_SILENT_IDLE_TIMEOUT_MS] ?: 3_000_000L
+            },
         )
     }
 
