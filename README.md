@@ -82,7 +82,6 @@ block-proxy --pubkey /path/to/fullchain.pem --privkey /path/to/privkey.pem
 
 ```bash
 pnpm i
-npm run dev       # 开发模式（React HMR 端口 3000，Express 端口 8004）
 npm run start     # 生产启动
 npm run proxy     # 仅启动代理，不开后台面板
 ```
