@@ -22,6 +22,9 @@ const DEFAULT_SESSION_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_BUFFERED_POSTS = 64;
 const DEFAULT_KEEPALIVE_MIN_MS = 35_000;
 const DEFAULT_KEEPALIVE_MAX_MS = 45_000;
+const DEFAULT_PADDING_PROBABILITY = 0.15;
+const DEFAULT_PADDING_MIN_BYTES = 64;
+const DEFAULT_PADDING_MAX_BYTES = 512;
 const MAX_POST_BODY_SIZE = 70_000; // 略大于 MAX_FRAME_PAYLOAD + header
 
 class XhttpHandler {
@@ -34,6 +37,9 @@ class XhttpHandler {
    * @param {number} [options.keepaliveMinMs] — SSE keepalive 最小间隔
    * @param {number} [options.keepaliveMaxMs] — SSE keepalive 最大间隔
    * @param {boolean} [options.paddingEnabled] — 是否启用响应填充
+   * @param {number} [options.paddingProbability] — 响应填充概率
+   * @param {number} [options.paddingMinBytes] — 响应填充最小字节数
+   * @param {number} [options.paddingMaxBytes] — 响应填充最大字节数
    * @param {function} options.onFrame — 帧到达回调 (frame, sessionId) => void
    * @param {function} options.onSessionCreated — 新会话回调 (sessionId, token, capabilities) => void
    * @param {function} options.onSessionClosed — 会话关闭回调 (sessionId, token) => void
@@ -46,6 +52,12 @@ class XhttpHandler {
     this._keepaliveMinMs = options.keepaliveMinMs || DEFAULT_KEEPALIVE_MIN_MS;
     this._keepaliveMaxMs = options.keepaliveMaxMs || DEFAULT_KEEPALIVE_MAX_MS;
     this._paddingEnabled = options.paddingEnabled ?? true;
+    this._paddingProbability = Math.max(0, Math.min(1, options.paddingProbability ?? DEFAULT_PADDING_PROBABILITY));
+    this._paddingMinBytes = Math.max(0, Math.min(65534, options.paddingMinBytes ?? DEFAULT_PADDING_MIN_BYTES));
+    this._paddingMaxBytes = Math.max(
+      this._paddingMinBytes,
+      Math.min(65534, options.paddingMaxBytes ?? DEFAULT_PADDING_MAX_BYTES)
+    );
 
     this._onFrame = options.onFrame || (() => {});
     this._onSessionCreated = options.onSessionCreated || (() => {});
@@ -624,8 +636,9 @@ class XhttpHandler {
    */
   _buildPaddingHeaders() {
     if (!this._paddingEnabled) return {};
-    if (Math.random() > 0.3) return {};
-    const size = 64 + Math.floor(Math.random() * 449); // 64~512
+    if (Math.random() >= this._paddingProbability) return {};
+    const range = this._paddingMaxBytes - this._paddingMinBytes + 1;
+    const size = this._paddingMinBytes + Math.floor(Math.random() * range);
     const padding = crypto.randomBytes(size).toString('base64');
     return { 'x-padding': padding };
   }

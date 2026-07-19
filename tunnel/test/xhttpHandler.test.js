@@ -168,4 +168,22 @@ describe('XhttpHandler session model', () => {
     assert.equal(res.writes.some(chunk => chunk === ': keepalive\n\n'), true);
     handler.closeAll();
   });
+
+  it('honors response padding probability and size options', () => {
+    const { handler: disabled } = createHandler({
+      paddingEnabled: true,
+      paddingProbability: 0,
+    });
+    assert.deepEqual(disabled._buildPaddingHeaders(), {});
+
+    const { handler: enabled } = createHandler({
+      paddingEnabled: true,
+      paddingProbability: 1,
+      paddingMinBytes: 16,
+      paddingMaxBytes: 16,
+    });
+    const headers = enabled._buildPaddingHeaders();
+    assert.ok(headers['x-padding']);
+    assert.equal(Buffer.from(headers['x-padding'], 'base64').length, 16);
+  });
 });
