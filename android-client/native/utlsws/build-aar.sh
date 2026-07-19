@@ -11,7 +11,6 @@ command -v gomobile >/dev/null 2>&1 || {
 }
 
 export GOCACHE="${GOCACHE:-$(pwd)/../../../.go-cache}"
-export GOMODCACHE="${GOMODCACHE:-$(pwd)/../../../.go-mod-cache}"
 
 go mod tidy
 mkdir -p ../../app/libs

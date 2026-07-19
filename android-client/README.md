@@ -36,13 +36,16 @@ This package keeps x86/x86_64 native libraries for Android emulators.
 ## Install
 
 ```bash
-# Install phone package
-adb install app/build/outputs/apk/phone/debug/BlockProxyClient-android.apk
+# Build and install the package that matches the connected target ABI
+bash install-debug.sh
 
-# Reinstall phone package
+# Or from the repo root
+npm run android:install
+
+# Install phone package explicitly
 adb install -r app/build/outputs/apk/phone/debug/BlockProxyClient-android.apk
 
-# Reinstall emulator package
+# Install emulator package explicitly
 adb -s emulator-5554 install -r app/build/outputs/apk/emulator/debug/BlockProxyClient-android-emulator.apk
 
 # Uninstall

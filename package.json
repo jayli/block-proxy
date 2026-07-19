@@ -51,7 +51,7 @@
     "android:build": "cd android-client && ./gradlew :app:assemblePhoneDebug :app:assembleEmulatorDebug",
     "android:build:phone": "cd android-client && ./gradlew :app:assemblePhoneDebug",
     "android:build:emulator": "cd android-client && ./gradlew :app:assembleEmulatorDebug",
-    "android:install": "~/Library/Android/sdk/platform-tools/adb install -r android-client/app/build/outputs/apk/phone/debug/BlockProxyClient-android.apk",
+    "android:install": "bash android-client/install-debug.sh",
     "android:install:emulator": "~/Library/Android/sdk/platform-tools/adb -s emulator-5554 install -r android-client/app/build/outputs/apk/emulator/debug/BlockProxyClient-android-emulator.apk",
     "android:release:upload": "bash scripts/upload-android-release.sh",
     "android:start": "~/Library/Android/sdk/platform-tools/adb shell am start -n com.blockproxy.android/.MainActivity",

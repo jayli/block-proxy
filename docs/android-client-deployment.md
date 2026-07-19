@@ -35,16 +35,25 @@ cd android-client
 ### adb 安装
 
 ```bash
-adb install app/build/outputs/apk/phone/debug/BlockProxyClient-android.apk
+cd android-client
+bash install-debug.sh
 ```
 
-如果已安装旧版本：
+也可以从仓库根目录执行：
+
+```bash
+npm run android:install
+```
+
+该脚本会优先读取目标设备 ABI：`x86/x86_64` 自动安装虚拟机 APK，`arm/arm64` 自动安装手机 APK。
+
+如果需要手动安装手机包：
 
 ```bash
 adb install -r app/build/outputs/apk/phone/debug/BlockProxyClient-android.apk
 ```
 
-虚拟机调试包：
+如果需要手动安装虚拟机调试包：
 
 ```bash
 adb -s emulator-5554 install -r app/build/outputs/apk/emulator/debug/BlockProxyClient-android-emulator.apk

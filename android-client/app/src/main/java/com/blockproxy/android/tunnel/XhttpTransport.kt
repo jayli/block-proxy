@@ -9,8 +9,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStreamReader
@@ -27,7 +25,6 @@ import javax.net.ssl.X509TrustManager
 import kotlin.random.Random
 
 private const val TAG = "XhttpTransport"
-private const val OCTET_STREAM = "application/octet-stream"
 private const val DEFAULT_SSE_IDLE_TIMEOUT_MS = 90_000L
 
 /**
@@ -41,7 +38,7 @@ class XhttpTransport(
     private val sessionId: String,
     private val token: String,
     private val sseHttpClient: OkHttpClient,
-    private val uploadHttpClient: OkHttpClient,
+    private val uploadClient: XhttpUploadClient,
     private val protect: ((Socket) -> Boolean)? = null,
     private val paddingEnabled: Boolean = true,
     private val sseIdleTimeoutMs: Long = DEFAULT_SSE_IDLE_TIMEOUT_MS,
@@ -215,30 +212,8 @@ class XhttpTransport(
     override suspend fun sendFrame(encoded: ByteArray): Boolean {
         if (!isOpen) return false
         val seq = seqCounter.getAndIncrement()
-        val requestBody = encoded.toRequestBody(OCTET_STREAM.toMediaType())
-        val requestBuilder = Request.Builder()
-            .url("$baseUrl/upload/$sessionId/$seq")
-            .post(requestBody)
-            .header("Content-Type", OCTET_STREAM)
-            .header("Cache-Control", "no-store")
-            .header("Connection", "keep-alive")
-
-        buildPaddingHeader()?.let { requestBuilder.header("X-Padding", it) }
-
-        return try {
-            uploadHttpClient.newCall(requestBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.w(TAG, "Upload frame failed: HTTP ${response.code}")
-                    false
-                } else {
-                    response.body?.bytes()
-                    true
-                }
-            }
-        } catch (e: IOException) {
-            Log.w(TAG, "Upload frame error: ${e.message}")
-            false
-        }
+        val headers = buildPaddingHeader()?.let { mapOf("X-Padding" to it) } ?: emptyMap()
+        return uploadClient.postFrame("$baseUrl/upload/$sessionId/$seq", encoded, headers)
     }
 
     private fun buildPaddingHeader(): String? {
@@ -265,6 +240,7 @@ class XhttpTransport(
         sseJob = null
 
         sseConnected = false
+        uploadClient.close()
 
         try { sseReader?.close() } catch (_: Exception) {}
         sseReader = null

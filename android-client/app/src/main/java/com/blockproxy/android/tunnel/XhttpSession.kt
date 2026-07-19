@@ -25,7 +25,7 @@ class XhttpSession(
     private val config: ServerConfig,
     private val credentials: TunnelCredentials,
     private val sseHttpClient: OkHttpClient,
-    private val uploadHttpClient: OkHttpClient,
+    private val uploadClient: XhttpUploadClient,
     private val protect: ((java.net.Socket) -> Boolean)? = null,
 ) {
     /**
@@ -56,7 +56,7 @@ class XhttpSession(
             sessionId = sessionId,
             token = token,
             sseHttpClient = sseHttpClient,
-            uploadHttpClient = uploadHttpClient,
+            uploadClient = uploadClient,
             protect = protect,
             paddingEnabled = config.paddingEnabled,
         )

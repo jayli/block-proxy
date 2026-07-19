@@ -14,7 +14,7 @@ class TunnelTransportFactory(
     private val config: ServerConfig,
     private val credentials: TunnelCredentials,
     private val sseHttpClient: OkHttpClient,
-    private val uploadHttpClient: OkHttpClient,
+    private val uploadClient: XhttpUploadClient,
     private val protect: ((java.net.Socket) -> Boolean)? = null,
 ) {
     /**
@@ -27,7 +27,7 @@ class TunnelTransportFactory(
             config = config,
             credentials = credentials,
             sseHttpClient = sseHttpClient,
-            uploadHttpClient = uploadHttpClient,
+            uploadClient = uploadClient,
             protect = protect,
         )
         return session.establish()

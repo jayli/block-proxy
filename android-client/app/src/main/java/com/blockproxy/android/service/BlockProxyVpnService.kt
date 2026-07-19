@@ -403,6 +403,7 @@ class BlockProxyVpnService : VpnService() {
             sseCfIpSelector = cfIpSelector,
             uploadCfIpDns = uploadCfIpDns,
             uploadCfIpSelector = uploadCfIpSelector,
+            nativeUtlsUploadEnabled = vpnResult.appExclusionSucceeded,
             onCfIpChanged = statusStore::updateCfIp,
         )
         tunnelClient = client

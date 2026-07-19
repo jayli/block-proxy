@@ -42,6 +42,8 @@ class TunnelClient(
     private val sseCfIpSelector: CfIpSelector? = null,
     private val uploadCfIpDns: CfIpDns? = null,
     private val uploadCfIpSelector: CfIpSelector? = null,
+    private val nativeUtlsUploadEnabled: Boolean = true,
+    private val nativePostClientFactory: () -> NativeUtlsPostClient? = { GomobileUtlsPostClient.createOrNull() },
     private val onCfIpChanged: (String?) -> Unit = {},
 ) {
     companion object {
@@ -248,7 +250,7 @@ class TunnelClient(
             config = config,
             credentials = credentials,
             sseHttpClient = sseConnectionClient(),
-            uploadHttpClient = uploadConnectionClient(),
+            uploadClient = uploadClient(),
             protect = protect,
         )
 
@@ -274,6 +276,20 @@ class TunnelClient(
         } else {
             uploadOkHttpClient
         }
+    }
+
+    private fun uploadClient(): XhttpUploadClient {
+        val fallback = OkHttpXhttpUploadClient(uploadConnectionClient())
+        if (!nativeUtlsUploadEnabled || !config.useTls) {
+            return fallback
+        }
+        val native = nativePostClientFactory() ?: return fallback
+        return NativeUtlsXhttpUploadClient(
+            config = config,
+            selector = uploadCfIpSelector,
+            nativeClient = native,
+            fallback = fallback,
+        )
     }
 
     // ── Frame handling ──────────────────────────────────────────────────
