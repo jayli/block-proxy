@@ -146,4 +146,26 @@ describe('XhttpHandler session model', () => {
     assert.equal(decodeFrame(Buffer.from(payload, 'base64')).type, FRAME_TYPES.PONG);
     handler.closeAll();
   });
+
+  it('schedules keepalive from the last SSE write instead of fixed stream-open time', async () => {
+    const { handler } = createHandler({
+      keepaliveMinMs: 40,
+      keepaliveMaxMs: 40,
+    });
+    const sessionId = await createSession(handler);
+
+    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}`);
+    const res = mockResponse();
+    assert.equal(handler.handleRequest(req, res), true);
+
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(handler.pushFrame(sessionId, encodeFrame({ type: FRAME_TYPES.PONG, payload: Buffer.from('ok') })), true);
+
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(res.writes.some(chunk => chunk === ': keepalive\n\n'), false);
+
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(res.writes.some(chunk => chunk === ': keepalive\n\n'), true);
+    handler.closeAll();
+  });
 });

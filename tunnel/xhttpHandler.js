@@ -168,6 +168,7 @@ class XhttpHandler {
         sseRes: null,
         capabilities: serverCapabilities,
         keepaliveTimer: null,
+        lastSseWriteAt: 0,
         cleanupTimer: null,
         createdAt: Date.now(),
         consumeLoopRunning: false,
@@ -295,12 +296,11 @@ class XhttpHandler {
     });
 
     // 发送 SSE retry 指令
-    res.write('retry: 5000\n\n');
-
     session.sseRes = res;
+    this._writeSse(session, 'retry: 5000\n\n');
 
     // 发送 AUTH_OK
-    this._pushSseFrame(res, FRAME_TYPES.AUTH_OK, encodeFrame({ type: FRAME_TYPES.AUTH_OK }));
+    this._pushSseFrame(session, FRAME_TYPES.AUTH_OK, encodeFrame({ type: FRAME_TYPES.AUTH_OK }));
 
     // 发送 CAPABILITIES（如果有协商结果）
     if (session.capabilities.size > 0) {
@@ -308,7 +308,7 @@ class XhttpHandler {
         type: FRAME_TYPES.CAPABILITIES,
         capabilities: [...session.capabilities],
       });
-      this._pushSseFrame(res, FRAME_TYPES.CAPABILITIES, capsFrame);
+      this._pushSseFrame(session, FRAME_TYPES.CAPABILITIES, capsFrame);
       console.log(`[xhttp] Capabilities negotiated: ${sessionId} caps=${[...session.capabilities].join(',')}`);
     }
 
@@ -352,7 +352,7 @@ class XhttpHandler {
   pushFrame(sessionId, encodedFrame) {
     const session = this._sessions.get(sessionId);
     if (!session || !session.sseRes) return false;
-    return this._pushSseFrame(session.sseRes, FRAME_TYPES.DATA, encodedFrame);
+    return this._pushSseFrame(session, FRAME_TYPES.DATA, encodedFrame);
   }
 
   /**
@@ -361,7 +361,7 @@ class XhttpHandler {
   sendEncodedFrame(sessionId, encodedFrame) {
     const session = this._sessions.get(sessionId);
     if (!session || !session.sseRes) return false;
-    return this._pushSseFrame(session.sseRes, 0, encodedFrame);
+    return this._pushSseFrame(session, 0, encodedFrame);
   }
 
   /**
@@ -521,19 +521,33 @@ class XhttpHandler {
   /**
    * 向 SSE response 推送一个帧事件。
    *
-   * @param {http.ServerResponse} res
+   * @param {object} session
    * @param {number} frameType — 帧类型（仅用于日志）
    * @param {Buffer} encodedFrame — 已编码帧
    * @returns {boolean}
    */
-  _pushSseFrame(res, frameType, encodedFrame) {
-    if (!res || res.writableEnded) return false;
+  _pushSseFrame(session, frameType, encodedFrame) {
     try {
       const base64 = encodedFrame.toString('base64');
-      res.write(`event: frame\ndata: ${base64}\n\n`);
-      return true;
+      return this._writeSse(session, `event: frame\ndata: ${base64}\n\n`);
     } catch (e) {
       console.warn('[xhttp] SSE frame push failed:', e.message);
+      return false;
+    }
+  }
+
+  _writeSse(session, chunk, resetKeepalive = true) {
+    const res = session.sseRes;
+    if (!res || res.writableEnded) return false;
+    try {
+      res.write(chunk);
+      session.lastSseWriteAt = Date.now();
+      if (resetKeepalive && session.keepaliveTimer) {
+        this._scheduleKeepalive(session);
+      }
+      return true;
+    } catch (e) {
+      console.warn('[xhttp] SSE write failed:', e.message);
       return false;
     }
   }
@@ -543,22 +557,24 @@ class XhttpHandler {
    */
   _scheduleKeepalive(session) {
     if (!session.sseRes) return;
+    if (session.keepaliveTimer) {
+      clearTimeout(session.keepaliveTimer);
+      session.keepaliveTimer = null;
+    }
 
     const minMs = Math.max(1, this._keepaliveMinMs);
     const maxMs = Math.max(minMs, this._keepaliveMaxMs);
     const delay = minMs + Math.floor(Math.random() * (maxMs - minMs + 1));
+    const lastWriteAt = session.lastSseWriteAt || Date.now();
+    const timeoutMs = Math.max(1, lastWriteAt + delay - Date.now());
 
     session.keepaliveTimer = setTimeout(() => {
       session.keepaliveTimer = null;
       if (session.sseRes && !session.sseRes.writableEnded) {
-        try {
-          session.sseRes.write(': keepalive\n\n');
-        } catch (_) {
-          return;
-        }
+        if (!this._writeSse(session, ': keepalive\n\n', false)) return;
         this._scheduleKeepalive(session);
       }
-    }, delay);
+    }, timeoutMs);
     session.keepaliveTimer.unref();
   }
 

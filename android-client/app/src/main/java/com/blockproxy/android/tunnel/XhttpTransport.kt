@@ -28,6 +28,7 @@ import kotlin.random.Random
 
 private const val TAG = "XhttpTransport"
 private const val OCTET_STREAM = "application/octet-stream"
+private const val DEFAULT_SSE_IDLE_TIMEOUT_MS = 90_000L
 
 /**
  * xhttp 传输层：用按需 HTTP POST + SSE 替代 WebSocket 双向隧道。
@@ -43,6 +44,7 @@ class XhttpTransport(
     private val uploadHttpClient: OkHttpClient,
     private val protect: ((Socket) -> Boolean)? = null,
     private val paddingEnabled: Boolean = true,
+    private val sseIdleTimeoutMs: Long = DEFAULT_SSE_IDLE_TIMEOUT_MS,
 ) : FrameSender {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -50,6 +52,13 @@ class XhttpTransport(
     @Volatile private var sseCall: Call? = null
     @Volatile private var sseReader: BufferedReader? = null
     private var sseJob: Job? = null
+    private val sseIdleWatchdog = SseIdleWatchdog(
+        scope = scope,
+        timeoutMs = sseIdleTimeoutMs,
+    ) {
+        Log.w(TAG, "SSE idle timeout after ${sseIdleTimeoutMs}ms, reconnecting")
+        sseCall?.cancel()
+    }
 
     private val _isOpen = MutableStateFlow(false)
     val isOpenFlow: StateFlow<Boolean> = _isOpen.asStateFlow()
@@ -109,6 +118,7 @@ class XhttpTransport(
             } catch (e: Exception) {
                 Log.e(TAG, "SSE fatal error", e)
             } finally {
+                sseIdleWatchdog.stop()
                 sseConnected = false
                 _isOpen.value = false
                 _frameChannel.close()
@@ -156,6 +166,7 @@ class XhttpTransport(
             sseConnected = true
             Log.i(TAG, "SSE connected")
             _isOpen.value = true
+            sseIdleWatchdog.start()
 
             // Read SSE events (blocks until disconnected)
             readSseEvents()
@@ -170,6 +181,7 @@ class XhttpTransport(
         try {
             while (true) {
                 val line = reader.readLine() ?: break
+                sseIdleWatchdog.markActivity()
 
                 if (line.isEmpty()) {
                     when (eventType) {
