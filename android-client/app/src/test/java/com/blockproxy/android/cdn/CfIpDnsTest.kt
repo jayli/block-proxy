@@ -42,6 +42,26 @@ class CfIpDnsTest {
     }
 
     @Test
+    fun `rotate mode resolves a different cf ip when pool has alternatives`() {
+        val delegate = FakeDns()
+        val persisted = mutableListOf<Int>()
+        val selector = CfIpSelector(
+            initialSnapshot = CfIpSnapshot(listOf("104.16.4.14", "104.17.9.21"), 0),
+            persistCursor = persisted::add,
+            randomIndex = { 0 },
+        )
+        val dns = CfIpDns("tunnel.example.com", selector, delegate, rotateOnLookup = true)
+
+        assertEquals("104.16.4.14", selector.selectForLookup())
+
+        val result = dns.lookup("tunnel.example.com")
+
+        assertEquals(emptyList<String>(), delegate.lookups)
+        assertEquals("104.17.9.21", result.single().hostAddress)
+        assertEquals(listOf(1), persisted)
+    }
+
+    @Test
     fun `server host comparison is case-insensitive`() {
         val delegate = FakeDns()
         val selector = CfIpSelector(CfIpSnapshot(listOf("104.16.4.14"), 0)) {}

@@ -1,7 +1,10 @@
 package com.blockproxy.android.cdn
 
+import kotlin.random.Random
+
 class CfIpSelector(
     initialSnapshot: CfIpSnapshot,
+    private val randomIndex: (Int) -> Int = { Random.nextInt(it) },
     private val persistCursor: (Int) -> Unit,
 ) {
     private val lock = Any()
@@ -34,6 +37,34 @@ class CfIpSelector(
             advanceOnNextLookup = false
         }
 
+        selectedIp = goodIps[cursor]
+        selectedIp
+    }
+
+    fun selectDifferentForLookup(): String? = synchronized(lock) {
+        advanceOnNextLookup = false
+
+        if (goodIps.isEmpty()) {
+            selectedIp = null
+            return@synchronized null
+        }
+
+        if (goodIps.size == 1) {
+            cursor = 0
+            selectedIp = goodIps[0]
+            return@synchronized selectedIp
+        }
+
+        val currentCursor = selectedIp?.let { goodIps.indexOf(it) }
+            ?.takeIf { it >= 0 }
+            ?: cursor.coerceIn(0, goodIps.lastIndex)
+        val candidateCursors = goodIps.indices.filter { it != currentCursor }
+        val randomOffset = randomIndex(candidateCursors.size).floorMod(candidateCursors.size)
+        val nextCursor = candidateCursors[randomOffset]
+        if (nextCursor != cursor) {
+            persistCursor(nextCursor)
+        }
+        cursor = nextCursor
         selectedIp = goodIps[cursor]
         selectedIp
     }
@@ -72,4 +103,6 @@ class CfIpSelector(
         }
         advanceOnNextLookup = false
     }
+
+    private fun Int.floorMod(modulus: Int): Int = ((this % modulus) + modulus) % modulus
 }

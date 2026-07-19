@@ -8,9 +8,7 @@ import com.blockproxy.android.config.TunnelCredentials
 import com.blockproxy.android.status.TunnelStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,12 +18,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
@@ -33,16 +27,22 @@ import kotlin.random.nextLong
 
 private const val TAG = "TunnelClient"
 
+/**
+ * 隧道客户端：管理 xhttp 传输层的生命周期。
+ *
+ * 使用 xhttp 模式（按需 POST 上行 + SSE 下行），替代原有的 WebSocket 双向隧道。
+ */
 class TunnelClient(
     private val config: ServerConfig,
     private val credentials: TunnelCredentials,
     private val targetSocketFactory: TargetSocketFactory,
     private val clientScope: CoroutineScope,
     private val protect: ((java.net.Socket) -> Boolean)? = null,
-    private val cfIpDns: CfIpDns? = null,
-    private val cfIpSelector: CfIpSelector? = null,
+    private val sseCfIpDns: CfIpDns? = null,
+    private val sseCfIpSelector: CfIpSelector? = null,
+    private val uploadCfIpDns: CfIpDns? = null,
+    private val uploadCfIpSelector: CfIpSelector? = null,
     private val onCfIpChanged: (String?) -> Unit = {},
-    private val nativeClient: UtlsWsNativeClient = GomobileUtlsWsNativeClient(),
 ) {
     companion object {
         const val INITIAL_BACKOFF_MS = 1_000L
@@ -69,15 +69,20 @@ class TunnelClient(
     private val handler = ReverseConnectHandler(clientScope, targetSocketFactory, paddingInjector = paddingInjector)
     private val forwardRegistry = ForwardSessionRegistry(clientScope, paddingInjector = paddingInjector)
 
-    private val okHttpClient = TunnelWebSocket.createOkHttpClient(
+    private val sseOkHttpClient = XhttpTransport.createOkHttpClient(
         allowInsecure = config.allowInsecure,
         protect = protect,
     )
 
-    // WebSocket state
-    @Volatile private var activeWs: FrameSender? = null
-    @Volatile private var candidateWs: FrameSender? = null
-    @Volatile private var drainingWs: FrameSender? = null
+    private val uploadOkHttpClient = XhttpTransport.createOkHttpClient(
+        allowInsecure = config.allowInsecure,
+        protect = protect,
+    )
+
+    // xhttp transport state
+    @Volatile private var activeTransport: XhttpTransport? = null
+    @Volatile private var candidateTransport: XhttpTransport? = null
+    @Volatile private var drainingTransport: XhttpTransport? = null
 
     @Volatile private var stopped = true
     @Volatile private var connected = false
@@ -85,13 +90,9 @@ class TunnelClient(
 
     private var mainJob: Job? = null
     private var rotationJob: Job? = null
+    private var readJob: Job? = null
 
     private val stateMutex = Mutex()
-
-    // Per-sender frame channels: bridge OkHttp callback → coroutine loop
-    private val frameChannels = ConcurrentHashMap<FrameSender, Channel<ByteArray>>()
-    // Per-sender read jobs for cancellation
-    private val senderReadJobs = ConcurrentHashMap<FrameSender, Job>()
 
     // ── Public API ──────────────────────────────────────────────────────
 
@@ -118,59 +119,37 @@ class TunnelClient(
 
     suspend fun stop(timeoutMs: Long = 5_000L) {
         stopped = true
-        cfIpSelector?.markStoppedCleanly()
+        sseCfIpSelector?.markStoppedCleanly()
+        uploadCfIpSelector?.markStoppedCleanly()
         onCfIpChanged(null)
         mainJob?.cancel()
         mainJob = null
-        // Close all active/draining/candidate senders
-        for (sender in listOfNotNull(activeWs, candidateWs, drainingWs)) {
-            closeSender(sender)
-        }
-        activeWs = null
-        candidateWs = null
-        drainingWs = null
+        readJob?.cancel()
+        readJob = null
 
-        // Close any remaining channels/jobs (safety net)
-        for ((_, ch) in frameChannels) {
-            ch.close()
+        for (transport in listOfNotNull(activeTransport, candidateTransport, drainingTransport)) {
+            closeTransport(transport)
         }
-        for ((_, job) in senderReadJobs) {
-            job.cancel()
-        }
-        frameChannels.clear()
-        senderReadJobs.clear()
+        activeTransport = null
+        candidateTransport = null
+        drainingTransport = null
 
         forwardRegistry.stop()
         _status.value = TunnelStatus.Disconnected
     }
 
-    suspend fun disconnectForSilentMode() {
-        stopped = true
-        mainJob?.cancel()
-        mainJob = null
-        for (sender in listOfNotNull(activeWs, candidateWs, drainingWs)) {
-            closeSender(sender)
-        }
-        activeWs = null
-        candidateWs = null
-        drainingWs = null
-        connected = false
-        _status.value = TunnelStatus.Disconnected
-    }
-
     suspend fun openForwardSession(host: String, port: Int): ForwardSession {
-        val sender = activeWs
+        val transport = activeTransport
             ?: throw IllegalStateException("No active tunnel connection")
         lastActivityAt = System.currentTimeMillis()
-        return forwardRegistry.open(host, port, sender)
+        return forwardRegistry.open(host, port, transport)
     }
 
-    /** Measures tunnel RTT in milliseconds. Returns null on failure. */
     suspend fun measureLatency(): Long? {
-        val sender = activeWs ?: return null
+        val transport = activeTransport ?: return null
         val start = System.currentTimeMillis()
         val session = try {
-            forwardRegistry.open("127.0.0.1", 80, sender)
+            forwardRegistry.open("127.0.0.1", 80, transport)
         } catch (_: Exception) {
             return null
         }
@@ -218,49 +197,43 @@ class TunnelClient(
     // ── Connection lifecycle ────────────────────────────────────────────
 
     private suspend fun establishAndServe() {
-        val sender = establishConnection()
+        val transport = establishConnection()
 
-        // Channel was pre-created by establishConnection() and registered in onAuthSuccess
-        val frameChannel = frameChannels[sender]
-            ?: throw IllegalStateException("Frame channel not registered for sender")
-
-        // Start rotation first, then set as active atomically via stateMutex
         rotationJob = clientScope.launch { rotationLoop() }
 
         stateMutex.withLock {
-            activeWs?.let { old ->
-                Log.w(TAG, "Replacing existing active WS during establish")
-                drainingWs = old
+            activeTransport?.let { old ->
+                Log.w(TAG, "Replacing existing active transport during establish")
+                drainingTransport = old
             }
-            activeWs = sender
-            candidateWs = null
+            activeTransport = transport
+            candidateTransport = null
         }
 
         connected = true
         lastActivityAt = System.currentTimeMillis()
         _status.value = TunnelStatus.Connected
+        sseCfIpSelector?.markConnected()
+        onCfIpChanged(sseCfIpSelector?.currentIp() ?: sseCfIpDns?.getCurrentIp())
 
-        // Start frame handling for this sender
-        val readJob = clientScope.launch { handleFrames(sender, frameChannel) }
-        senderReadJobs[sender] = readJob
+        readJob = clientScope.launch { handleFrames(transport) }
 
-        // Auto-cleanup when this sender's read job completes (normal disconnection or cancellation)
-        clientScope.launch {
-            readJob.join()
-            Log.i(TAG, "handleFrames exited for sender, closing sender")
-            closeSender(sender)
+        // Set SSE disconnected callback
+        transport.onSseDisconnected = {
+            Log.w(TAG, "SSE disconnected, triggering reconnect")
+            clientScope.launch { closeTransport(transport) }
         }
 
-        // Wait until stopped, or until the active connection is lost and needs reconnecting.
-        // When rotation replaces this sender, closeSender() sets drainingWs=null but
-        // activeWs is set to the candidate — so activeWs stays non-null and we keep waiting.
-        // When the active sender genuinely disconnects, closeSender() sets activeWs=null
-        // and this loop exits, triggering a reconnect in mainLoop().
+        clientScope.launch {
+            readJob?.join()
+            Log.i(TAG, "handleFrames exited for transport")
+        }
+
+        // Wait until stopped or active connection lost
         try {
-            while (clientScope.isActive && !stopped && activeWs != null) {
+            while (clientScope.isActive && !stopped && activeTransport != null) {
                 delay(500)
             }
-            Log.i(TAG, "Poll loop exited: stopped=$stopped, activeWs=$activeWs, isActive=${clientScope.isActive}")
         } finally {
             connected = false
             rotationJob?.cancel()
@@ -268,109 +241,48 @@ class TunnelClient(
         }
     }
 
-    private suspend fun establishConnection(): FrameSender {
-        val addr = config.serverHost
-        val port = config.serverPort
-        val wsClient = connectionClient()
-
-        Log.i(TAG, "Connecting to tunnel $addr:$port")
-
-        // HTTP disguise
-        if (config.httpDisguise) {
-            performHttpDisguise(addr, port, wsClient)
-        }
-
-        // Encode AUTH payload
-        val authCapabilities = buildList {
-            if (config.paddingEnabled) add(FrameCodec.CAP_PADDING)
-            if (config.silentModeEnabled) add(FrameCodec.CAP_SILENT_MODE)
-        }
-        val authPayload = FrameCodec.encode(
-            Frame.Auth(credentials.username, credentials.password, authCapabilities)
-        )
-
-        // Pre-create frame channel — registered in onAuthSuccess before any post-auth frame arrives.
-        // OkHttp serializes onMessage callbacks on a single thread, so by the time the first
-        // post-auth onFrame fires, the channel is already registered.
-        val frameChannel = Channel<ByteArray>(Channel.UNLIMITED)
+    private suspend fun establishConnection(): XhttpTransport {
+        Log.i(TAG, "Connecting to tunnel ${config.serverHost}:${config.serverPort}")
 
         val transportFactory = TunnelTransportFactory(
             config = config,
-            okHttpClient = okHttpClient,
-            cfIpDns = cfIpDns,
-            cfIpSelector = cfIpSelector,
-            nativeClient = nativeClient,
+            credentials = credentials,
+            sseHttpClient = sseConnectionClient(),
+            uploadHttpClient = uploadConnectionClient(),
+            protect = protect,
         )
 
         return try {
-            transportFactory.connect(
-                authPayload = authPayload,
-                customHeaders = config.customHeaders,
-                onAuthSuccess = { sender ->
-                frameChannels[sender] = frameChannel
-                cfIpSelector?.markConnected()
-                onCfIpChanged(cfIpSelector?.currentIp() ?: cfIpDns?.getCurrentIp())
-                },
-                onFrame = { sender, frameBytes ->
-                frameChannels[sender]?.trySend(frameBytes)
-                },
-                onDisconnect = { sender, error ->
-                frameChannels[sender]?.close()
-                handleCfDisconnect(sender)
-                },
-            )
+            transportFactory.connect()
         } catch (e: Exception) {
-            frameChannel.close()
-            cfIpSelector?.markCandidateFailed()
+            sseCfIpSelector?.markCandidateFailed()
             throw e
         }
     }
 
-    private fun connectionClient(): OkHttpClient {
-        return if (cfIpDns != null) {
-            okHttpClient.newBuilder().dns(cfIpDns).build()
+    private fun sseConnectionClient(): OkHttpClient {
+        return if (sseCfIpDns != null) {
+            sseOkHttpClient.newBuilder().dns(sseCfIpDns).build()
         } else {
-            okHttpClient
+            sseOkHttpClient
         }
     }
 
-    private fun handleCfDisconnect(sender: FrameSender) {
-        val selector = cfIpSelector ?: return
-        if (stopped) return
-        when {
-            sender === drainingWs -> Unit
-            sender === activeWs -> selector.markActiveDisconnectedUnexpectedly()
-            else -> selector.markCandidateFailed()
-        }
-    }
-
-    private suspend fun performHttpDisguise(addr: String, port: Int, client: OkHttpClient) {
-        val base = "https://$addr:$port"
-        val disguiseClient = client.newBuilder()
-            .connectTimeout(5, TimeUnit.SECONDS)
-            .readTimeout(5, TimeUnit.SECONDS)
-            .build()
-
-        try {
-            withContext(Dispatchers.IO) {
-                disguiseClient.newCall(Request.Builder().url(base + "/").build()).execute().close()
-            }
-            delay(Random.nextLong(500, 2000))
-            withContext(Dispatchers.IO) {
-                disguiseClient.newCall(Request.Builder().url(base + "/favicon.ico").build()).execute().close()
-            }
-            delay(Random.nextLong(500, 2000))
-        } catch (_: Exception) {
-            // HTTP disguise best-effort — continue regardless
-            Log.d(TAG, "HTTP disguise request failed (non-fatal)")
+    private fun uploadConnectionClient(): OkHttpClient {
+        return if (uploadCfIpDns != null) {
+            uploadOkHttpClient.newBuilder().dns(uploadCfIpDns).build()
+        } else {
+            uploadOkHttpClient
         }
     }
 
     // ── Frame handling ──────────────────────────────────────────────────
 
-    private suspend fun handleFrames(sender: FrameSender, channel: Channel<ByteArray>) {
+    private suspend fun handleFrames(transport: XhttpTransport) {
         try {
-            for (frameBytes in channel) {
+            while (transport.isOpen && clientScope.isActive) {
+                val frameBytes = transport.readFrame() ?: break
+
                 val frame = try {
                     FrameCodec.decode(frameBytes)
                 } catch (t: Throwable) {
@@ -384,62 +296,59 @@ class TunnelClient(
 
                 when (frame) {
                     is Frame.Ping -> {
-                        // Server heartbeat: reply with same payload as PONG
                         try {
-                            sender.sendFrame(FrameCodec.encode(Frame.Pong(frame.payload)))
+                            transport.sendFrame(FrameCodec.encode(Frame.Pong(frame.payload)))
                         } catch (_: Exception) {}
                     }
-                    is Frame.Pong -> { /* server response to its own PING, no client-side tracking */ }
+                    is Frame.Pong -> { }
                     is Frame.Capabilities -> {
                         paddingInjector.setNegotiated(
-                            sender,
+                            transport,
                             frame.capabilities.contains(FrameCodec.CAP_PADDING)
                         )
                     }
-                    is Frame.Padding -> { /* silently discard */ }
+                    is Frame.Padding -> { }
                     is Frame.Connect -> {
-                        if (sender === drainingWs) {
-                            // Reject new reverse requests on draining connection
+                        if (transport === drainingTransport) {
                             try {
-                                sender.sendFrame(FrameCodec.encode(Frame.ConnectFailed(frame.reqid)))
+                                transport.sendFrame(FrameCodec.encode(Frame.ConnectFailed(frame.reqid)))
                             } catch (_: Exception) {}
                         } else {
-                            handler.handleFrame(sender, frame)
+                            handler.handleFrame(transport, frame)
                         }
                     }
                     is Frame.ConnectOk -> {
                         if (forwardRegistry.isForwardReqid(frame.reqid)) {
                             forwardRegistry.handleFrame(frame)
                         } else {
-                            handler.handleFrame(sender, frame)
+                            handler.handleFrame(transport, frame)
                         }
                     }
                     is Frame.ConnectFailed -> {
                         if (forwardRegistry.isForwardReqid(frame.reqid)) {
                             forwardRegistry.handleFrame(frame)
                         } else {
-                            handler.handleFrame(sender, frame)
+                            handler.handleFrame(transport, frame)
                         }
                     }
                     is Frame.Data -> {
                         if (forwardRegistry.isForwardReqid(frame.reqid)) {
                             forwardRegistry.handleFrame(frame)
                         } else {
-                            handler.handleFrame(sender, frame)
+                            handler.handleFrame(transport, frame)
                         }
                     }
                     is Frame.Close -> {
                         if (forwardRegistry.isForwardReqid(frame.reqid)) {
                             forwardRegistry.handleFrame(frame)
                         } else {
-                            handler.handleFrame(sender, frame)
+                            handler.handleFrame(transport, frame)
                         }
                     }
-                    else -> { /* ignore */ }
+                    else -> { }
                 }
             }
         } catch (_: CancellationException) {
-            // Expected on stop
         }
     }
 
@@ -461,12 +370,11 @@ class TunnelClient(
     }
 
     private suspend fun rotationCycle() {
-        val oldWs = activeWs ?: return
-        if (!oldWs.isOpen) return
+        val oldTransport = activeTransport ?: return
+        if (!oldTransport.isOpen) return
 
-        cfIpSelector?.forceNextOnNextLookup()
+        sseCfIpSelector?.forceNextOnNextLookup()
 
-        // Establish candidate connection (channel pre-created and registered in onAuthSuccess)
         val candidate = try {
             establishConnection()
         } catch (e: Exception) {
@@ -474,51 +382,38 @@ class TunnelClient(
             return
         }
 
-        val candidateChannel = frameChannels[candidate]
-            ?: run {
-                Log.w(TAG, "Rotation candidate channel not registered")
-                try { candidate.close(1000, "no channel") } catch (_: Exception) {}
-                return
-            }
-
-        // Start frame handling for candidate with auto-cleanup
-        val candidateReadJob = clientScope.launch { handleFrames(candidate, candidateChannel) }
-        senderReadJobs[candidate] = candidateReadJob
+        val candidateReadJob = clientScope.launch { handleFrames(candidate) }
 
         clientScope.launch {
             candidateReadJob.join()
-            closeSender(candidate)
+            closeTransport(candidate)
         }
 
-        // Atomic switch: old → draining, candidate → active
         stateMutex.withLock {
-            candidateWs = null
-            // If a previous draining ws is still lingering, close it now
-            drainingWs?.let { prior ->
-                clientScope.launch { closeSender(prior) }
+            candidateTransport = null
+            drainingTransport?.let { prior ->
+                clientScope.launch { closeTransport(prior) }
             }
-            drainingWs = oldWs
-            activeWs = candidate
+            drainingTransport = oldTransport
+            activeTransport = candidate
         }
 
-        Log.i(TAG, "Rotation: new active WS, old draining")
+        Log.i(TAG, "Rotation: new active transport, old draining")
 
-        // Wait drain timeout, then poll until idle
         try {
             delay(DEFAULT_DRAIN_TIMEOUT_MS)
-            while (isStillDraining(oldWs, DEFAULT_DRAIN_IDLE_TIMEOUT_MS)) {
+            while (isStillDraining(oldTransport, DEFAULT_DRAIN_IDLE_TIMEOUT_MS)) {
                 delay(1000)
                 if (stopped) break
             }
         } catch (_: CancellationException) {
-            // Continue to cleanup
         } finally {
             stateMutex.withLock {
-                if (drainingWs === oldWs) {
-                    drainingWs = null
+                if (drainingTransport === oldTransport) {
+                    drainingTransport = null
                 }
             }
-            closeSender(oldWs)
+            closeTransport(oldTransport)
         }
     }
 
@@ -539,19 +434,17 @@ class TunnelClient(
         return (System.currentTimeMillis() - state.lastActivityAt) < idleTimeoutMs
     }
 
-    private suspend fun closeSender(sender: FrameSender) {
-        paddingInjector.clearNegotiation(sender)
-        senderReadJobs.remove(sender)?.cancel()
-        frameChannels.remove(sender)?.close()
-        handler.closeSessionsFor(sender)
-        forwardRegistry.closeSessionsFor(sender)
+    private suspend fun closeTransport(transport: FrameSender) {
+        paddingInjector.clearNegotiation(transport)
+        handler.closeSessionsFor(transport)
+        forwardRegistry.closeSessionsFor(transport)
 
         stateMutex.withLock {
-            if (activeWs === sender) activeWs = null
-            if (drainingWs === sender) drainingWs = null
-            if (candidateWs === sender) candidateWs = null
+            if (activeTransport === transport) activeTransport = null
+            if (drainingTransport === transport) drainingTransport = null
+            if (candidateTransport === transport) candidateTransport = null
         }
 
-        try { sender.close(1000, "done") } catch (_: Exception) {}
+        try { transport.close(1000, "done") } catch (_: Exception) {}
     }
 }

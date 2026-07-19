@@ -38,12 +38,7 @@ import com.blockproxy.android.status.StatusStore
 import com.blockproxy.android.status.TunnelStatus
 import com.blockproxy.android.tun.Tun2Socks
 import com.blockproxy.android.tunnel.RealTargetSocketFactory
-import com.blockproxy.android.tunnel.SilentModeState
-import com.blockproxy.android.tunnel.SilentModeController
-import com.blockproxy.android.tunnel.SseControlClient
-import com.blockproxy.android.tunnel.SseControlLoop
 import com.blockproxy.android.tunnel.TunnelClient
-import com.blockproxy.android.tunnel.TunnelClientSilentLifecycle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -107,13 +102,15 @@ class BlockProxyVpnService : VpnService() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tunnelClient: TunnelClient? = null
-    private var silentModeController: SilentModeController? = null
     private var localSocksServer: LocalSocksServer? = null
     @Volatile
     private var cfIpPool: CfIpPool? = null
 
     @Volatile
     private var cfIpSelector: CfIpSelector? = null
+
+    @Volatile
+    private var uploadCfIpSelector: CfIpSelector? = null
 
     /** True when the TUN fd was detached and handed to tun2socks. */
     private var vpnFdDetached = false
@@ -163,6 +160,7 @@ class BlockProxyVpnService : VpnService() {
             cfIpSelector?.let { CfIpRuntimeRegistry.detach(it) }
             cfIpPool = null
             cfIpSelector = null
+            uploadCfIpSelector = null
             statusStore.updateCfIp(null)
 
             // Cancel the service scope to abort setupTunnel() coroutine
@@ -177,15 +175,6 @@ class BlockProxyVpnService : VpnService() {
 
             // Stop tunnel client
             val client = tunnelClient
-            val controller = silentModeController
-            if (controller != null) {
-                runBlocking {
-                    withTimeoutOrNull(STOP_TIMEOUT_MS) {
-                        controller.stop()
-                    }
-                }
-                silentModeController = null
-            }
             if (client != null) {
                 runBlocking {
                     withTimeoutOrNull(STOP_TIMEOUT_MS) {
@@ -274,15 +263,6 @@ class BlockProxyVpnService : VpnService() {
 
         // Stop tunnel client with timeout
         val client = tunnelClient
-        val controller = silentModeController
-        if (controller != null) {
-            runBlocking {
-                withTimeoutOrNull(STOP_TIMEOUT_MS) {
-                    controller.stop()
-                }
-            }
-            silentModeController = null
-        }
         if (client != null) {
             runBlocking {
                 withTimeoutOrNull(STOP_TIMEOUT_MS) {
@@ -316,6 +296,7 @@ class BlockProxyVpnService : VpnService() {
         cfIpSelector?.let { CfIpRuntimeRegistry.detach(it) }
         cfIpPool = null
         cfIpSelector = null
+        uploadCfIpSelector = null
         statusStore.updateCfIp(null)
 
         super.onDestroy()
@@ -384,29 +365,27 @@ class BlockProxyVpnService : VpnService() {
         val pfd = vpnResult.descriptor
         vpnInterface = pfd
 
-        val effectiveMode = effectiveTransportMode(config.transportMode, vpnResult.appExclusionSucceeded)
-        val effectiveConfig = if (effectiveMode != config.transportMode) {
-            Log.w(TAG, "Chrome uTLS transport requires app VPN exclusion; falling back to OkHttp")
-            config.copy(transportMode = effectiveMode)
-        } else {
-            config
-        }
-
         val targetSocketFactory = RealTargetSocketFactory(protect = protectCallback)
 
-        cfIpPool = if (effectiveConfig.cfCdnEnabled) CfIpPool(applicationContext) else null
+        cfIpPool = if (config.cfCdnEnabled) CfIpPool(applicationContext) else null
         cfIpSelector = cfIpPool?.let { pool ->
             val snapshot = pool.loadSnapshot()
             CfIpSelector(snapshot) { cursor ->
                 serviceScope?.launch { pool.saveCursor(cursor) }
             }
         }
-        val cfIpDns = cfIpSelector?.let { selector ->
-            CfIpDns(effectiveConfig.serverHost, selector)
+        uploadCfIpSelector = cfIpPool?.let { pool ->
+            CfIpSelector(pool.loadSnapshot()) { }
         }
-        if (cfIpPool != null && cfIpSelector != null) {
-            CfIpRuntimeRegistry.attach(cfIpPool!!, cfIpSelector!!, protectCallback)
-            CfIpRefreshWorker.schedule(applicationContext, effectiveConfig.serverPort)
+        val sseCfIpDns = cfIpSelector?.let { selector ->
+            CfIpDns(config.serverHost, selector, rotateOnLookup = true)
+        }
+        val uploadCfIpDns = uploadCfIpSelector?.let { selector ->
+            CfIpDns(config.serverHost, selector, rotateOnLookup = true)
+        }
+        if (cfIpPool != null && cfIpSelector != null && uploadCfIpSelector != null) {
+            CfIpRuntimeRegistry.attach(cfIpPool!!, listOf(cfIpSelector!!, uploadCfIpSelector!!), protectCallback)
+            CfIpRefreshWorker.schedule(applicationContext, config.serverPort)
         } else {
             CfIpRefreshWorker.cancelSchedule(applicationContext)
             statusStore.updateCfIp(null)
@@ -415,33 +394,18 @@ class BlockProxyVpnService : VpnService() {
         // Create TunnelClient (needed by TunnelForwardConnector for LocalSocksServer)
         val scope = serviceScope ?: return
         val client = TunnelClient(
-            config = effectiveConfig,
+            config = config,
             credentials = credentials,
             targetSocketFactory = targetSocketFactory,
             clientScope = scope,
             protect = protectCallback,
-            cfIpDns = cfIpDns,
-            cfIpSelector = cfIpSelector,
+            sseCfIpDns = sseCfIpDns,
+            sseCfIpSelector = cfIpSelector,
+            uploadCfIpDns = uploadCfIpDns,
+            uploadCfIpSelector = uploadCfIpSelector,
             onCfIpChanged = statusStore::updateCfIp,
         )
         tunnelClient = client
-        val controller = if (effectiveConfig.silentModeEnabled) {
-            SilentModeController(
-                config = effectiveConfig,
-                tunnel = TunnelClientSilentLifecycle(client),
-                sseLoop = SseControlLoop(
-                    SseControlClient(
-                        config = effectiveConfig,
-                        credentials = credentials,
-                        okHttpClient = SseControlClient.createUnsafeOkHttpClient(),
-                    )
-                ),
-                scope = scope,
-            )
-        } else {
-            null
-        }
-        silentModeController = controller
 
         // Start local SOCKS5 server on loopback.
         // tun2socks will forward TUN traffic to this server, which applies
@@ -480,37 +444,15 @@ class BlockProxyVpnService : VpnService() {
         // Observe client status and update notification
         scope.launch {
             client.status.collect { status ->
-                val effectiveStatus = if (
-                    status == TunnelStatus.Disconnected &&
-                    controller?.state?.value == SilentModeState.Sleeping
-                ) {
-                    TunnelStatus.SilentListening
-                } else {
-                    status
-                }
-                statusStore.update(effectiveStatus)
-                updateNotification(effectiveStatus)
-            }
-        }
-        if (controller != null) {
-            scope.launch {
-                controller.state.collect { state ->
-                    if (state == SilentModeState.Sleeping) {
-                        statusStore.update(TunnelStatus.SilentListening)
-                        updateNotification(TunnelStatus.SilentListening)
-                    }
-                }
+                statusStore.update(status)
+                updateNotification(status)
             }
         }
 
         // Start the tunnel client (establishes TLS connections to remote server)
         statusStore.update(TunnelStatus.Connecting)
         updateNotification(TunnelStatus.Connecting)
-        if (controller != null) {
-            controller.start()
-        } else {
-            client.start()
-        }
+        client.start()
     }
 
     /**

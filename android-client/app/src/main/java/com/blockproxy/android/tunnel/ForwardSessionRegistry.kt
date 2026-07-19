@@ -164,7 +164,7 @@ class ForwardSessionRegistry(
     /**
      * Closes all forward sessions bound to the given [sender].
      *
-     * Called when a WebSocket connection disconnects. Pending opens are failed
+     * Called when a transport session disconnects. Pending opens are failed
      * with an IOException so the caller can retry on another connection.
      */
     fun closeSessionsFor(sender: FrameSender) {
@@ -262,5 +262,5 @@ class ForwardSessionRegistry(
     private val IPV4_REGEX = Regex("^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$")
 }
 
-/** Drain state for a WebSocket connection: number of active requests and last activity timestamp. */
+/** Drain state for a transport session: number of active requests and last activity timestamp. */
 data class DrainState(val activeCount: Int, val lastActivityAt: Long)

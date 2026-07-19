@@ -244,7 +244,7 @@ const REQUIRED_FIELDS = [
   { key: 'rule_modules',     type: 'object',  label: '规则模块' },
   { key: 'enable_tunnel',   type: 'string', label: '隧道开关' },
   { key: 'tunnel_port',          type: 'number', label: '隧道端口' },
-  { key: 'tunnel_ws_path',       type: 'string', label: '隧道 WebSocket 路径' },
+  { key: 'tunnel_xhttp_base_path', type: 'string', label: '隧道 xhttp 路径' },
   { key: 'tunnel_sse_path',      type: 'string', label: '隧道 SSE 路径' },
   { key: 'tunnel_sse_keepalive_min_ms', type: 'number', label: 'SSE 最小保活间隔' },
   { key: 'tunnel_sse_keepalive_max_ms', type: 'number', label: 'SSE 最大保活间隔' },
@@ -269,7 +269,7 @@ function validateImportedConfig(newConfig) {
   // 兼容老旧配置：补全新增字段的默认值
   if (!('enable_tunnel' in newConfig)) newConfig.enable_tunnel = "1";
   if (!('tunnel_port' in newConfig)) newConfig.tunnel_port = 8003;
-  if (!('tunnel_ws_path' in newConfig)) newConfig.tunnel_ws_path = "/websocket";
+  if (!('tunnel_xhttp_base_path' in newConfig)) newConfig.tunnel_xhttp_base_path = "/xhttp";
   if (!('tunnel_sse_path' in newConfig)) newConfig.tunnel_sse_path = "/api/v1/events";
   if (!('tunnel_sse_keepalive_min_ms' in newConfig)) newConfig.tunnel_sse_keepalive_min_ms = 35000;
   if (!('tunnel_sse_keepalive_max_ms' in newConfig)) newConfig.tunnel_sse_keepalive_max_ms = 45000;

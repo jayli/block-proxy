@@ -1,18 +1,10 @@
 const https = require('https');
-const crypto = require('crypto');
-const wsModule = require('ws');
-const { FRAME_TYPES, MAX_FRAME_PAYLOAD, CAP_PADDING, CAP_SILENT_MODE, encodeFrame, decodeFrame } = require('./protocol');
+const { encodeFrame } = require('./protocol');
 const { handleDisguiseRequest } = require('./disguiseResponse');
 const SseControlHandler = require('./sseControl');
+const XhttpHandler = require('./xhttpHandler');
 
-const WebSocketServer = wsModule.WebSocketServer || wsModule.Server;
-const WebSocket = wsModule.WebSocket || wsModule;
-
-const DEFAULT_WS_PATH = '/websocket';
-const DEFAULT_HEARTBEAT_MIN = 210;
-const DEFAULT_HEARTBEAT_MAX = 270;
-const DEFAULT_HEARTBEAT_TIMEOUT = 300;
-const DEFAULT_SILENT_IDLE_TIMEOUT = 3000;
+const DEFAULT_XHTTP_BASE_PATH = '/xhttp';
 const DEFAULT_ROTATION_DRAIN_TIMEOUT = 10;
 const DEFAULT_ROTATION_DRAIN_IDLE_TIMEOUT = 20;
 
@@ -22,13 +14,9 @@ class TunnelServer {
     this.cert = options.cert;
     this.key = options.key;
     this.credentials = options.credentials;
-    this.wsPath = options.wsPath || options.tunnel_ws_path || DEFAULT_WS_PATH;
-    this.heartbeatMin = options.heartbeatMin || options.tunnel_heartbeat_min || DEFAULT_HEARTBEAT_MIN;
-    this.heartbeatMax = options.heartbeatMax || options.tunnel_heartbeat_max || DEFAULT_HEARTBEAT_MAX;
-    this.heartbeatTimeout = options.heartbeatTimeout || options.tunnel_heartbeat_timeout || DEFAULT_HEARTBEAT_TIMEOUT;
+    this.xhttpBasePath = options.xhttpBasePath || options.tunnel_xhttp_base_path || DEFAULT_XHTTP_BASE_PATH;
     this.rotationDrainTimeout = options.rotationDrainTimeout || options.tunnel_rotation_drain_timeout || DEFAULT_ROTATION_DRAIN_TIMEOUT;
     this.rotationDrainIdleTimeout = options.rotationDrainIdleTimeout || options.tunnel_rotation_drain_idle_timeout || DEFAULT_ROTATION_DRAIN_IDLE_TIMEOUT;
-    this.silentIdleTimeout = options.silentIdleTimeout || options.tunnel_silent_idle_timeout || DEFAULT_SILENT_IDLE_TIMEOUT;
     this.paddingEnabled = options.paddingEnabled ?? true;
     this.paddingProbability = Math.max(0, Math.min(1, options.paddingProbability ?? 0.3));
     this.paddingMinBytes = Math.max(0, Math.min(65534, options.paddingMinBytes ?? 64));
@@ -37,30 +25,32 @@ class TunnelServer {
     this.onDisconnect = options.onDisconnect || (() => {});
 
     this._frameHandlers = [];
-    this._clientSockets = new Set();
     this._server = null;
-    this._wss = null;
-    this._clientWs = null;
-    this._records = new Map();
-    this._heartbeatTimer = null;
-    this._drainCheckCallback = null;
     this._tunnelManager = null;
+    this._drainCheckCallback = null;
+
+    // 旧 SSE 控制路径适配器：只负责 410 迁移提示，xhttp stream 才是下行通道。
     this._sseControlHandler = new SseControlHandler({
       path: options.ssePath || options.tunnel_sse_path || '/api/v1/events',
-      keepaliveMinMs: options.sseKeepaliveMinMs || options.tunnel_sse_keepalive_min_ms || 35_000,
-      keepaliveMaxMs: options.sseKeepaliveMaxMs || options.tunnel_sse_keepalive_max_ms || 45_000,
-      onAuthenticated: (token) => {
-        if (this._tunnelManager && typeof this._tunnelManager.markClientSleeping === 'function') {
-          this._tunnelManager.markClientSleeping(token);
-        }
-      },
-      onDisconnected: (token) => {
-        if (this._tunnelManager && typeof this._tunnelManager.markClientSseDisconnected === 'function') {
-          this._tunnelManager.markClientSseDisconnected(token);
-        }
-      },
     });
     this._sseControlHandler.setCredentials(this.credentials);
+
+    // xhttp 处理器（核心）
+    this._xhttpHandler = new XhttpHandler({
+      basePath: this.xhttpBasePath,
+      credentials: this.credentials,
+      maxBufferedPosts: options.maxBufferedPosts || 64,
+      sessionTimeoutMs: options.sessionTimeoutMs || 30_000,
+      keepaliveMinMs: options.sseKeepaliveMinMs || options.tunnel_sse_keepalive_min_ms || 35_000,
+      keepaliveMaxMs: options.sseKeepaliveMaxMs || options.tunnel_sse_keepalive_max_ms || 45_000,
+      paddingEnabled: this.paddingEnabled,
+      onFrame: (frame, sessionId) => this._handleXhttpFrame(frame, sessionId),
+      onSessionCreated: (sessionId, token, info) => this._handleSessionCreated(sessionId, token, info),
+      onSessionClosed: (sessionId, token) => this._handleSessionClosed(sessionId, token),
+    });
+
+    // 将 xhttpHandler 绑定到 sseControl 适配器
+    this._sseControlHandler.setXhttpHandler(this._xhttpHandler);
   }
 
   start() {
@@ -72,57 +62,23 @@ class TunnelServer {
         sessionTimeout: 300,
       }, (req, res) => this._handleHttpRequest(req, res));
 
-      this._wss = new WebSocketServer({
-        server: this._server,
-        path: this.wsPath,
-        maxPayload: MAX_FRAME_PAYLOAD + 2,
-      });
-      this._wss.on('connection', (ws, req) => this._handleWsConnection(ws, req));
-
       this._server.once('error', reject);
       this._server.listen(this.port, () => {
         this._server.removeListener('error', reject);
         const localIp = require('../proxy/domain').getLocalIp();
-        console.log(`✅ \x1b[32m隧道服务启动，IP ${localIp}, 端口 ${this.port}\x1b[0m`);
+        console.log(`✅ \x1b[32m隧道服务启动 (xhttp)，IP ${localIp}, 端口 ${this.port}\x1b[0m`);
         resolve();
       });
     });
   }
 
   async stop() {
-    this._stopHeartbeat();
     this._drainCheckCallback = null;
 
-    const sockets = [...this._records.keys()];
-    for (const record of this._records.values()) {
-      if (record.drainTimer) {
-        clearTimeout(record.drainTimer);
-        record.drainTimer = null;
-      }
+    // 关闭所有 xhttp sessions
+    if (this._xhttpHandler) {
+      this._xhttpHandler.closeAll();
     }
-    for (const ws of sockets) {
-      this._closeWs(ws, 1001, 'server stopping');
-    }
-    setTimeout(() => {
-      for (const ws of sockets) {
-        if (ws.readyState !== WebSocket.CLOSED) ws.terminate();
-      }
-    }, 50).unref();
-    this._records.clear();
-    this._clientSockets.clear();
-    this._clientWs = null;
-
-    const closeWss = this._wss
-      ? new Promise((resolve) => {
-        const wss = this._wss;
-        this._wss = null;
-        const timer = setTimeout(resolve, 500);
-        wss.close(() => {
-          clearTimeout(timer);
-          resolve();
-        });
-      })
-      : Promise.resolve();
 
     const closeServer = this._server
       ? new Promise((resolve) => {
@@ -136,369 +92,128 @@ class TunnelServer {
       })
       : Promise.resolve();
 
-    await Promise.all([closeWss, closeServer]);
+    await closeServer;
   }
 
   _handleHttpRequest(req, res) {
+    // sseControl 适配器会先尝试 xhttpHandler，然后尝试旧 SSE 路径
     if (this._sseControlHandler.handleRequest(req, res)) return;
     handleDisguiseRequest(req, res);
   }
 
-  _handleWsConnection(ws, req) {
-    const socket = req.socket;
-    socket.setNoDelay(true);
-    socket.setKeepAlive(true, 60000);
+  // ── xhttp 事件处理 ──────────────────────────────────────────────
 
-    const record = {
-      ws,
-      authenticated: false,
-      state: 'candidate',
-      remoteAddress: socket.remoteAddress,
-      remotePort: socket.remotePort,
-      connectedAt: Date.now(),
-      pongTime: Date.now(),
-      pendingPingPayload: null,
-      capabilities: new Set(),
-      silentMode: false,
-      lastDataActivityAt: Date.now(),
-      drainTimer: null,
-    };
-    this._records.set(ws, record);
+  /**
+   * xhttpHandler 的帧回调：解码后的帧交给 manager 处理。
+   */
+  _handleXhttpFrame(frame, sessionId) {
+    // 分发给所有注册的 frame handlers（兼容旧接口）
+    this._frameHandlers.forEach(handler => handler(frame, sessionId));
 
-    ws.on('message', (data, isBinary) => {
-      const binary = typeof isBinary === 'boolean' ? isBinary : !isTextMessage(data);
-      if (!binary) {
-        this._closeWs(ws, 1003, 'binary frames required');
-        return;
-      }
-      this._handleWsMessage(ws, Buffer.from(data));
-    });
-
-    ws.on('close', () => this._handleWsClose(ws));
-    ws.on('error', (err) => {
-      console.error('[Tunnel] WebSocket error:', err.message);
-    });
-  }
-
-  _handleWsMessage(ws, data) {
-    const record = this._records.get(ws);
-    if (!record) return;
-
-    let frame;
-    try {
-      frame = decodeFrame(data);
-    } catch (err) {
-      console.error('[Tunnel] Frame decode error:', err.message);
-      this._closeWs(ws, 1002, 'bad frame');
-      return;
-    }
-
-    if (!record.authenticated) {
-      if (frame.type !== FRAME_TYPES.AUTH) {
-        this._closeWs(ws, 1008, 'auth required');
-        return;
-      }
-      this._handleAuth(record, frame);
-      return;
-    }
-
-    if (frame.type === FRAME_TYPES.PING) {
-      this._sendWsFrame(ws, { type: FRAME_TYPES.PONG, payload: frame.payload }).catch(() => {});
-      return;
-    }
-
-    if (frame.type === FRAME_TYPES.PONG) {
-      if (!record.pendingPingPayload || frame.payload.equals(record.pendingPingPayload)) {
-        record.pongTime = Date.now();
-        record.pendingPingPayload = null;
-      }
-      return;
-    }
-
-    if (frame.type === FRAME_TYPES.PADDING) {
-      return;
-    }
-
-    if (frame.type === FRAME_TYPES.DATA || frame.type === FRAME_TYPES.CONNECT || frame.type === FRAME_TYPES.CLOSE) {
-      record.lastDataActivityAt = Date.now();
-    }
-
-    this._frameHandlers.forEach(handler => handler(frame, ws));
-  }
-
-  _handleAuth(record, frame) {
-    const { ws } = record;
-    const { username, password } = frame;
-
-    if (username !== this.credentials.username || password !== this.credentials.password) {
-      this._sendWsFrame(ws, { type: FRAME_TYPES.AUTH_FAIL }).finally(() => {
-        this._closeWs(ws, 1008, 'auth failed');
-      });
-      return;
-    }
-
-    const counts = this.getConnectionCounts();
-    if (counts.active >= 1 && counts.draining >= 1) {
-      this._sendWsFrame(ws, { type: FRAME_TYPES.ERROR, message: 'Tunnel connection limit (2)' }).finally(() => {
-        this._closeWs(ws, 1008, 'connection limit');
-      });
-      return;
-    }
-
-    record.authenticated = true;
-    record.pongTime = Date.now();
-    record.lastDataActivityAt = Date.now();
-    const clientCapabilities = new Set(frame.capabilities || []);
-    record.silentMode = clientCapabilities.has(CAP_SILENT_MODE);
-    if (this.paddingEnabled && clientCapabilities.has(CAP_PADDING)) {
-      record.capabilities.add(CAP_PADDING);
-    }
-    this._promoteRecord(record);
-
-    this._sendWsFrame(ws, { type: FRAME_TYPES.AUTH_OK }).then(() => {
-      if (record.capabilities.size > 0) {
-        return this._sendWsFrame(ws, {
-          type: FRAME_TYPES.CAPABILITIES,
-          capabilities: [...record.capabilities],
-        }).then((ok) => {
-          if (ok && record.capabilities.has(CAP_PADDING)) {
-            console.log(`[Tunnel] Padding negotiated: ${record.remoteAddress} (${record.state})`);
-          }
-          return ok;
-        });
-      }
-      return true;
-    }).then(() => {
-      console.log(`[Tunnel] Client authenticated: ${record.remoteAddress} (${record.state})`);
-      this._startHeartbeat();
-      this.onConnect(ws, record.remoteAddress, record.remotePort);
-    });
-  }
-
-  _promoteRecord(record) {
-    const oldActive = this._clientWs;
-    if (oldActive && oldActive !== record.ws) {
-      const oldRecord = this._records.get(oldActive);
-      if (oldRecord && oldRecord.authenticated) {
-        oldRecord.state = 'draining';
-        if (oldRecord.drainTimer) clearTimeout(oldRecord.drainTimer);
-        oldRecord.drainTimer = setTimeout(() => {
-          this._tryDrainSocket(oldRecord);
-        }, Math.max(1, this.rotationDrainTimeout * 1000));
-        oldRecord.drainTimer.unref();
-      }
-    }
-
-    record.state = 'active';
-    this._clientWs = record.ws;
-    this._clientSockets.add(record.ws);
-  }
-
-  _handleWsClose(ws) {
-    const record = this._records.get(ws);
-    if (!record) return;
-
-    this._records.delete(ws);
-    this._clientSockets.delete(ws);
-    if (record.drainTimer) {
-      clearTimeout(record.drainTimer);
-      record.drainTimer = null;
-    }
-    if (this._clientWs === ws) {
-      this._clientWs = null;
-    }
-
-    if (record.authenticated) {
-      console.log(`[Tunnel] Client disconnected (${this._clientSockets.size} remaining)`);
-      this.onDisconnect(ws);
-    }
-
-    if (this._clientSockets.size === 0) {
-      this._stopHeartbeat();
+    // 如果 manager 存在，直接调用 handleFrame
+    if (this._tunnelManager && typeof this._tunnelManager.handleFrame === 'function') {
+      this._tunnelManager.handleFrame(frame, sessionId);
     }
   }
 
-  sendFrame(frame, targetSocket) {
-    if (targetSocket) {
-      if (!this._clientSockets.has(targetSocket)) {
-        return Promise.resolve(false);
-      }
-      return this._sendWsFrame(targetSocket, frame).then((ok) => {
-        if (ok && frame.type === FRAME_TYPES.DATA) this._maybePadAfterSend(targetSocket);
-        return ok;
-      });
-    }
+  /**
+   * xhttpHandler 的 session 创建回调。
+   */
+  _handleSessionCreated(sessionId, token, info) {
+    console.log(`[Tunnel] xhttp session created: ${sessionId}`);
 
-    if (!this._clientWs || !this._clientSockets.has(this._clientWs)) {
-      return Promise.resolve(false);
-    }
-    return this._sendWsFrame(this._clientWs, frame).then((ok) => {
-      if (ok && frame.type === FRAME_TYPES.DATA) this._maybePadAfterSend(this._clientWs);
-      return ok;
-    });
+    // 通知外部
+    this.onConnect(sessionId, token);
   }
 
-  _sendWsFrame(ws, frame) {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      return Promise.resolve(false);
-    }
+  /**
+   * xhttpHandler 的 session 关闭回调。
+   */
+  _handleSessionClosed(sessionId, token) {
+    console.log(`[Tunnel] xhttp session closed: ${sessionId}`);
 
-    const data = encodeFrame(frame);
-    return new Promise((resolve) => {
-      ws.send(data, { binary: true }, (err) => {
-        if (err) {
-          console.warn('[Tunnel] WebSocket send failed:', err.message);
-          resolve(false);
-          return;
-        }
-        resolve(true);
-      });
-    });
+    // 通知外部
+    this.onDisconnect(sessionId);
   }
 
-  _closeWs(ws, code, reason) {
-    if (!ws) return;
-    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-      try {
-        ws.close(code, reason);
-      } catch (err) {
-        ws.terminate();
-      }
-      setTimeout(() => {
-        if (ws.readyState !== WebSocket.CLOSED) ws.terminate();
-      }, 100).unref();
-    }
+  // ── 公共 API（供 manager 和其他模块调用）───────────────────────
+
+  /**
+   * 向指定 session 发送一个帧（编码后通过 SSE 推送）。
+   *
+   * @param {object} frame — 帧对象（会被 encodeFrame 编码）
+   * @param {string} sessionId — 目标 session
+   * @returns {Promise<boolean>}
+   */
+  sendFrame(frame, sessionId) {
+    const encoded = encodeFrame(frame);
+    return Promise.resolve(this._xhttpHandler.pushFrame(sessionId, encoded));
   }
 
+  /**
+   * 向指定 session 推送已编码的帧。
+   *
+   * @param {string} sessionId
+   * @param {Buffer} encodedFrame
+   * @returns {boolean}
+   */
+  sendEncodedFrame(sessionId, encodedFrame) {
+    return this._xhttpHandler.pushFrame(sessionId, encodedFrame);
+  }
+
+  /**
+   * 注册帧处理回调。
+   */
   onFrame(handler) {
     this._frameHandlers.push(handler);
   }
 
-  getActiveSocket() {
-    return this._clientWs && this._clientWs.readyState === WebSocket.OPEN ? this._clientWs : null;
+  /**
+   * 获取当前活跃的 sessionId。
+   */
+  getActiveSessionId() {
+    return this._xhttpHandler.getActiveSessionId();
   }
 
+  getSessionToken(sessionId) {
+    const session = this._xhttpHandler._sessions.get(sessionId);
+    return session ? session.token : null;
+  }
+
+  /**
+   * 设置 drain 检查回调（兼容旧接口）。
+   */
   setActiveRequestChecker(fn) {
     this._drainCheckCallback = fn;
   }
 
-  _tryDrainSocket(record) {
-    if (this._drainCheckCallback) {
-      const drainState = this._drainCheckCallback(record.ws);
-      const activeCount = typeof drainState === 'number' ? drainState : (drainState && drainState.activeCount) || 0;
-      if (activeCount > 0) {
-        const lastActivityAt = typeof drainState === 'number' ? null : drainState.lastActivityAt;
-        const idleMs = Math.max(0, this.rotationDrainIdleTimeout * 1000);
-        if (!idleMs || !lastActivityAt || Date.now() - lastActivityAt < idleMs) {
-          const delay = lastActivityAt && idleMs
-            ? Math.min(1000, Math.max(10, idleMs - (Date.now() - lastActivityAt)))
-            : 1000;
-          record.drainTimer = setTimeout(() => this._tryDrainSocket(record), delay);
-          record.drainTimer.unref();
-          return;
-        }
-        console.warn(`[Tunnel] Draining connection idle for ${this.rotationDrainIdleTimeout}s; closing stale requests`);
-      } else {
-        record.drainTimer = null;
-      }
-    }
-    if (record.ws.readyState !== WebSocket.CLOSED) {
-      record.ws.terminate();
-    }
-  }
-
+  /**
+   * 获取连接统计。
+   */
   getConnectionCounts() {
-    const counts = { active: 0, candidate: 0, draining: 0, total: 0 };
-    for (const record of this._records.values()) {
-      if (!record.authenticated) continue;
-      counts.total += 1;
-      if (record.state === 'active') counts.active += 1;
-      if (record.state === 'candidate') counts.candidate += 1;
-      if (record.state === 'draining') counts.draining += 1;
-    }
-    return counts;
+    return this._xhttpHandler.getConnectionCounts();
   }
 
+  /**
+   * 设置 TunnelManager 引用。
+   */
   setTunnelManager(manager) {
     this._tunnelManager = manager;
   }
 
+  /**
+   * 获取 SseControlHandler（适配器）。
+   */
   getSseControlHandler() {
     return this._sseControlHandler;
   }
 
-  _startHeartbeat() {
-    if (this._heartbeatTimer) return;
-    this._scheduleHeartbeat();
+  /**
+   * 获取 XhttpHandler 实例。
+   */
+  getXhttpHandler() {
+    return this._xhttpHandler;
   }
-
-  _scheduleHeartbeat() {
-    this._stopHeartbeat();
-    if (this._clientSockets.size === 0) return;
-
-    const minMs = Math.max(1, this.heartbeatMin * 1000);
-    const maxMs = Math.max(minMs, this.heartbeatMax * 1000);
-    const delay = minMs + Math.floor(Math.random() * (maxMs - minMs + 1));
-    this._heartbeatTimer = setTimeout(() => {
-      this._heartbeatTimer = null;
-      this._sendHeartbeat();
-      this._scheduleHeartbeat();
-    }, delay);
-    this._heartbeatTimer.unref();
-  }
-
-  _sendHeartbeat() {
-    const now = Date.now();
-    const timeoutMs = this.heartbeatTimeout * 1000;
-
-    for (const record of this._records.values()) {
-      if (!record.authenticated || (record.state !== 'active' && record.state !== 'draining')) continue;
-      if (record.silentMode && now - record.lastDataActivityAt >= this.silentIdleTimeout * 1000) {
-        console.log(`[Tunnel] Silent idle timeout (${this.silentIdleTimeout}s no tunnel data), closing WS`);
-        this._closeWs(record.ws, 1000, 'silent idle timeout');
-        continue;
-      }
-      if (now - record.pongTime > timeoutMs) {
-        console.log(`[Tunnel] Heartbeat timeout (${this.heartbeatTimeout}s no valid PONG), closing WS`);
-        this._closeWs(record.ws, 1001, 'heartbeat timeout');
-        continue;
-      }
-
-      const payloadLen = 8 + Math.floor(Math.random() * 33);
-      const payload = crypto.randomBytes(payloadLen);
-      record.pendingPingPayload = payload;
-      this._sendWsFrame(record.ws, { type: FRAME_TYPES.PING, payload }).catch(() => {});
-    }
-  }
-
-  _stopHeartbeat() {
-    if (this._heartbeatTimer) {
-      clearTimeout(this._heartbeatTimer);
-      this._heartbeatTimer = null;
-    }
-  }
-
-  _randomPaddingBytes() {
-    const size = this.paddingMinBytes +
-      Math.floor(Math.random() * (this.paddingMaxBytes - this.paddingMinBytes + 1));
-    return crypto.randomBytes(size);
-  }
-
-  _maybePadAfterSend(ws) {
-    if (!this.paddingEnabled) return;
-    const record = this._records.get(ws);
-    if (!record || !record.capabilities || !record.capabilities.has(CAP_PADDING)) return;
-    if (Math.random() >= this.paddingProbability) return;
-    this._sendWsFrame(ws, {
-      type: FRAME_TYPES.PADDING,
-      data: this._randomPaddingBytes(),
-    }).catch(() => {});
-  }
-
-}
-
-function isTextMessage(data) {
-  return typeof data === 'string';
 }
 
 module.exports = TunnelServer;

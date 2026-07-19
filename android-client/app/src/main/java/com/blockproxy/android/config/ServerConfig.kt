@@ -1,7 +1,5 @@
 package com.blockproxy.android.config
 
-import com.blockproxy.android.tunnel.TunnelTransportMode
-
 /**
  * Server connection configuration persisted by the app.
  *
@@ -16,21 +14,15 @@ data class ServerConfig(
     val serverPort: Int = DEFAULT_PORT,
     val useTls: Boolean = true,
     val allowInsecure: Boolean = true,
-    // WebSocket tunnel 新增
-    val wsPath: String = "/websocket",
+    // xhttp 隧道配置
+    val xhttpBasePath: String = "/xhttp",
     val httpDisguise: Boolean = true,
     val customHeaders: Map<String, String> = emptyMap(),
     val cfCdnEnabled: Boolean = false,
-    val transportMode: TunnelTransportMode = TunnelTransportMode.CHROME_UTLS,
     val paddingEnabled: Boolean = true,
     val paddingProbability: Float = 0.05f,
     val paddingMinBytes: Int = 64,
     val paddingMaxBytes: Int = 512,
-    val silentModeEnabled: Boolean = false,
-    val sseHost: String = "",
-    val ssePort: Int = DEFAULT_PORT,
-    val ssePath: String = "/api/v1/events",
-    val silentIdleTimeoutMs: Long = 3_000_000L,
 ) {
     companion object {
         /** Default tunnel server port (matches block-proxy tunnel server). */

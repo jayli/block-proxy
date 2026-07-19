@@ -2,47 +2,52 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const { once } = require('node:events');
 const TunnelManager = require('../manager');
+const { decodeFrame } = require('../protocol');
 
 function createMockServer() {
   const handlers = [];
   const sentFrames = [];
-  const socketA = { name: 'active-a' };
-  const socketB = { name: 'active-b' };
-  const sockets = new Set([socketA]);
-  let activeSocket = socketA;
-  let wakeCount = 0;
+  const sessionA = 'session-a';
+  const sessionB = 'session-b';
+  const sessions = new Set([sessionA]);
+  let activeSessionId = sessionA;
+  let manager = null;
 
   return {
     credentials: { username: 'admin', password: 'secret' },
     onFrame: (h) => handlers.push(h),
-    sendFrame: (frame, socket) => {
-      sentFrames.push({ frame, socket });
+    sendFrame: (frame, sessionId) => {
+      sentFrames.push({ frame, sessionId });
       return Promise.resolve(true);
     },
-    getSseControlHandler: () => ({
-      sendWakeSignal: () => {
-        wakeCount += 1;
-        return true;
-      },
-    }),
-    getActiveSocket: () => activeSocket,
-    getConnectionCounts: () => ({
-      active: activeSocket ? 1 : 0,
-      candidate: 0,
-      draining: Math.max(0, sockets.size - (activeSocket ? 1 : 0)),
-      total: sockets.size,
-    }),
-    _setActiveSocket: (socket) => {
-      activeSocket = socket;
-      if (socket) sockets.add(socket);
+    sendEncodedFrame: (sessionId, encodedFrame) => {
+      sentFrames.push({ frame: decodeFrame(encodedFrame), sessionId });
+      return true;
     },
-    _emit: (frame, socket = socketA) => handlers.forEach(h => h(frame, socket)),
+    getActiveSessionId: () => activeSessionId,
+    getSessionToken: () => 'token',
+    getConnectionCounts: () => ({
+      active: activeSessionId ? 1 : 0,
+      candidate: 0,
+      draining: Math.max(0, sessions.size - (activeSessionId ? 1 : 0)),
+      total: sessions.size,
+    }),
+    setTunnelManager: (value) => { manager = value; },
+    _setActiveSessionId: (sessionId) => {
+      activeSessionId = sessionId;
+      if (sessionId) sessions.add(sessionId);
+    },
+    _emit: (frame, sessionId = sessionA) => {
+      if (manager) {
+        manager.handleFrame(frame, sessionId);
+      }
+      handlers.forEach(h => h(frame, sessionId));
+    },
     _handlers: handlers,
     _sentFrames: sentFrames,
-    _wakeCount: () => wakeCount,
-    _clientSockets: sockets,
-    _socketA: socketA,
-    _socketB: socketB,
+    _sessions: sessions,
+    _sessionA: sessionA,
+    _sessionB: sessionB,
   };
 }
 
@@ -81,7 +86,7 @@ describe('TunnelManager.isAvailable', () => {
   it('should be true after setConnected(true)', () => {
     const server = createMockServer();
     const manager = new TunnelManager(server, { tunnel_domains: [] });
-    manager.setConnected(server._socketA, true, '127.0.0.1:12345');
+    manager.setConnected(server._sessionA, true, '127.0.0.1:12345');
     assert.equal(manager.isAvailable(), true);
   });
 });
@@ -90,7 +95,7 @@ describe('TunnelManager.forward', () => {
   it('should support multiple concurrent reverse connections', async () => {
     const server = createMockServer();
     const manager = new TunnelManager(server, { tunnel_domains: ['a.com'] });
-    manager.setConnected(server._socketA, true);
+    manager.setConnected(server._sessionA, true);
 
     const stream1 = manager.forward('a.com', 443, () => {});
     assert.ok(stream1, 'First forward should return stream');
@@ -125,73 +130,73 @@ describe('TunnelManager.forward', () => {
       atyp: 0x03,
       addr: 'a.com',
       port: 443
-    }, server._socketA);
+    }, server._sessionA);
 
     assert.deepEqual(server._sentFrames, [
-      { frame: { type: 0x81, reqid: 0x8001 }, socket: server._socketA }
+      { frame: { type: 0x81, reqid: 0x8001 }, sessionId: server._sessionA }
     ]);
     assert.equal(manager.getStatus().activeRequests, 0);
   });
 
-  it('selects the current active socket for new reverse forwards', () => {
+  it('selects the current active session for new reverse forwards', () => {
     const server = createMockServer();
     const manager = new TunnelManager(server, { tunnel_domains: [] });
-    manager.setConnected(server._socketA, true);
+    manager.setConnected(server._sessionA, true);
 
     const stream1 = manager.forward('first.test', 443, () => {});
-    server._setActiveSocket(server._socketB);
+    server._setActiveSessionId(server._sessionB);
     const stream2 = manager.forward('second.test', 443, () => {});
 
-    assert.equal(server._sentFrames[0].socket, server._socketA);
-    assert.equal(server._sentFrames[1].socket, server._socketB);
+    assert.equal(server._sentFrames[0].sessionId, server._sessionA);
+    assert.equal(server._sentFrames[1].sessionId, server._sessionB);
     stream1.destroy();
     stream2.destroy();
   });
 
-  it('stores selected socket and sends existing DATA/CLOSE to the bound socket', async () => {
+  it('stores selected session and sends existing DATA/CLOSE to the bound session', async () => {
     const server = createMockServer();
     const manager = new TunnelManager(server, { tunnel_domains: [] });
-    manager.setConnected(server._socketA, true);
+    manager.setConnected(server._sessionA, true);
 
     const stream = manager.forward('bound.test', 443, () => {});
     const reqid = server._sentFrames[0].frame.reqid;
 
-    server._setActiveSocket(server._socketB);
+    server._setActiveSessionId(server._sessionB);
     await manager._sendData(reqid, Buffer.from('hello'));
     manager._sendClose(reqid);
 
-    assert.equal(server._sentFrames[1].socket, server._socketA);
+    assert.equal(server._sentFrames[1].sessionId, server._sessionA);
     assert.equal(server._sentFrames[1].frame.type, 0x02);
-    assert.equal(server._sentFrames[2].socket, server._socketA);
+    assert.equal(server._sentFrames[2].sessionId, server._sessionA);
     assert.equal(server._sentFrames[2].frame.type, 0x03);
     stream.destroy();
   });
 
-  it('disconnect of one socket clears only entries bound to that socket', () => {
+  it('disconnect of one session clears only entries bound to that session', () => {
     const server = createMockServer();
     const manager = new TunnelManager(server, { tunnel_domains: [] });
-    manager.setConnected(server._socketA, true);
+    manager.setConnected(server._sessionA, true);
 
     const streamA = manager.forward('a.test', 443, () => {});
-    server._setActiveSocket(server._socketB);
+    server._setActiveSessionId(server._sessionB);
     const streamB = manager.forward('b.test', 443, () => {});
 
-    manager.setConnected(server._socketA, false);
+    manager.setConnected(server._sessionA, false);
 
     assert.equal(manager.getStatus().activeRequests, 1);
     const [entry] = manager._activeRequests.values();
-    assert.equal(entry.socket, server._socketB);
+    assert.equal(entry.sessionId, server._sessionB);
     streamA.destroy();
     streamB.destroy();
   });
 
-  it('is unavailable when no active socket exists even if a draining socket remains', () => {
+  it('is unavailable when no active session exists even if a draining session remains', () => {
     const server = createMockServer();
     const manager = new TunnelManager(server, { tunnel_domains: [] });
-    manager.setConnected(server._socketA, true);
-    server._setActiveSocket(null);
+    manager.setConnected(server._sessionA, true);
+    server._setActiveSessionId(null);
 
-    manager.setConnected(server._socketA, false);
+    manager.setConnected(server._sessionA, false);
 
     assert.equal(manager.isAvailable(), false);
   });
@@ -199,8 +204,8 @@ describe('TunnelManager.forward', () => {
   it('reports active and draining connection counts from the server', () => {
     const server = createMockServer();
     const manager = new TunnelManager(server, { tunnel_domains: [] });
-    manager.setConnected(server._socketA, true, 'client');
-    server._setActiveSocket(server._socketB);
+    manager.setConnected(server._sessionA, true, 'client');
+    server._setActiveSessionId(server._sessionB);
 
     const status = manager.getStatus();
 
@@ -209,49 +214,31 @@ describe('TunnelManager.forward', () => {
     assert.equal(status.drainingConnections, 1);
   });
 
-  it('wakes a sleeping client when disconnected instead of returning tunnel-disconnected', async () => {
+  it('returns disconnected without wake buffering when no active session exists', async () => {
     const server = createMockServer();
-    server._setActiveSocket(null);
+    server._setActiveSessionId(null);
     const manager = new TunnelManager(server, { tunnel_domains: [] });
-    const token = manager._computeToken();
-    manager.markClientSleeping(token);
 
     const stream = manager.forward('sleep.test', 443, () => {});
 
-    assert.ok(stream.isPendingWakeStream);
-    assert.equal(server._wakeCount(), 1);
-    stream.destroy();
-  });
-
-  it('reuses the in-flight wake promise for concurrent sleeping forwards', async () => {
-    const server = createMockServer();
-    server._setActiveSocket(null);
-    const manager = new TunnelManager(server, { tunnel_domains: [] });
-    const token = manager._computeToken();
-    manager.markClientSleeping(token);
-
-    const stream1 = manager.forward('one.test', 443, () => {});
-    const stream2 = manager.forward('two.test', 443, () => {});
-
-    assert.equal(server._wakeCount(), 1);
-    stream1.destroy();
-    stream2.destroy();
+    const [err] = await once(stream, 'error');
+    assert.equal(err.message, 'tunnel-disconnected');
   });
 
   it('counts active requests only for the selected socket', () => {
     const server = createMockServer();
     const manager = new TunnelManager(server, { tunnel_domains: [] });
-    manager.setConnected(server._socketA, true);
+    manager.setConnected(server._sessionA, true);
 
     const streamA = manager.forward('a.test', 443, () => {});
-    server._setActiveSocket(server._socketB);
+    server._setActiveSessionId(server._sessionB);
     const streamB = manager.forward('b.test', 443, () => {});
 
-    assert.equal(manager.getSocketActiveRequestCount(server._socketA), 1);
-    assert.equal(manager.getSocketActiveRequestCount(server._socketB), 1);
-    assert.equal(manager.getSocketActiveRequestCount({ name: 'other' }), 0);
-    assert.equal(manager.getSocketDrainState(server._socketA).activeCount, 1);
-    assert.ok(manager.getSocketDrainState(server._socketA).lastActivityAt > 0);
+    assert.equal(manager.getSessionActiveRequestCount(server._sessionA), 1);
+    assert.equal(manager.getSessionActiveRequestCount(server._sessionB), 1);
+    assert.equal(manager.getSessionActiveRequestCount('other'), 0);
+    assert.equal(manager.getSessionDrainState(server._sessionA).activeCount, 1);
+    assert.ok(manager.getSessionDrainState(server._sessionA).lastActivityAt > 0);
 
     streamA.destroy();
     streamB.destroy();

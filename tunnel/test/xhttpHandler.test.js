@@ -1,0 +1,149 @@
+const { describe, it } = require('node:test');
+const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const crypto = require('crypto');
+const XhttpHandler = require('../xhttpHandler');
+const { FRAME_TYPES, encodeFrame, decodeFrame } = require('../protocol');
+
+function tokenFor(username = 'admin', password = 'secret') {
+  return crypto.createHash('sha256').update(`${username}:${password}`).digest('hex');
+}
+
+function mockRequest(method, path, body = Buffer.alloc(0)) {
+  const req = new EventEmitter();
+  req.method = method;
+  req.url = path;
+  req.emitBody = () => {
+    if (body.length > 0) req.emit('data', body);
+    req.emit('end');
+  };
+  return req;
+}
+
+function mockResponse() {
+  const writes = [];
+  return {
+    statusCode: null,
+    headers: null,
+    writes,
+    ended: false,
+    writableEnded: false,
+    writeHead(statusCode, headers) {
+      this.statusCode = statusCode;
+      this.headers = headers;
+    },
+    write(chunk) {
+      writes.push(Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk));
+      return true;
+    },
+    end(chunk = '') {
+      if (chunk) this.write(chunk);
+      this.ended = true;
+      this.writableEnded = true;
+    },
+  };
+}
+
+function createHandler(overrides = {}) {
+  const events = [];
+  const handler = new XhttpHandler({
+    credentials: { username: 'admin', password: 'secret' },
+    sessionTimeoutMs: 60_000,
+    keepaliveMinMs: 60_000,
+    keepaliveMaxMs: 60_000,
+    paddingEnabled: false,
+    onFrame: (frame, sessionId) => events.push({ type: 'frame', frame, sessionId }),
+    onSessionCreated: (sessionId, token, info) => events.push({ type: 'created', sessionId, token, info }),
+    onSessionClosed: (sessionId, token) => events.push({ type: 'closed', sessionId, token }),
+    ...overrides,
+  });
+  return { handler, events };
+}
+
+async function createSession(handler, capabilities = []) {
+  const req = mockRequest('POST', '/xhttp/create', encodeFrame({
+    type: FRAME_TYPES.AUTH,
+    username: 'admin',
+    password: 'secret',
+    capabilities,
+  }));
+  const res = mockResponse();
+  assert.equal(handler.handleRequest(req, res), true);
+  req.emitBody();
+  assert.equal(res.statusCode, 200);
+  return JSON.parse(res.writes.join('')).sessionId;
+}
+
+describe('XhttpHandler session model', () => {
+  it('does not negotiate silent_mode from AUTH capabilities', async () => {
+    const { handler, events } = createHandler();
+
+    const sessionId = await createSession(handler, ['silent_mode']);
+
+    const created = events.find(event => event.type === 'created');
+    assert.equal(created.sessionId, sessionId);
+    assert.deepEqual(created.info.capabilities, []);
+    assert.equal(Object.hasOwn(created.info, 'silentMode'), false);
+    handler.closeAll();
+  });
+
+  it('rejects stream-up upload without seq; upload is per-frame POST only', async () => {
+    const { handler } = createHandler();
+    const sessionId = await createSession(handler);
+
+    const req = mockRequest('POST', `/xhttp/upload/${sessionId}`, encodeFrame({
+      type: FRAME_TYPES.PING,
+      payload: Buffer.from('ping'),
+    }));
+    const res = mockResponse();
+    assert.equal(handler.handleRequest(req, res), true);
+    req.emitBody();
+
+    assert.equal(res.statusCode, 404);
+    handler.closeAll();
+  });
+
+  it('accepts out-of-order per-frame POST uploads and delivers frames in seq order', async () => {
+    const { handler, events } = createHandler();
+    const sessionId = await createSession(handler);
+
+    for (const [seq, payload] of [
+      [1, 'second'],
+      [0, 'first'],
+    ]) {
+      const req = mockRequest('POST', `/xhttp/upload/${sessionId}/${seq}`, encodeFrame({
+        type: FRAME_TYPES.PING,
+        payload: Buffer.from(payload),
+      }));
+      const res = mockResponse();
+      assert.equal(handler.handleRequest(req, res), true);
+      req.emitBody();
+      assert.equal(res.statusCode, 200);
+    }
+
+    await new Promise(resolve => setImmediate(resolve));
+    const frames = events.filter(event => event.type === 'frame').map(event => event.frame);
+    assert.deepEqual(frames.map(frame => frame.payload.toString('utf8')), ['first', 'second']);
+    handler.closeAll();
+  });
+
+  it('pushes server frames over the SSE session channel', async () => {
+    const { handler } = createHandler();
+    const sessionId = await createSession(handler);
+
+    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}`);
+    const res = mockResponse();
+    assert.equal(handler.handleRequest(req, res), true);
+    assert.equal(res.statusCode, 200);
+    assert.match(res.headers['content-type'], /text\/event-stream/);
+
+    const encoded = encodeFrame({ type: FRAME_TYPES.PONG, payload: Buffer.from('ok') });
+    assert.equal(handler.pushFrame(sessionId, encoded), true);
+
+    const pushed = res.writes.find(chunk => chunk.startsWith('event: frame') && chunk.includes(encoded.toString('base64')));
+    assert.ok(pushed);
+    const payload = pushed.split('\ndata: ')[1].trim();
+    assert.equal(decodeFrame(Buffer.from(payload, 'base64')).type, FRAME_TYPES.PONG);
+    handler.closeAll();
+  });
+});

@@ -31,13 +31,36 @@ class CfIpSelectorTest {
     @Test
     fun `forceNextOnNextLookup advances exactly once`() {
         val persisted = mutableListOf<Int>()
-        val selector = CfIpSelector(CfIpSnapshot(listOf("1.1.1.1", "2.2.2.2", "3.3.3.3"), 0), persisted::add)
+        val selector = CfIpSelector(CfIpSnapshot(listOf("1.1.1.1", "2.2.2.2", "3.3.3.3"), 0), persistCursor = persisted::add)
 
         selector.forceNextOnNextLookup()
 
         assertEquals("2.2.2.2", selector.selectForLookup())
         assertEquals("2.2.2.2", selector.selectForLookup())
         assertEquals(listOf(1), persisted)
+    }
+
+    @Test
+    fun `selectDifferentForLookup chooses another ip when pool has alternatives`() {
+        val persisted = mutableListOf<Int>()
+        val selector = CfIpSelector(
+            initialSnapshot = CfIpSnapshot(listOf("1.1.1.1", "2.2.2.2", "3.3.3.3"), 0),
+            persistCursor = persisted::add,
+            randomIndex = { 0 },
+        )
+
+        assertEquals("1.1.1.1", selector.selectForLookup())
+
+        assertEquals("2.2.2.2", selector.selectDifferentForLookup())
+        assertEquals(listOf(1), persisted)
+    }
+
+    @Test
+    fun `selectDifferentForLookup returns same ip when pool has one ip`() {
+        val selector = CfIpSelector(CfIpSnapshot(listOf("1.1.1.1"), 0)) {}
+
+        assertEquals("1.1.1.1", selector.selectDifferentForLookup())
+        assertEquals("1.1.1.1", selector.currentIp())
     }
 
     @Test
@@ -84,7 +107,7 @@ class CfIpSelectorTest {
     @Test
     fun `cursor wraps around`() {
         val persisted = mutableListOf<Int>()
-        val selector = CfIpSelector(CfIpSnapshot(listOf("1.1.1.1", "2.2.2.2"), 1), persisted::add)
+        val selector = CfIpSelector(CfIpSnapshot(listOf("1.1.1.1", "2.2.2.2"), 1), persistCursor = persisted::add)
 
         selector.forceNextOnNextLookup()
 

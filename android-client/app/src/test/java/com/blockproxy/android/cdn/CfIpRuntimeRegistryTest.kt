@@ -32,6 +32,22 @@ class CfIpRuntimeRegistryTest {
     }
 
     @Test
+    fun `reloadActiveSnapshot replaces all attached selector snapshots`() = runTest {
+        CfIpRuntimeRegistry.clearForTest()
+        val storage = FakeCfIpStorage(internalGoodIps = "9.9.9.9\n8.8.8.8\n")
+        val pool = CfIpPool(storage, FakeCursorStore(initial = 1))
+        val sseSelector = CfIpSelector(CfIpSnapshot(listOf("1.1.1.1"), 0)) {}
+        val uploadSelector = CfIpSelector(CfIpSnapshot(listOf("2.2.2.2"), 0)) {}
+
+        CfIpRuntimeRegistry.attach(pool, listOf(sseSelector, uploadSelector))
+
+        assertTrue(CfIpRuntimeRegistry.reloadActiveSnapshot())
+        assertEquals("8.8.8.8", sseSelector.currentIp())
+        assertEquals("8.8.8.8", uploadSelector.currentIp())
+        CfIpRuntimeRegistry.clearForTest()
+    }
+
+    @Test
     fun `detach ignores stale selector`() = runTest {
         CfIpRuntimeRegistry.clearForTest()
         val oldSelector = CfIpSelector(CfIpSnapshot(listOf("1.1.1.1"), 0)) {}

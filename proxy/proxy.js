@@ -248,7 +248,7 @@ async function loadConfig() {
     express_port: expressPort,
     enable_tunnel: "1",
     tunnel_port: 8003,
-    tunnel_ws_path: "/websocket",
+    tunnel_xhttp_base_path: "/xhttp",
     tunnel_sse_path: "/api/v1/events",
     tunnel_sse_keepalive_min_ms: 35000,
     tunnel_sse_keepalive_max_ms: 45000,
@@ -331,7 +331,7 @@ async function loadConfig() {
 
       config.enable_tunnel = loadedConfig.enable_tunnel || "1";
       config.tunnel_port = loadedConfig.tunnel_port || 8003;
-      config.tunnel_ws_path = loadedConfig.tunnel_ws_path || "/websocket";
+      config.tunnel_xhttp_base_path = loadedConfig.tunnel_xhttp_base_path || "/xhttp";
       config.tunnel_sse_path = loadedConfig.tunnel_sse_path || "/api/v1/events";
       config.tunnel_sse_keepalive_min_ms = loadedConfig.tunnel_sse_keepalive_min_ms || 35000;
       config.tunnel_sse_keepalive_max_ms = loadedConfig.tunnel_sse_keepalive_max_ms || 45000;
@@ -385,7 +385,7 @@ async function loadConfig() {
         chain_proxy_address: chain_proxy_address,
         enable_tunnel: "1",
         tunnel_port: 8003,
-        tunnel_ws_path: "/websocket",
+        tunnel_xhttp_base_path: "/xhttp",
         tunnel_rotation_drain_timeout: 10,
         tunnel_rotation_drain_idle_timeout: 20,
         tunnel_domains: [],
@@ -1356,7 +1356,7 @@ async function initTunnel(config) {
       username: config.auth_username,
       password: config.auth_password
     },
-    tunnel_ws_path: config.tunnel_ws_path || '/websocket',
+    tunnel_xhttp_base_path: config.tunnel_xhttp_base_path || '/xhttp',
     tunnel_sse_path: config.tunnel_sse_path || '/api/v1/events',
     tunnel_sse_keepalive_min_ms: config.tunnel_sse_keepalive_min_ms || 35000,
     tunnel_sse_keepalive_max_ms: config.tunnel_sse_keepalive_max_ms || 45000,
@@ -1367,24 +1367,22 @@ async function initTunnel(config) {
     paddingProbability: tunnelPadding.probability ?? 0.3,
     paddingMinBytes: tunnelPadding.min_bytes ?? 64,
     paddingMaxBytes: tunnelPadding.max_bytes ?? 512,
-    paddingIntervalMinMs: tunnelPadding.periodic_interval_min_ms ?? 5000,
-    paddingIntervalMaxMs: tunnelPadding.periodic_interval_max_ms ?? 15000,
-    onConnect: (socket, addr, port) => {
+    onConnect: (sessionId, token) => {
       if (nextTunnelManager) {
-        nextTunnelManager.setConnected(socket, true, `${addr}:${port}`);
+        nextTunnelManager.setConnected(sessionId, true, sessionId.slice(0, 8));
       }
-      console.log(`[Tunnel] Client connected: ${addr}:${port}`);
+      console.log(`[Tunnel] Client session connected: ${sessionId.slice(0, 8)}`);
     },
-    onDisconnect: (socket) => {
+    onDisconnect: (sessionId) => {
       if (nextTunnelManager) {
-        nextTunnelManager.setConnected(socket, false);
+        nextTunnelManager.setConnected(sessionId, false);
       }
-      console.log('[Tunnel] Client disconnected');
+      console.log(`[Tunnel] Client session disconnected: ${sessionId ? sessionId.slice(0, 8) : 'unknown'}`);
     }
   });
 
   nextTunnelManager = new TunnelManager(nextTunnelServer, config);
-  nextTunnelServer.setActiveRequestChecker((socket) => nextTunnelManager.getSocketDrainState(socket));
+  nextTunnelServer.setActiveRequestChecker((sessionId) => nextTunnelManager.getSessionDrainState(sessionId));
   tunnelServer = nextTunnelServer;
   tunnelManager = nextTunnelManager;
   await nextTunnelServer.start();

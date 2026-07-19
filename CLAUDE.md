@@ -18,7 +18,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run test:proxy` – 代理连通性/性能/吞吐量测试（需先启动代理）
 - `npm run test:android` – Android phone flavor 单元测试 | `npm run test:android:emulator` – 仪器化测试
 - `cd android-client && ./gradlew :app:testPhoneDebugUnitTest --tests '*ClassName'` – 运行单个测试类
-- `cd android-client && go test ./native/utlsws/...` – Go uTLS 库单元测试
 
 ### Utilities
 - `npm run rm_bkconfig` – Remove backup config
@@ -41,9 +40,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run android:logcat` – 过滤 logcat (BlockProxy|Tunnel|AndroidRuntime)
 - `npm run android:devices` – 列出 adb 设备
 - `npm run android:native:build` – 构建 tun2socks .so（需 ANDROID_NDK_HOME）
-- `cd android-client/native/utlsws && bash build-aar.sh` – 构建 uTLS WebSocket Go 库为 .aar（需 gomobile）
 - `npm run android:release:upload -- <tag>` – 构建 phone APK 并上传到 GitHub Release
-- **Build 前提**: SDK API 35, minSdk 23; 首次需先 `android:native:build`; uTLS 需先构建 .aar
+- **Build 前提**: SDK API 35, minSdk 23; 首次需先 `android:native:build`
 - **Product Flavors**: `phone`（手机发布, arm only）/ `emulator`（虚拟机调试, 全 ABI）
 
 ### Build & Deploy
@@ -85,12 +83,12 @@ Client → HTTP Proxy (8001) → proxy-core → MITM Rules → Target
   - 自定义 keep-alive agent: `maxRequestsPerSocket: 50` 防止 gRPC RST_STREAM
   - 流式响应阈值: 20MB (无 responseRules 时 64KB)
 - **SOCKS5** (`/socks5/`) – SOCKS5 over TLS + UDP over TCP(自定义帧协议): `server.js`, `start.js`
-- **Tunnel** (`/tunnel/`) – WebSocket over TLS 双向隧道 + HTTP 伪装: `server.js`(WS 服务), `protocol.js`(帧编解码), `manager.js`(连接生命周期), `disguiseResponse.js`(HTTPS 伪装)
+- **Tunnel** (`/tunnel/`) – xhttp 传输协议（HTTP POST 上行 + SSE 下行）: `server.js`(HTTPS 服务入口), `xhttpHandler.js`(xhttp 核心处理器), `uploadQueue.js`(上行帧重排序), `protocol.js`(帧编解码), `manager.js`(连接生命周期), `disguiseResponse.js`(HTTPS 伪装)
 - **Server** (`/server/`) – Express API (8004), `start.js` 按 config 决定启动模式
 - **Frontend** (`/src/`) – CRA + CRACO 管理界面, `App.js` 主组件
 - **CLI** (`/bin/start.js`) – 全局入口, 失败自动重启(3s delay, max 10000), 退出清理全局配置
 - **Certs** (`/cert/`) – `rootCA.key` + `rootCA.crt`, 运行时同步到 `certificates/` 目录
-- **Config** (`config.json`) – 运行时配置: `block_hosts[]`, `proxy_port`, `socks5_port`, `enable_express`, `enable_socks5`, `enable_mitm`("0"/"1"), `mitm_debug_log`("0"/"1"), `devices[]`, `auth_username`, `auth_password`, `tunnel_domains[]`, `tunnel_ws_path`(默认 "/websocket"), `tunnel_rotation_drain_timeout`, `tunnel_rotation_drain_idle_timeout`, `chain_proxy_enabled`, `chain_proxy_type`, `chain_proxy_address`
+- **Config** (`config.json`) – 运行时配置: `block_hosts[]`, `proxy_port`, `socks5_port`, `enable_express`, `enable_socks5`, `enable_mitm`("0"/"1"), `mitm_debug_log`("0"/"1"), `devices[]`, `auth_username`, `auth_password`, `tunnel_domains[]`, `tunnel_xhttp_base_path`(默认 "/xhttp"), `tunnel_sse_path`(旧路径兼容), `tunnel_sse_keepalive_min_ms`/`max_ms`(SSE 心跳 35-45s), `tunnel_padding_enabled`/`probability`/`min_bytes`/`max_bytes`, `tunnel_rotation_drain_timeout`, `tunnel_rotation_drain_idle_timeout`, `chain_proxy_enabled`, `chain_proxy_type`, `chain_proxy_address`
 - **Test Suite** (`/test/`) – `run.js` 一键测试(自动启动 Mock Server), `proxy-tests.js` 连通性/延迟/并发/吞吐量, `proxy-core-connect-tests.js` 连接测试
 
 ### MITM Rule System
@@ -113,17 +111,39 @@ SOCKS5 over TLS (port 8002):
 
 ### Bidirectional Tunnel (`/tunnel/`, Port 8003)
 
-NAT 穿透 + WebSocket over TLS 协议。
+NAT 穿透 + xhttp 传输协议（HTTP POST 上行 + SSE 下行，无 WebSocket）。
 
 **核心文件**:
-- `tunnel/server.js` — WebSocket 服务端, HTTPS 伪装
+- `tunnel/server.js` — HTTPS 服务入口，路由分发
+- `tunnel/xhttpHandler.js` — xhttp 核心处理器（会话管理、SSE 推送、帧解码）
+- `tunnel/uploadQueue.js` — 上行帧重排序队列（min-heap，处理 POST 乱序到达）
 - `tunnel/protocol.js` — 帧编解码 (FRAME_TYPES, encodeFrame/decodeFrame)
-- `tunnel/manager.js` — tunnel 连接生命周期管理 (active/candidate/draining)
+- `tunnel/manager.js` — tunnel 连接生命周期管理 (forward/reverse, sessionId-based)
+- `tunnel/sseControl.js` — 旧 SSE 路径适配器（仅返回 410 迁移提示）
 - `tunnel/disguiseResponse.js` — HTTPS GET 伪装响应
+
+**xhttp 传输协议**:
+- 会话创建: `POST /xhttp/create`（body 为 AUTH 帧）→ 返回 `{ sessionId }`
+- 上行: `POST /xhttp/upload/:sessionId/:seq`（每帧一个独立 POST，seq 递增）
+- 下行: `GET /xhttp/stream?token=<token>&sessionId=<sid>`（SSE 长连接，帧以 base64 编码在 `event: frame` 中推送）
+- token = SHA-256(username:password)，用于 SSE 鉴权
+- SSE keepalive: 35~45 秒随机间隔发送注释行
+- 无 WebSocket upgrade 握手，流量特征与常规 HTTP API 无异
+
+**上行帧重排序 (UploadQueue)**:
+- min-heap 按 seq 排序，处理 HTTP POST 乱序到达
+- 最大乱序缓冲 64 帧，溢出则关闭队列
+- 已消费的旧 seq 静默丢弃（重复到达）
 
 **双向 reqid 分配**:
 - 反向 (server→client): `0x0001–0x7FFF` (server 分配)
 - 正向 (client→server): `0x8000–0xFFFE` (client 分配)
+
+**Padding 协商**:
+- 客户端在 AUTH 帧中声明 `CAP_PADDING` 能力
+- 服务端在 SSE 连接后通过 CAPABILITIES 帧确认
+- 双方启用后，DATA 帧发送后有概率追加 PADDING 帧（随机 64~512 字节）
+- HTTP 响应头 `X-Padding` 也随机注入填充
 
 ### Deployment & Dependencies
 
@@ -168,15 +188,15 @@ main.py (入口, 文件锁单实例, 崩溃重启) → app.py (PyObjC 状态栏)
 
 ## Android Client (`/android-client/`)
 
-Kotlin + Jetpack Compose + VpnService + tun2socks (JNI) + native Go uTLS. v0.1.4。
+Kotlin + Jetpack Compose + VpnService + tun2socks (JNI) + xhttp 传输。v0.1.4。
 
 ```
 VpnService TUN fd → tun2socks (native C, JNI) → 127.0.0.1:socksPort
   → LocalSocksServer → RoutingEngine (geosite/geoip)
     → DIRECT: protected Socket (VpnService.protect 绕过 VPN)
-    → PROXY: ForwardSession → TunnelTransportFactory
-                                  → OKHTTP: TunnelWebSocket (OkHttp WS)
-                                  → CHROME_UTLS: NativeUtlsWebSocket (Go uTLS via gomobile)
+    → PROXY: ForwardSession → TunnelClient
+                               → XhttpSession (POST /xhttp/create 建立会话)
+                               → XhttpTransport (SSE 下行 + POST 上行)
 ```
 
 **关键设计**:
@@ -189,13 +209,30 @@ VpnService TUN fd → tun2socks (native C, JNI) → 127.0.0.1:socksPort
 - **minSdk 23 + Core Library Desugaring**: 通过 `desugar_jdk_libs:2.1.5` 支持 Android 6.0+, Java 17 编译
 - **Product Flavors**: `phone`（arm only, 发布用）/ `emulator`（全 ABI, 调试用），APK 固定命名区分
 
-### CF CDN IP 轮换
+### Tunnel 模块 (`tunnel/`)
 
-`CfIpPool` + `CfIpSelector` + `CfIpDns` 实现 Cloudflare CDN 边缘 IP 轮换:
-- DNS 层: `CfIpDns` 将 serverHost 解析为选中的 CF 边缘 IP
-- NAT 轮换: `CfIpSelector` 维护游标, tunnel 连接轮换时同步切换 IP
-- 刷新: `CfIpRefreshWorker` 通过 WorkManager 定期刷新 IP 池
-- 运行时: `CfIpRuntimeRegistry` 全局注册, 支持 protect callback 绕过 VPN
+**xhttp 传输层**（替代原 WebSocket + SSE 控制通道 + uTLS 方案）:
+- `FrameSender` — 帧发送接口（`sendFrame`, `close`, `isOpen`）
+- `Frame` / `FrameCodec` — 帧定义与编解码（CONNECT/DATA/CLOSE/PING/PONG/AUTH/PADDING 等）
+- `XhttpSession` — 会话建立：POST `/xhttp/create`（发送 AUTH 帧）→ 获取 sessionId → 创建 XhttpTransport
+- `XhttpTransport` — 传输层实现：SSE 下行（OkHttp 长连接）+ 按需 POST 上行（每帧一次 POST `/xhttp/upload/:sessionId/:seq`）
+- `TunnelTransportFactory` — 工厂：封装 XhttpSession → XhttpTransport 流程
+- `TunnelClient` — 顶层管理器：生命周期（start/stop）、自动重连、连接轮换（10~30 分钟随机间隔）、drain 排空
+- `ReverseConnectHandler` — 反向 CONNECT：收到服务端 CONNECT 帧后创建 plain TCP 目标连接，双向中继数据
+- `ForwardSession` / `ForwardSessionRegistry` — 正向 CONNECT：客户端主动发起，通过 tunnel 代理到服务端
+- `PaddingInjector` — 流量填充：协商后按概率在 DATA 帧后追加 PADDING 帧
+- `TargetSocket` / `RealTargetSocket` — 目标 TCP socket 抽象（支持 VpnService.protect）
+
+**连接轮换 (rotation)**:
+- 每 10~30 分钟（随机）建立新 xhttp session 替换旧的
+- 旧连接进入 draining 状态，等待活跃请求完成后关闭
+- drain 超时 10 秒 + 空闲超时 20 秒
+
+**CF CDN IP 轮换**:
+- SSE 和 upload 各自独立的 `CfIpDns` + `CfIpSelector`（`sseCfIpDns/sseCfIpSelector`, `uploadCfIpDns/uploadCfIpSelector`）
+- 轮换时 `forceNextOnNextLookup()` 切换 IP
+- `CfIpRefreshWorker` 通过 WorkManager 定期刷新 IP 池
+- `CfIpRuntimeRegistry` 全局注册, 支持 protect callback 绕过 VPN
 
 ## Important Notes
 
@@ -205,8 +242,7 @@ VpnService TUN fd → tun2socks (native C, JNI) → 127.0.0.1:socksPort
 - iOS Safari: 带认证的代理不能和网关 IP 相同
 - 路由表每 2 小时刷新；新设备可能需手动刷新
 - ACR 推送前需先 `docker login --username=hi50078584@aliyun.com crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com`
-- **Android 构建顺序**: 修改 native C 代码后需先 `android:native:build` 重新编译 .so; 修改 Go uTLS 代码后需先 `build-aar.sh` 重新生成 .aar; 最后 `android:build` 打包 APK
-- **Android uTLS 构建前提**: 需要 Go 1.25+, gomobile (`go install golang.org/x/mobile/cmd/gomobile@latest && gomobile init`), 构建产物 `app/libs/utlsws.aar` 已被 .gitignore 排除
+- **Android 构建顺序**: 修改 native C 代码后需先 `android:native:build` 重新编译 .so; 最后 `android:build` 打包 APK
 - **Android Product Flavors**: `phone`（arm only, 发布包）/ `emulator`（全 ABI, 调试包）, 构建命令不同, APK 命名自动区分
 - **Android 发布**: 发布到 GitHub Release 时运行 `npm run android:release:upload -- <tag>`，脚本自动构建 phone debug APK 并上传；不要上传未签名的 release APK
 - **Android logcat 调试**: `npm run android:logcat` 过滤 BlockProxy/Tunnel/AndroidRuntime 标签，崩溃堆栈在 AndroidRuntime 中

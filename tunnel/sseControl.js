@@ -1,129 +1,77 @@
-const crypto = require('crypto');
+/**
+ * SSE 控制通道适配器
+ *
+ * 在 xhttp 模式下，SSE 数据通道已迁移到 XhttpHandler 的 /xhttp/stream。
+ * 本文件只保留旧 /api/v1/events 路径的迁移提示。
+ */
+
+'use strict';
 
 class SseControlHandler {
+  /**
+   * @param {object} options
+   * @param {string} [options.path] — 旧 SSE 路径（保留兼容，实际由 xhttpHandler 处理）
+   */
   constructor(options = {}) {
-    this._connections = new Map();
-    this._credentials = null;
     this._path = options.path || '/api/v1/events';
-    this._keepaliveMinMs = options.keepaliveMinMs || 35_000;
-    this._keepaliveMaxMs = options.keepaliveMaxMs || 45_000;
-    this._onAuthenticated = options.onAuthenticated || (() => {});
-    this._onDisconnected = options.onDisconnected || (() => {});
+    this._credentials = null;
+    /** @type {import('./xhttpHandler') | null} */
+    this._xhttpHandler = null;
   }
 
   setCredentials(credentials) {
     this._credentials = credentials;
   }
 
+  /**
+   * 绑定 xhttpHandler 实例（由 server.js 在启动时调用）。
+   */
+  setXhttpHandler(handler) {
+    this._xhttpHandler = handler;
+  }
+
+  /**
+   * HTTP 请求入口。
+   *
+   * 优先委托给 xhttpHandler 处理 /xhttp/* 路由。
+   * 对旧 SSE 路径 (/api/v1/events) 返回 404（已迁移到 xhttp stream）。
+   */
   handleRequest(req, res) {
     const url = new URL(req.url, 'https://localhost');
-    if (url.pathname !== this._path) return false;
 
-    if (req.method !== 'GET') {
-      this._send(res, 405, { error: 'method not allowed' });
-      return true;
+    // xhttp 路由 → 委托给 xhttpHandler
+    if (this._xhttpHandler) {
+      if (this._xhttpHandler.handleRequest(req, res)) {
+        return true;
+      }
     }
 
-    const token = url.searchParams.get('token');
-    if (!this._verifyToken(token)) {
-      console.warn('[Tunnel/SSE] authentication failed');
-      this._send(res, 401, { error: 'invalid token' });
-      return true;
-    }
-
-    this._closeExistingConnection(token);
-    this._onAuthenticated(token);
-    console.log('[Tunnel/SSE] authenticated, opening event stream');
-
-    res.writeHead(200, {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
-      'connection': 'keep-alive',
-      'x-accel-buffering': 'no',
-    });
-    res.write('retry: 5000\n\n');
-
-    const connection = { res, keepaliveTimer: null };
-    this._connections.set(token, connection);
-    this._scheduleKeepalive(token);
-
-    if (typeof req.on === 'function') {
-      req.on('close', () => {
-        if (this._connections.get(token) === connection) {
-          this._closeExistingConnection(token);
-          this._onDisconnected(token);
-          console.log('[Tunnel/SSE] event stream disconnected');
-        }
+    // 旧 SSE 路径 → 不再支持（返回 410 Gone）
+    if (url.pathname === this._path) {
+      const payload = JSON.stringify({ error: 'migrated to xhttp', mode: 'xhttp' });
+      res.writeHead(410, {
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(payload),
       });
+      res.end(payload);
+      return true;
     }
 
-    return true;
+    return false;
   }
 
-  sendWakeSignal(token) {
-    const connection = this._connections.get(token);
-    if (!connection) {
-      console.log('[Tunnel/SSE] wake skipped: no active event stream');
-      return false;
-    }
-    connection.res.write('event: wake\ndata: {}\n\n');
-    console.log('[Tunnel/SSE] wake event sent');
-    return true;
-  }
-
+  /**
+   * 检查 token 是否有活跃 SSE 连接（委托给 xhttpHandler）。
+   */
   hasActiveConnection(token) {
-    return this._connections.has(token);
+    if (this._xhttpHandler) {
+      return this._xhttpHandler.hasActiveSse(token);
+    }
+    return false;
   }
 
   clearConnection(token) {
-    this._closeExistingConnection(token);
-  }
-
-  _verifyToken(token) {
-    if (!token || !this._credentials) return false;
-    const expected = crypto
-      .createHash('sha256')
-      .update(`${this._credentials.username}:${this._credentials.password}`)
-      .digest('hex');
-    return token === expected;
-  }
-
-  _closeExistingConnection(token) {
-    const existing = this._connections.get(token);
-    if (!existing) return;
-    if (existing.keepaliveTimer) clearTimeout(existing.keepaliveTimer);
-    this._connections.delete(token);
-    try {
-      existing.res.end();
-    } catch (_) {
-      // ignore close races
-    }
-  }
-
-  _scheduleKeepalive(token) {
-    const connection = this._connections.get(token);
-    if (!connection) return;
-
-    const minMs = Math.max(1, this._keepaliveMinMs);
-    const maxMs = Math.max(minMs, this._keepaliveMaxMs);
-    const delay = minMs + Math.floor(Math.random() * (maxMs - minMs + 1));
-    connection.keepaliveTimer = setTimeout(() => {
-      const current = this._connections.get(token);
-      if (!current) return;
-      current.res.write(': keepalive\n\n');
-      this._scheduleKeepalive(token);
-    }, delay);
-    connection.keepaliveTimer.unref();
-  }
-
-  _send(res, statusCode, body) {
-    const payload = JSON.stringify(body);
-    res.writeHead(statusCode, {
-      'content-type': 'application/json',
-      'content-length': Buffer.byteLength(payload),
-      'cache-control': 'no-store',
-    });
-    res.end(payload);
+    // xhttp 模式下 session 由 xhttpHandler 管理。
   }
 }
 

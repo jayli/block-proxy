@@ -44,14 +44,6 @@ class FrameCodecTest {
     }
 
     @Test
-    fun `silent mode capability constant is encoded in auth`() {
-        val encoded = FrameCodec.encode(Frame.Auth("admin", "pass", listOf(FrameCodec.CAP_SILENT_MODE)))
-        val decoded = FrameCodec.decode(encoded) as Frame.Auth
-
-        assertEquals(listOf("silent_mode"), decoded.capabilities)
-    }
-
-    @Test
     fun `encode and decode Capabilities`() {
         val original = Frame.Capabilities(listOf("padding"))
         val encoded = FrameCodec.encode(original)

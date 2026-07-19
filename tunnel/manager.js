@@ -1,8 +1,6 @@
 const { Duplex } = require('stream');
 const net = require('net');
-const crypto = require('crypto');
-const { FRAME_TYPES, ATYP, MAX_DATA_CHUNK } = require('./protocol');
-const WakeBuffer = require('./wakeBuffer');
+const { FRAME_TYPES, ATYP, MAX_DATA_CHUNK, encodeFrame } = require('./protocol');
 
 const MAX_FORWARD_CONNECTIONS = 100;
 const FORWARD_IDLE_TIMEOUT = 300 * 1000; // 5 min idle timeout for established connections
@@ -17,18 +15,10 @@ class TunnelManager {
     this._forwardCount = 0;
     this._connected = false;
     this._clientAddress = null;
-    this._clientTokens = new Map();
-    this._silentModeClients = new Set();
-    this._sleepingClients = new Set();
-    this._sseControlHandler = typeof tunnelServer.getSseControlHandler === 'function'
-      ? tunnelServer.getSseControlHandler()
-      : null;
-    this._wakeBuffer = new WakeBuffer({
-      sseControlHandler: this._sseControlHandler,
-      wakeTimeout: config.tunnel_wake_timeout || 10_000,
-    });
+    /** @type {Map<string, string>} sessionId → token */
+    this._sessionTokens = new Map();
 
-    this._server.onFrame((frame, socket) => this._handleFrame(frame, socket));
+    // Frame handler is now set up via xhttpHandler callback (sessionId-based)
     if (typeof this._server.setTunnelManager === 'function') {
       this._server.setTunnelManager(this);
     }
@@ -48,36 +38,30 @@ class TunnelManager {
 
   forward(host, port, callback) {
     const createErrorStream = (code) => {
-      const { Duplex } = require('stream');
       const stream = new Duplex({ read() {}, write(c, e, cb) { cb(); } });
       process.nextTick(() => stream.destroy(new Error(code)));
       return stream;
     };
 
     if (!this._connected) {
-      const clientToken = this._getSleepingClientToken();
-      if (clientToken && this._isSleepingClient(clientToken)) {
-        console.log(`[Tunnel/Wake] forwarding ${host}:${port} requires sleeping client wake`);
-        return this._createPendingWakeStream(clientToken, host, port, callback);
-      }
       console.log(`[Tunnel] Forward rejected: tunnel disconnected for ${host}:${port}`);
       return createErrorStream('tunnel-disconnected');
     }
 
-    const socket = this._selectSocket();
-    if (!socket) return createErrorStream('tunnel-disconnected');
+    const sessionId = this._selectSessionId();
+    if (!sessionId) return createErrorStream('tunnel-disconnected');
 
-    return this._createReverseForwardStream(socket, host, port, callback);
+    return this._createReverseForwardStream(sessionId, host, port, callback);
   }
 
-  _createReverseForwardStream(socket, host, port, callback, existingStream = null) {
+  _createReverseForwardStream(sessionId, host, port, callback, existingStream = null) {
     const reqid = this._allocateReqid();
     const stream = existingStream || new TunnelDuplex(this, reqid);
     stream.setReqid(reqid);
 
     this._activeRequests.set(reqid, {
       reqid, stream, confirmed: false, timeout: null, direction: 'reverse',
-      socket, lastActivityAt: Date.now()
+      sessionId, lastActivityAt: Date.now()
     });
     const entry = this._activeRequests.get(reqid);
 
@@ -87,7 +71,7 @@ class TunnelManager {
       atyp: ATYP.DOMAIN,
       addr: host,
       port
-    }, socket);
+    }, sessionId);
 
     const timeout = setTimeout(() => {
       if (this._activeRequests.has(reqid) && !entry.confirmed) {
@@ -110,45 +94,11 @@ class TunnelManager {
     return stream;
   }
 
-  _createPendingWakeStream(clientToken, host, port, callback) {
-    const stream = new TunnelDuplex(this, null);
-    stream.isPendingWakeStream = true;
-    this._waitAndForward(clientToken, host, port, callback, stream).catch((err) => {
-      stream.destroy(err);
-    });
-    return stream;
-  }
-
-  async _waitAndForward(clientToken, host, port, callback, pendingStream) {
-    try {
-      await this._wakeBuffer.waitForTunnel(clientToken);
-      const socket = this._selectSocket();
-      if (!socket) {
-        console.log('[Tunnel/Wake] wake completed but no active tunnel socket is available');
-        pendingStream.destroy(new Error('tunnel-disconnected'));
-        return;
-      }
-      console.log(`[Tunnel/Wake] wake completed, binding pending forward ${host}:${port}`);
-      this._bindForwardStreamAfterWake(pendingStream, socket, host, port, callback);
-    } catch (err) {
-      console.log(`[Tunnel/Wake] wake failed for ${host}:${port}: ${err.message}`);
-      pendingStream.destroy(err.message === 'client-offline'
-        ? new Error('client-offline')
-        : new Error('tunnel-wake-timeout'));
+  _selectSessionId() {
+    if (typeof this._server.getActiveSessionId === 'function') {
+      return this._server.getActiveSessionId();
     }
-  }
-
-  _bindForwardStreamAfterWake(pendingStream, socket, host, port, callback) {
-    pendingStream.isPendingWakeStream = false;
-    this._createReverseForwardStream(socket, host, port, callback, pendingStream);
-  }
-
-  _selectSocket() {
-    if (typeof this._server.getActiveSocket === 'function') {
-      return this._server.getActiveSocket();
-    }
-    const sockets = [...(this._server._clientSockets || [])];
-    return sockets[0] || null;
+    return null;
   }
 
   _allocateReqid() {
@@ -157,38 +107,35 @@ class TunnelManager {
     return this._reqidCounter;
   }
 
-  _computeToken() {
-    const credentials = this._server.credentials || {};
-    return crypto
-      .createHash('sha256')
-      .update(`${credentials.username}:${credentials.password}`)
-      .digest('hex');
-  }
-
-  _getSleepingClientToken() {
-    const token = this._computeToken();
-    return this._sleepingClients.has(token) ? token : null;
-  }
-
-  _isSleepingClient(clientToken) {
-    return this._sleepingClients.has(clientToken);
-  }
-
-  markClientSleeping(clientToken) {
-    this._silentModeClients.add(clientToken);
-    this._sleepingClients.add(clientToken);
-    console.log('[Tunnel/Silent] client entered sleeping state');
-  }
-
-  markClientSseDisconnected(clientToken) {
-    this._sleepingClients.delete(clientToken);
-    console.log('[Tunnel/Silent] client left sleeping state: SSE disconnected');
-  }
-
-  _handleFrame(frame, socket) {
+  /**
+   * xhttp 帧处理入口（由 xhttpHandler 调用）。
+   *
+   * @param {object} frame — 解码后的帧
+   * @param {string} sessionId — 来源 session
+   */
+  handleFrame(frame, sessionId) {
     // Forward CONNECT: client initiates connection through tunnel to target
     if (frame.type === FRAME_TYPES.CONNECT) {
-      this._handleForwardConnect(frame, socket);
+      this._handleForwardConnect(frame, sessionId);
+      return;
+    }
+
+    // PING → PONG
+    if (frame.type === FRAME_TYPES.PING) {
+      this._server.sendFrame({
+        type: FRAME_TYPES.PONG,
+        payload: frame.payload
+      }, sessionId);
+      return;
+    }
+
+    // PONG — 忽略（xhttp 模式无心跳）
+    if (frame.type === FRAME_TYPES.PONG) {
+      return;
+    }
+
+    // PADDING — 忽略
+    if (frame.type === FRAME_TYPES.PADDING) {
       return;
     }
 
@@ -209,11 +156,8 @@ class TunnelManager {
         if (entry.direction === 'forward' && entry._anyproxySocket) {
           const canContinue = entry._anyproxySocket.write(frame.data);
           if (!canContinue) {
-            const tunnelSocket = entry.socket;
-            if (tunnelSocket) {
-              tunnelSocket.pause();
-              entry._anyproxySocket.once('drain', () => tunnelSocket.resume());
-            }
+            // 背压：暂停 uploadQueue 消费（简单方案：用 setImmediate 延迟）
+            // xhttp 模式下无法直接暂停 HTTP POST，此处依赖 TCP 层流控
           }
         } else {
           entry.stream.push(frame.data);
@@ -245,21 +189,21 @@ class TunnelManager {
     }
   }
 
-  _handleForwardConnect(frame, socket) {
+  _handleForwardConnect(frame, sessionId) {
     const reqid = frame.reqid;
     const targetHost = frame.addr;
     const targetPort = frame.port;
 
     if (this.matchesTunnelDomain(targetHost)) {
       console.warn(`[Tunnel] Reject recursive forward CONNECT ${reqid}: ${targetHost}:${targetPort}`);
-      this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid }, socket);
+      this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid }, sessionId);
       return;
     }
 
-    // Concurrency limit — reject when too many forward connections
+    // Concurrency limit
     if (this._forwardCount >= MAX_FORWARD_CONNECTIONS) {
       console.log(`[Tunnel] Forward rejected: too many concurrent connections (${this._forwardCount}/${MAX_FORWARD_CONNECTIONS}) reqid=${reqid}`);
-      this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid }, socket);
+      this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid }, sessionId);
       return;
     }
 
@@ -269,7 +213,7 @@ class TunnelManager {
     const entry = {
       reqid, stream, confirmed: false, timeout: null,
       direction: 'forward', _anyproxySocket: null,
-      socket, lastActivityAt: Date.now()
+      sessionId, lastActivityAt: Date.now()
     };
     this._activeRequests.set(reqid, entry);
 
@@ -278,7 +222,6 @@ class TunnelManager {
     anyproxySocket.setKeepAlive(true, 60000);
     entry._anyproxySocket = anyproxySocket;
 
-    // Track whether cleanup has already run to prevent double-decrement
     let cleaned = false;
     this._forwardCount++;
 
@@ -293,7 +236,7 @@ class TunnelManager {
 
     const timeout = setTimeout(() => {
       console.log(`[Tunnel] Forward CONNECT timeout ${targetHost}:${targetPort} (reqid=${reqid})`);
-      this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid }, entry.socket);
+      this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid }, entry.sessionId);
       cleanup();
     }, 30000);
     entry.timeout = timeout;
@@ -322,36 +265,33 @@ class TunnelManager {
 
         const statusLine = responseBuffer.slice(0, responseBuffer.indexOf('\r\n')).toString();
         if (statusLine.indexOf(' 2') === -1) {
-          this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid }, entry.socket);
+          this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid }, entry.sessionId);
           cleanup();
           return;
         }
 
         clearTimeout(timeout);
         entry.confirmed = true;
-        this._server.sendFrame({ type: FRAME_TYPES.CONNECT_OK, reqid }, entry.socket);
+        this._server.sendFrame({ type: FRAME_TYPES.CONNECT_OK, reqid }, entry.sessionId);
 
-        // Start idle timer for established connection
         resetIdleTimer();
 
-        // Forward any remaining data after headers (binary-safe)
         const remaining = responseBuffer.slice(headerEnd + 4);
         if (remaining.length > 0) {
-          this._sendDataToClient(reqid, remaining, entry.socket).catch(() => {});
+          this._sendDataToClient(reqid, remaining, entry.sessionId).catch(() => {});
         }
         responseBuffer = Buffer.alloc(0);
         return;
       }
 
-      // Relay data from AnyProxy to client
       entry.lastActivityAt = Date.now();
       resetIdleTimer();
-      this._sendDataToClient(reqid, data, entry.socket).catch(() => {});
+      this._sendDataToClient(reqid, data, entry.sessionId).catch(() => {});
     });
 
     anyproxySocket.on('close', () => {
       if (entry.confirmed && this._activeRequests.has(reqid)) {
-        this._sendCloseToClient(reqid, entry.socket);
+        this._sendCloseToClient(reqid, entry.sessionId);
       }
       cleanup();
     });
@@ -359,31 +299,32 @@ class TunnelManager {
     anyproxySocket.on('error', (err) => {
       console.log(`[Tunnel] Forward anyproxy error ${reqid}: ${err.message}`);
       if (!entry.confirmed) {
-        this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid }, entry.socket);
+        this._server.sendFrame({ type: FRAME_TYPES.CONNECT_FAILED, reqid }, entry.sessionId);
       } else if (this._activeRequests.has(reqid)) {
-        this._sendCloseToClient(reqid, entry.socket);
+        this._sendCloseToClient(reqid, entry.sessionId);
       }
       cleanup();
     });
   }
 
-  async _sendDataToClient(reqid, data, socket) {
+  async _sendDataToClient(reqid, data, sessionId) {
     const entry = this._activeRequests.get(reqid);
     if (entry) entry.lastActivityAt = Date.now();
     for (let offset = 0; offset < data.length; offset += MAX_DATA_CHUNK) {
-      await this._server.sendFrame({
+      const encoded = encodeFrame({
         type: FRAME_TYPES.DATA,
         reqid,
         data: data.slice(offset, offset + MAX_DATA_CHUNK)
-      }, socket);
+      });
+      this._server.sendEncodedFrame(sessionId, encoded);
       await new Promise(r => setImmediate(r));
     }
   }
 
-  _sendCloseToClient(reqid, socket) {
+  _sendCloseToClient(reqid, sessionId) {
     const entry = this._activeRequests.get(reqid);
     if (entry) entry.lastActivityAt = Date.now();
-    this._server.sendFrame({ type: FRAME_TYPES.CLOSE, reqid }, socket);
+    this._server.sendFrame({ type: FRAME_TYPES.CLOSE, reqid }, sessionId);
   }
 
   _clearActiveRequest(reqid) {
@@ -398,11 +339,12 @@ class TunnelManager {
     if (!entry) return;
     entry.lastActivityAt = Date.now();
     for (let offset = 0; offset < data.length; offset += MAX_DATA_CHUNK) {
-      await this._server.sendFrame({
+      const encoded = encodeFrame({
         type: FRAME_TYPES.DATA,
         reqid,
         data: data.slice(offset, offset + MAX_DATA_CHUNK)
-      }, entry.socket);
+      });
+      this._server.sendEncodedFrame(entry.sessionId, encoded);
       await new Promise(r => setImmediate(r));
     }
   }
@@ -411,7 +353,7 @@ class TunnelManager {
     const entry = this._activeRequests.get(reqid);
     if (!entry) return;
     entry.lastActivityAt = Date.now();
-    this._server.sendFrame({ type: FRAME_TYPES.CLOSE, reqid }, entry.socket);
+    this._server.sendFrame({ type: FRAME_TYPES.CLOSE, reqid }, entry.sessionId);
     this._clearActiveRequest(reqid);
   }
 
@@ -422,7 +364,7 @@ class TunnelManager {
   getStatus() {
     const counts = typeof this._server.getConnectionCounts === 'function'
       ? this._server.getConnectionCounts()
-      : { total: (this._server._clientSockets || new Set()).size };
+      : { total: 0 };
     return {
       connected: this._connected,
       clientAddress: this._clientAddress,
@@ -436,47 +378,40 @@ class TunnelManager {
     };
   }
 
-  getSocketActiveRequestCount(socket) {
+  getSessionActiveRequestCount(sessionId) {
     let count = 0;
     for (const entry of this._activeRequests.values()) {
-      if (entry.socket === socket) count++;
+      if (entry.sessionId === sessionId) count++;
     }
     return count;
   }
 
-  getSocketDrainState(socket) {
+  getSessionDrainState(sessionId) {
     let activeCount = 0;
     let lastActivityAt = 0;
     for (const entry of this._activeRequests.values()) {
-      if (entry.socket !== socket) continue;
+      if (entry.sessionId !== sessionId) continue;
       activeCount++;
       lastActivityAt = Math.max(lastActivityAt, entry.lastActivityAt || Date.now());
     }
     return { activeCount, lastActivityAt };
   }
 
-  setConnected(socket, connected, clientAddress) {
+  setConnected(sessionId, connected, clientAddress) {
     if (connected) {
       this._connected = true;
       this._clientAddress = clientAddress || this._clientAddress;
-      const token = this._computeToken();
-      this._clientTokens.set(socket, token);
-      const record = this._server._records && this._server._records.get(socket);
-      if (record && record.silentMode) {
-        this._silentModeClients.add(token);
-      }
-      this._sleepingClients.delete(token);
-      this._wakeBuffer.onTunnelReconnected(token);
-      console.log(`[Tunnel] Client tunnel connected: silentMode=${record ? record.silentMode : false}`);
+      const token = this._server.getSessionToken
+        ? this._server.getSessionToken(sessionId)
+        : null;
+      this._sessionTokens.set(sessionId, token);
+      console.log(`[Tunnel] Client session connected: ${sessionId}`);
     } else {
-      const token = this._clientTokens.get(socket);
-      if (token) {
-        this._wakeBuffer.onClientDisconnected(token);
-        this._clientTokens.delete(socket);
-      }
-      // 只清理该 socket 上的请求
+      this._sessionTokens.delete(sessionId);
+
+      // 清理该 session 上的请求
       for (const [reqid, entry] of this._activeRequests) {
-        if (entry.socket === socket) {
+        if (entry.sessionId === sessionId) {
           if (entry.timeout) clearTimeout(entry.timeout);
           if (entry.idleTimer) clearTimeout(entry.idleTimer);
           if (entry._anyproxySocket && !entry._anyproxySocket.destroyed) {
@@ -488,8 +423,9 @@ class TunnelManager {
           this._activeRequests.delete(reqid);
         }
       }
-      const activeSocket = this._selectSocket();
-      this._connected = Boolean(activeSocket);
+
+      const activeSessionId = this._selectSessionId();
+      this._connected = Boolean(activeSessionId);
       if (!this._connected) {
         this._clientAddress = null;
       }
@@ -510,7 +446,7 @@ class TunnelDuplex extends Duplex {
   }
 
   _read() {
-    // Data is pushed via manager._handleFrame
+    // Data is pushed via manager.handleFrame
   }
 
   _write(chunk, encoding, callback) {

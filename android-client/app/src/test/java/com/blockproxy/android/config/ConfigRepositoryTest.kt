@@ -1,7 +1,6 @@
 package com.blockproxy.android.config
 
 import app.cash.turbine.test
-import com.blockproxy.android.tunnel.TunnelTransportMode
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
@@ -10,7 +9,6 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -107,72 +105,11 @@ class ConfigRepositoryTest {
     }
 
     @Test
-    fun `transport mode defaults to chrome utls`() = scope.runTest {
-        repository.save(ServerConfig(serverHost = "example.com"))
-
-        repository.observe().test {
-            assertEquals(TunnelTransportMode.CHROME_UTLS, awaitItem()?.transportMode)
-            cancelAndConsumeRemainingEvents()
-        }
-    }
-
-    @Test
-    fun `legacy okHttp transport preference is read as chrome utls`() {
-        assertEquals(
-            TunnelTransportMode.CHROME_UTLS,
-            DataStoreConfigDataSource.parseTransportMode(TunnelTransportMode.OKHTTP.name),
-        )
-    }
-
-    @Test
-    fun `save rejects chrome utls when tls disabled`() = scope.runTest {
-        try {
-            repository.save(
-                ServerConfig(
-                    serverHost = "example.com",
-                    useTls = false,
-                    transportMode = TunnelTransportMode.CHROME_UTLS,
-                )
-            )
-            throw AssertionError("Expected IllegalArgumentException")
-        } catch (error: IllegalArgumentException) {
-            assertTrue(error.message!!.contains("requires TLS"))
-        }
-    }
-
-    @Test
-    fun `save persists chrome utls transport mode`() = scope.runTest {
-        repository.save(
-            ServerConfig(
-                serverHost = "example.com",
-                transportMode = TunnelTransportMode.CHROME_UTLS,
-            )
-        )
-
-        assertEquals(TunnelTransportMode.CHROME_UTLS, fakeDataSource.current?.transportMode)
-    }
-
-    @Test
     fun `padding defaults to enabled`() = scope.runTest {
         repository.save(ServerConfig(serverHost = "example.com"))
 
         repository.observe().test {
             assertEquals(true, awaitItem()?.paddingEnabled)
-            cancelAndConsumeRemainingEvents()
-        }
-    }
-
-    @Test
-    fun `silent mode and sse config have expected defaults`() = scope.runTest {
-        repository.save(ServerConfig(serverHost = "example.com"))
-
-        repository.observe().test {
-            val config = awaitItem()!!
-            assertEquals(false, config.silentModeEnabled)
-            assertEquals("", config.sseHost)
-            assertEquals(ServerConfig.DEFAULT_PORT, config.ssePort)
-            assertEquals("/api/v1/events", config.ssePath)
-            assertEquals(3_000_000L, config.silentIdleTimeoutMs)
             cancelAndConsumeRemainingEvents()
         }
     }
@@ -254,17 +191,6 @@ class ConfigRepositoryTest {
     @Test(expected = IllegalArgumentException::class)
     fun `save rejects invalid port`() = scope.runTest {
         repository.save(ServerConfig(serverHost = "host.example.com", serverPort = 0))
-    }
-
-    @Test(expected = IllegalArgumentException::class)
-    fun `save rejects invalid sse port when silent mode enabled`() = scope.runTest {
-        repository.save(
-            ServerConfig(
-                serverHost = "host.example.com",
-                silentModeEnabled = true,
-                ssePort = 0,
-            )
-        )
     }
 
 }
