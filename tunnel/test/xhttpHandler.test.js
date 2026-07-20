@@ -127,6 +127,28 @@ describe('XhttpHandler session model', () => {
     handler.closeAll();
   });
 
+  it('closes older sessions for the same token when a new session is created', async () => {
+    const { handler, events } = createHandler();
+    const oldSessionId = await createSession(handler);
+    const newSessionId = await createSession(handler);
+
+    assert.notEqual(oldSessionId, newSessionId);
+    assert.equal(handler._sessions.has(oldSessionId), false);
+    assert.equal(handler._sessions.has(newSessionId), true);
+
+    const oldUploadReq = mockRequest('POST', `/xhttp/upload/${oldSessionId}/0`, encodeFrame({
+      type: FRAME_TYPES.PING,
+      payload: Buffer.from('old'),
+    }));
+    const oldUploadRes = mockResponse();
+    assert.equal(handler.handleRequest(oldUploadReq, oldUploadRes), true);
+    oldUploadReq.emitBody();
+    assert.equal(oldUploadRes.statusCode, 404);
+
+    assert.ok(events.some(event => event.type === 'closed' && event.sessionId === oldSessionId));
+    handler.closeAll();
+  });
+
   it('pushes server frames over the SSE session channel', async () => {
     const { handler } = createHandler();
     const sessionId = await createSession(handler);

@@ -193,6 +193,7 @@ class XhttpHandler {
         this._tokenSessions.set(token, new Set());
       }
       this._tokenSessions.get(token).add(sessionId);
+      this._closeSessionsForTokenExcept(token, sessionId);
 
       // 30 秒内若无 SSE stream 连接则自动清理
       session.cleanupTimer = setTimeout(() => {
@@ -528,6 +529,20 @@ class XhttpHandler {
 
     console.log(`[xhttp] Session closed: ${sessionId}`);
     this._onSessionClosed(sessionId, session.token);
+  }
+
+  /**
+   * 同一认证 token 只保留最新 session，重连时清理旧传输实例。
+   */
+  _closeSessionsForTokenExcept(token, keepSessionId) {
+    const tokenSet = this._tokenSessions.get(token);
+    if (!tokenSet) return;
+
+    for (const sessionId of [...tokenSet]) {
+      if (sessionId !== keepSessionId) {
+        this._closeSession(sessionId);
+      }
+    }
   }
 
   /**
