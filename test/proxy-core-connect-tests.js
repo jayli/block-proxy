@@ -136,6 +136,50 @@ async function testConnectHeadWebSocketUsesLocalProxy() {
   });
 }
 
+async function testTunnelConnectWaitsForCustomConnectReadyBefore200() {
+  let readyCallback;
+  const connectTargets = [];
+  const handler = new RequestHandler({
+    httpServerPort: 18888,
+    wsIntercept: true,
+    forceProxyHttps: false,
+    dangerouslyIgnoreUnauthorized: false,
+    isTunnelDomain(host) {
+      return host === 'example.com';
+    },
+    customConnect(host, port, callback) {
+      connectTargets.push({ host, port });
+      readyCallback = callback;
+      return new PassThrough();
+    },
+  }, {
+    *beforeDealHttpsRequest() {
+      return null;
+    },
+  });
+
+  const req = {
+    url: 'example.com:443',
+    httpVersion: '1.1',
+    method: 'CONNECT',
+  };
+  const socket = new FakeClientSocket();
+
+  handler.connectReqHandler(req, socket, Buffer.alloc(0));
+
+  await waitFor(() => connectTargets.length > 0);
+  assert.deepEqual(connectTargets[0], {
+    host: 'example.com',
+    port: '443',
+  });
+  assert.strictEqual(socket.clientWrites.length, 0);
+
+  readyCallback();
+
+  await waitFor(() => socket.clientWrites.length > 0);
+  assert.match(Buffer.concat(socket.clientWrites).toString('utf8'), /^HTTP\/1\.1 200 OK\r\nX-Tunnel-Relay: 1\r\n\r\n/);
+}
+
 function testHttpsServerSecureOptionsDisableSslv3AndTlsv1() {
   assert.strictEqual(
     HttpsServerMgr._test.getSecureOptions(),
@@ -478,6 +522,8 @@ async function run() {
   console.log('PASS testConnectHeadWebSocketUsesLocalProxy');
   await testConnectHandlerSupportsAsyncCustomConnect();
   console.log('PASS testConnectHandlerSupportsAsyncCustomConnect');
+  await testTunnelConnectWaitsForCustomConnectReadyBefore200();
+  console.log('PASS testTunnelConnectWaitsForCustomConnectReadyBefore200');
   await testMitmConnectForwardsHttpsRequest();
   console.log('PASS testMitmConnectForwardsHttpsRequest');
 }

@@ -566,10 +566,53 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
   return function (req, cltSocket, head) {
     const host = req.url.split(':')[0];
     const targetPort = req.url.split(':')[1];
+    const isTunnelConnect = reqHandlerCtx.isTunnelDomain && reqHandlerCtx.isTunnelDomain(host);
     let shouldIntercept;
     let interceptWsRequest = false;
     let requestDetail;
     const requestStream = new CommonReadableStream();
+    let connectResponseSent = false;
+
+    const writeConnectResponse = () => {
+      if (connectResponseSent) return Promise.resolve();
+      connectResponseSent = true;
+      return new Promise((resolve, reject) => {
+        cltSocket.on('error', (error) => {
+          if (error.code === 'EPIPE') {
+            logUtil.printLog(`Client prematurely closed connection (EPIPE) during CONNECT response for ${req.url}`, logUtil.T_DEBUG);
+            resolve();
+          } else if (error.code === 'ECONNRESET') {
+            logUtil.printLog(`Client reset connection (ECONNRESET) during CONNECT response for ${req.url}`, logUtil.T_DEBUG);
+            resolve();
+          } else {
+            logUtil.printLog(`Socket error writing CONNECT response to client for ${req.url}: ${util.collectErrorLog(error)}`, logUtil.T_ERR);
+            reject(error);
+          }
+        });
+
+        try {
+          const connectResponse = isTunnelConnect
+            ? 'HTTP/' + req.httpVersion + ' 200 OK\r\nX-Tunnel-Relay: 1\r\n\r\n'
+            : 'HTTP/' + req.httpVersion + ' 200 OK\r\n\r\n';
+
+          cltSocket.write(connectResponse, 'UTF-8', (writeErr) => {
+            if (writeErr) {
+              if (writeErr.code === 'EPIPE' || writeErr.code === 'ECONNRESET') {
+                logUtil.printLog(`Write failed due to client disconnect (EPIPE/ECONNRESET) for ${req.url}`, logUtil.T_DEBUG);
+                resolve();
+              } else {
+                reject(writeErr);
+              }
+            } else {
+              resolve();
+            }
+          });
+        } catch (syncErr) {
+          logUtil.printLog(`Sync error during write for ${req.url}: ${util.collectErrorLog(syncErr)}`, logUtil.T_ERR);
+          reject(syncErr);
+        }
+      });
+    };
 
     co(function *() {
       logUtil.printLog('received https CONNECT request ' + host);
@@ -584,44 +627,8 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
       }
     })
       .then(() => {
-        return new Promise((resolve, reject) => {
-          cltSocket.on('error', (error) => {
-            if (error.code === 'EPIPE') {
-              logUtil.printLog(`Client prematurely closed connection (EPIPE) during CONNECT response for ${req.url}`, logUtil.T_DEBUG);
-              resolve();
-            } else if (error.code === 'ECONNRESET') {
-              logUtil.printLog(`Client reset connection (ECONNRESET) during CONNECT response for ${req.url}`, logUtil.T_DEBUG);
-              resolve();
-            } else {
-              logUtil.printLog(`Socket error writing CONNECT response to client for ${req.url}: ${util.collectErrorLog(error)}`, logUtil.T_ERR);
-              reject(error);
-            }
-          });
-
-          try {
-            // 检查是否为隧道域名，如果是则注入 X-Tunnel-Relay header
-            const isTunnel = reqHandlerCtx.isTunnelDomain && reqHandlerCtx.isTunnelDomain(host);
-            const connectResponse = isTunnel
-              ? 'HTTP/' + req.httpVersion + ' 200 OK\r\nX-Tunnel-Relay: 1\r\n\r\n'
-              : 'HTTP/' + req.httpVersion + ' 200 OK\r\n\r\n';
-
-            cltSocket.write(connectResponse, 'UTF-8', (writeErr) => {
-              if (writeErr) {
-                if (writeErr.code === 'EPIPE' || writeErr.code === 'ECONNRESET') {
-                  logUtil.printLog(`Write failed due to client disconnect (EPIPE/ECONNRESET) for ${req.url}`, logUtil.T_DEBUG);
-                  resolve();
-                } else {
-                  reject(writeErr);
-                }
-              } else {
-                resolve();
-              }
-            });
-          } catch (syncErr) {
-            logUtil.printLog(`Sync error during write for ${req.url}: ${util.collectErrorLog(syncErr)}`, logUtil.T_ERR);
-            reject(syncErr);
-          }
-        });
+        if (isTunnelConnect) return Promise.resolve();
+        return writeConnectResponse();
       })
       .then(() => {
         return new Promise((resolve, reject) => {
@@ -639,6 +646,11 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
             }
             resolved = true;
             resolve();
+          }
+
+          if (isTunnelConnect) {
+            resolve();
+            return;
           }
 
           cltSocket.on('data', (chunk) => {
@@ -715,12 +727,14 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
           const setupPipe = () => {
             if (piped || !readyToPipe || !conn) return;
             piped = true;
-            if (conn.setTimeout) {
-              conn.setTimeout(0);
-            }
-            requestStream.pipe(conn);
-            conn.pipe(cltSocket);
-            resolve();
+            writeConnectResponse().then(() => {
+              if (conn.setTimeout) {
+                conn.setTimeout(0);
+              }
+              requestStream.pipe(conn);
+              conn.pipe(cltSocket);
+              resolve();
+            }).catch(reject);
           };
 
           const markReady = () => {
@@ -800,6 +814,10 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
         } catch (e) { }
 
         try {
+          if (connectResponseSent) {
+            cltSocket.destroy();
+            return;
+          }
           let errorHeader = 'Proxy-Error: true\r\n';
           errorHeader += 'Proxy-Error-Message: ' + (error || 'null') + '\r\n';
           errorHeader += 'Content-Type: text/html\r\n';
