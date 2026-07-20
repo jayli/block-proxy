@@ -41,7 +41,7 @@ class XhttpTransport(
     private val sseHttpClient: OkHttpClient,
     private val uploadClient: XhttpUploadClient,
     private val protect: ((Socket) -> Boolean)? = null,
-    private val paddingEnabled: Boolean = true,
+    private val paddingEnabled: Boolean = false,
     private val sseIdleTimeoutMs: Long = DEFAULT_SSE_IDLE_TIMEOUT_MS,
 ) : FrameSender {
 

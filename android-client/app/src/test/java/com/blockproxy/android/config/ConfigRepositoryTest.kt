@@ -105,11 +105,11 @@ class ConfigRepositoryTest {
     }
 
     @Test
-    fun `padding defaults to enabled`() = scope.runTest {
+    fun `padding defaults to disabled`() = scope.runTest {
         repository.save(ServerConfig(serverHost = "example.com"))
 
         repository.observe().test {
-            assertEquals(true, awaitItem()?.paddingEnabled)
+            assertEquals(false, awaitItem()?.paddingEnabled)
             cancelAndConsumeRemainingEvents()
         }
     }

@@ -51,7 +51,7 @@ class XhttpHandler {
     this._sessionTimeoutMs = options.sessionTimeoutMs || DEFAULT_SESSION_TIMEOUT_MS;
     this._keepaliveMinMs = options.keepaliveMinMs || DEFAULT_KEEPALIVE_MIN_MS;
     this._keepaliveMaxMs = options.keepaliveMaxMs || DEFAULT_KEEPALIVE_MAX_MS;
-    this._paddingEnabled = options.paddingEnabled ?? true;
+    this._paddingEnabled = options.paddingEnabled ?? false;
     this._paddingProbability = Math.max(0, Math.min(1, options.paddingProbability ?? DEFAULT_PADDING_PROBABILITY));
     this._paddingMinBytes = Math.max(0, Math.min(65534, options.paddingMinBytes ?? DEFAULT_PADDING_MIN_BYTES));
     this._paddingMaxBytes = Math.max(

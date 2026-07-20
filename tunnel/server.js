@@ -17,7 +17,7 @@ class TunnelServer {
     this.xhttpBasePath = options.xhttpBasePath || options.tunnel_xhttp_base_path || DEFAULT_XHTTP_BASE_PATH;
     this.rotationDrainTimeout = options.rotationDrainTimeout || options.tunnel_rotation_drain_timeout || DEFAULT_ROTATION_DRAIN_TIMEOUT;
     this.rotationDrainIdleTimeout = options.rotationDrainIdleTimeout || options.tunnel_rotation_drain_idle_timeout || DEFAULT_ROTATION_DRAIN_IDLE_TIMEOUT;
-    this.paddingEnabled = options.paddingEnabled ?? true;
+    this.paddingEnabled = options.paddingEnabled ?? false;
     this.paddingProbability = Math.max(0, Math.min(1, options.paddingProbability ?? 0.3));
     this.paddingMinBytes = Math.max(0, Math.min(65534, options.paddingMinBytes ?? 64));
     this.paddingMaxBytes = Math.max(this.paddingMinBytes, Math.min(65534, options.paddingMaxBytes ?? 512));

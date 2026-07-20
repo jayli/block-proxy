@@ -19,7 +19,7 @@ data class ServerConfig(
     val httpDisguise: Boolean = true,
     val customHeaders: Map<String, String> = emptyMap(),
     val cfCdnEnabled: Boolean = false,
-    val paddingEnabled: Boolean = true,
+    val paddingEnabled: Boolean = false,
     val paddingProbability: Float = 0.05f,
     val paddingMinBytes: Int = 64,
     val paddingMaxBytes: Int = 512,
