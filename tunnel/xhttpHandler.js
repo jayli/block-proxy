@@ -330,8 +330,8 @@ class XhttpHandler {
     // 启动 keepalive
     this._scheduleKeepalive(session);
 
-    // 处理 SSE 断开
-    req.on('close', () => {
+    // 处理 SSE 断开。GET request 本身可能很快 close，SSE 生命周期由 response 决定。
+    const handleSseClose = () => {
       if (session.sseRes === res) {
         console.log(`[xhttp] SSE stream closed: ${sessionId}`);
         session.sseRes = null;
@@ -350,7 +350,8 @@ class XhttpHandler {
           session.cleanupTimer.unref();
         }
       }
-    });
+    };
+    res.once('close', handleSseClose);
   }
 
   // ── 下行帧推送 ─────────────────────────────────────────────────────

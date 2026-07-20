@@ -22,7 +22,8 @@ function mockRequest(method, path, body = Buffer.alloc(0)) {
 
 function mockResponse() {
   const writes = [];
-  return {
+  const res = new EventEmitter();
+  Object.assign(res, {
     statusCode: null,
     headers: null,
     writes,
@@ -41,7 +42,8 @@ function mockResponse() {
       this.ended = true;
       this.writableEnded = true;
     },
-  };
+  });
+  return res;
 }
 
 function createHandler(overrides = {}) {
@@ -166,6 +168,23 @@ describe('XhttpHandler session model', () => {
     assert.ok(pushed);
     const payload = pushed.split('\ndata: ')[1].trim();
     assert.equal(decodeFrame(Buffer.from(payload, 'base64')).type, FRAME_TYPES.PONG);
+    handler.closeAll();
+  });
+
+  it('keeps SSE active when the request closes but the response is still open', async () => {
+    const { handler } = createHandler();
+    const sessionId = await createSession(handler);
+
+    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}`);
+    const res = mockResponse();
+    assert.equal(handler.handleRequest(req, res), true);
+    assert.equal(handler.getActiveSessionId(), sessionId);
+
+    req.emit('close');
+    assert.equal(handler.getActiveSessionId(), sessionId);
+
+    res.emit('close');
+    assert.equal(handler.getActiveSessionId(), null);
     handler.closeAll();
   });
 

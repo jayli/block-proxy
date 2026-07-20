@@ -229,6 +229,7 @@ class TunnelClient(
         clientScope.launch {
             readJob?.join()
             Log.i(TAG, "handleFrames exited for transport")
+            closeTransport(transport)
         }
 
         // Wait until stopped or active connection lost

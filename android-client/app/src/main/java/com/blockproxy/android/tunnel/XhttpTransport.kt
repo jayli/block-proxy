@@ -17,6 +17,7 @@ import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.TimeUnit
 import javax.net.SocketFactory
 import javax.net.ssl.SSLContext
@@ -63,8 +64,16 @@ class XhttpTransport(
     private val _frameChannel = Channel<ByteArray>(Channel.UNLIMITED)
     private val seqCounter = AtomicLong(0)
 
+    private val sseDisconnectNotified = AtomicBoolean(false)
+
     /** SSE disconnected callback (for reconnection) */
     @Volatile var onSseDisconnected: (() -> Unit)? = null
+        set(value) {
+            field = value
+            if (value != null && sseDisconnectNotified.get()) {
+                value.invoke()
+            }
+        }
 
     companion object {
         fun createOkHttpClient(
@@ -107,6 +116,7 @@ class XhttpTransport(
      * 启动 SSE 下行流。
      */
     fun start() {
+        sseDisconnectNotified.set(false)
         sseJob = scope.launch {
             try {
                 connectSse()
@@ -119,6 +129,7 @@ class XhttpTransport(
                 sseConnected = false
                 _isOpen.value = false
                 _frameChannel.close()
+                sseDisconnectNotified.set(true)
                 onSseDisconnected?.invoke()
             }
         }

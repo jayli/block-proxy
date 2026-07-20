@@ -180,6 +180,84 @@ async function testTunnelConnectWaitsForCustomConnectReadyBefore200() {
   assert.match(Buffer.concat(socket.clientWrites).toString('utf8'), /^HTTP\/1\.1 200 OK\r\nX-Tunnel-Relay: 1\r\n\r\n/);
 }
 
+async function testTunnelConnectFailureHandlesClientResetAfter502() {
+  const handler = new RequestHandler({
+    httpServerPort: 18888,
+    wsIntercept: true,
+    forceProxyHttps: false,
+    dangerouslyIgnoreUnauthorized: false,
+    isTunnelDomain(host) {
+      return host === 'example.com';
+    },
+    customConnect() {
+      throw new Error('tunnel-disconnected');
+    },
+  }, {
+    *beforeDealHttpsRequest() {
+      return null;
+    },
+  });
+
+  const req = {
+    url: 'example.com:443',
+    httpVersion: '1.1',
+    method: 'CONNECT',
+  };
+  const socket = new FakeClientSocket();
+
+  handler.connectReqHandler(req, socket, Buffer.alloc(0));
+
+  await waitFor(() => socket.clientWrites.length > 0);
+  assert.match(Buffer.concat(socket.clientWrites).toString('utf8'), /^HTTP\/1\.1 502\r\n/);
+  assert.doesNotThrow(() => {
+    const err = new Error('read ECONNRESET');
+    err.code = 'ECONNRESET';
+    socket.emit('error', err);
+  });
+}
+
+async function testTunnelConnectPipesClientDataAfterReady() {
+  let readyCallback;
+  const tunnelStream = new PassThrough();
+  const received = [];
+  tunnelStream.on('data', chunk => received.push(Buffer.from(chunk)));
+
+  const handler = new RequestHandler({
+    httpServerPort: 18888,
+    wsIntercept: true,
+    forceProxyHttps: false,
+    dangerouslyIgnoreUnauthorized: false,
+    isTunnelDomain(host) {
+      return host === 'example.com';
+    },
+    customConnect(host, port, callback) {
+      readyCallback = callback;
+      return tunnelStream;
+    },
+  }, {
+    *beforeDealHttpsRequest() {
+      return null;
+    },
+  });
+
+  const req = {
+    url: 'example.com:443',
+    httpVersion: '1.1',
+    method: 'CONNECT',
+  };
+  const socket = new FakeClientSocket();
+
+  handler.connectReqHandler(req, socket, Buffer.alloc(0));
+  await waitFor(() => typeof readyCallback === 'function');
+  readyCallback();
+  await waitFor(() => socket.clientWrites.length > 0);
+
+  socket.emit('data', Buffer.from('clienthello'));
+
+  await waitFor(() => received.length > 0);
+  assert.equal(Buffer.concat(received).toString('utf8'), 'clienthello');
+}
+
 function testHttpsServerSecureOptionsDisableSslv3AndTlsv1() {
   assert.strictEqual(
     HttpsServerMgr._test.getSecureOptions(),
@@ -524,6 +602,10 @@ async function run() {
   console.log('PASS testConnectHandlerSupportsAsyncCustomConnect');
   await testTunnelConnectWaitsForCustomConnectReadyBefore200();
   console.log('PASS testTunnelConnectWaitsForCustomConnectReadyBefore200');
+  await testTunnelConnectFailureHandlesClientResetAfter502();
+  console.log('PASS testTunnelConnectFailureHandlesClientResetAfter502');
+  await testTunnelConnectPipesClientDataAfterReady();
+  console.log('PASS testTunnelConnectPipesClientDataAfterReady');
   await testMitmConnectForwardsHttpsRequest();
   console.log('PASS testMitmConnectForwardsHttpsRequest');
 }

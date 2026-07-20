@@ -573,23 +573,31 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
     const requestStream = new CommonReadableStream();
     let connectResponseSent = false;
 
+    const handleClientSocketError = (error) => {
+      if (error.code === 'EPIPE') {
+        logUtil.printLog(`Client prematurely closed connection (EPIPE) for ${req.method} ${req.url}`, logUtil.T_DEBUG);
+        return;
+      }
+      if (error.code === 'ECONNRESET') {
+        logUtil.printLog(`Client reset connection (ECONNRESET) for ${req.method} ${req.url}`, logUtil.T_DEBUG);
+        return;
+      }
+
+      logUtil.printLog(`Socket error for ${req.method} ${req.url}: ${util.collectErrorLog(error)}`, logUtil.T_ERR);
+      co.wrap(function *() {
+        try {
+          yield userRule.onClientSocketError(requestDetail, error);
+        } catch (e) {
+          logUtil.printLog(`Error notifying user rule about socket error: ${e.message}`, logUtil.T_WARN);
+        }
+      })();
+    };
+    cltSocket.on('error', handleClientSocketError);
+
     const writeConnectResponse = () => {
       if (connectResponseSent) return Promise.resolve();
       connectResponseSent = true;
       return new Promise((resolve, reject) => {
-        cltSocket.on('error', (error) => {
-          if (error.code === 'EPIPE') {
-            logUtil.printLog(`Client prematurely closed connection (EPIPE) during CONNECT response for ${req.url}`, logUtil.T_DEBUG);
-            resolve();
-          } else if (error.code === 'ECONNRESET') {
-            logUtil.printLog(`Client reset connection (ECONNRESET) during CONNECT response for ${req.url}`, logUtil.T_DEBUG);
-            resolve();
-          } else {
-            logUtil.printLog(`Socket error writing CONNECT response to client for ${req.url}: ${util.collectErrorLog(error)}`, logUtil.T_ERR);
-            reject(error);
-          }
-        });
-
         try {
           const connectResponse = isTunnelConnect
             ? 'HTTP/' + req.httpVersion + ' 200 OK\r\nX-Tunnel-Relay: 1\r\n\r\n'
@@ -648,11 +656,6 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
             resolve();
           }
 
-          if (isTunnelConnect) {
-            resolve();
-            return;
-          }
-
           cltSocket.on('data', (chunk) => {
             requestStream.push(chunk);
             if (!resolved) {
@@ -668,25 +671,14 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
               resolve();
             }
           });
-          cltSocket.on('error', (error) => {
-            if (error.code === 'EPIPE') {
-              logUtil.printLog(`Client prematurely closed connection (EPIPE) for ${req.method} ${req.url}`, logUtil.T_DEBUG);
-            } else if (error.code === 'ECONNRESET') {
-              logUtil.printLog(`ECONNRESET---`, logUtil.T_ERR);
-            } else {
-              logUtil.printLog(`Socket error for ${req.method} ${req.url}: ${util.collectErrorLog(error)}`, logUtil.T_ERR);
-              co.wrap(function *() {
-                try {
-                  yield userRule.onClientSocketError(requestDetail, error);
-                } catch (e) {
-                  logUtil.printLog(`Error notifying user rule about socket error: ${e.message}`, logUtil.T_WARN);
-                }
-              })();
-            }
-          });
           cltSocket.on('end', () => {
             requestStream.push(null);
           });
+
+          if (isTunnelConnect && !resolved) {
+            resolved = true;
+            resolve();
+          }
         });
       })
       .then(() => {
