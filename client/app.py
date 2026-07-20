@@ -222,10 +222,13 @@ class AppController(NSObject):
         self.global_item.setState_(1 if is_global else 0)
         self.manual_item.setState_(1 if not is_global else 0)
 
+    def _routing_menu_title(self, routing_enabled):
+        return "分流规则（已开启）..." if routing_enabled else "分流规则..."
+
     def _update_routing_check(self):
-        """Update routing menu item checkmark based on routing enabled state."""
+        """Update routing menu item title based on routing enabled state."""
         routing_enabled = self.config.data.get("routing", {}).get("enabled", False)
-        self.routing_item.setState_(1 if routing_enabled else 0)
+        self.routing_item.setTitle_(self._routing_menu_title(routing_enabled))
 
     # ------------------------------------------------------------------
     # Proxy toggle

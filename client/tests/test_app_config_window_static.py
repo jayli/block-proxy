@@ -144,3 +144,23 @@ def test_connect_shows_disabled_connecting_state_until_terminal_state():
     disconnected_body = _method_body(app_controller, "_on_disconnected")
     assert any(_calls_self_method(node, "_finish_connecting") for node in connected_body)
     assert any(_calls_self_method(node, "_finish_connecting") for node in disconnected_body)
+
+
+def test_routing_menu_uses_title_state_instead_of_checkmark():
+    source_path = Path(__file__).parents[1].joinpath("app.py")
+    source = source_path.read_text()
+    tree = ast.parse(source)
+    app_controller = _class_node(tree, "AppController")
+    body = _method_body(app_controller, "_update_routing_check")
+
+    assert "分流规则（已开启）..." in source
+    assert any(_calls_self_method(node, "_routing_menu_title") for node in body)
+    assert not any(
+        isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Attribute)
+        and child.func.attr == "setState_"
+        and isinstance(child.func.value, ast.Attribute)
+        and child.func.value.attr == "routing_item"
+        for node in body
+        for child in ast.walk(node)
+    )
