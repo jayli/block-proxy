@@ -1,6 +1,5 @@
 package com.blockproxy.android.tunnel
 
-import android.util.Log
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import java.io.IOException
@@ -89,15 +88,12 @@ class ForwardSession internal constructor(
 
     /**
      * Delivers inbound DATA from the tunnel server into the [inboundData] channel.
-     * Uses trySend — if the channel is full the data is dropped (back-pressure).
-     * Silently discards data if the session is already closed.
+     * Suspends when the channel is full so tunnel input applies back-pressure
+     * instead of dropping bytes.
      */
-    internal fun deliverData(data: ByteArray) {
+    internal suspend fun deliverData(data: ByteArray) {
         if (closed.get()) return
         lastActivityAt = System.currentTimeMillis()
-        val result = inboundData.trySend(data)
-        if (result.isFailure) {
-            Log.w(TAG, "Inbound channel full for reqid $reqid, dropping ${data.size} bytes")
-        }
+        inboundData.send(data)
     }
 }

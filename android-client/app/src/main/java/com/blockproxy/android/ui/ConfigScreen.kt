@@ -367,7 +367,11 @@ fun ConfigScreen(
                             style = MaterialTheme.typography.titleSmall,
                         )
                         Text(
-                            text = if (routingEnabled) "已启用" else "未启用（全部走代理）",
+                            text = if (routingEnabled) {
+                                "已启用；直连白名单→代理白名单→默认直连"
+                            } else {
+                                "未启用；全局代理默认关闭，手机流量默认直连"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = if (routingEnabled) {
                                 MaterialTheme.colorScheme.primary

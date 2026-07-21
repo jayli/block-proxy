@@ -54,7 +54,7 @@ class LocalSocksServerTest {
     }
 
     private fun alwaysProxyEngine(): RoutingEngine {
-        val config = RoutingConfig(enabled = false)
+        val config = RoutingConfig(enabled = true, proxyRules = listOf("domain:example.com"))
         return RoutingEngine(config, GeositeMatcher(emptyMap()))
     }
 

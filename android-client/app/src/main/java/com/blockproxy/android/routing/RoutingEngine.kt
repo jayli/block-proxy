@@ -6,7 +6,7 @@ import com.blockproxy.android.config.RoutingConfig
  * Decides whether a connection should go DIRECT or through the PROXY tunnel.
  *
  * Resolution order:
- * 1. If config is disabled → PROXY (all traffic goes through tunnel)
+ * 1. If config is disabled → DIRECT (forward proxy is opt-in)
  * 2. Check directRules first (priority over proxyRules)
  * 3. Check proxyRules
  * 4. Fallback → DIRECT
@@ -19,8 +19,8 @@ class RoutingEngine(
     private val geositeMatcher: GeositeMatcher,
 ) {
     fun resolve(targetHost: String, domain: String?): RouteDecision {
-        // 1. Disabled → all traffic proxied
-        if (!config.enabled) return RouteDecision.PROXY
+        // 1. Disabled → default direct; upstream proxy is enabled only by routing rules.
+        if (!config.enabled) return RouteDecision.DIRECT
 
         val matchTarget = domain ?: targetHost
 

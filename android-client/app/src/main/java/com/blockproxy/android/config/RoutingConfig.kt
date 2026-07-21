@@ -9,10 +9,9 @@ package com.blockproxy.android.config
  *   - proxy rules match second → connection is forwarded through the tunnel
  *   - fallback → direct
  *
- * When [enabled] is false, all SOCKS5 CONNECT traffic is sent through the proxy.
+ * When [enabled] is false, SOCKS5 CONNECT traffic falls back to direct.
  *
- * Rules are plain text patterns (domain globs, CIDR ranges, geosite/geoip tags,
- * etc.) interpreted by the routing engine in later tasks.
+ * Rules are plain text patterns interpreted by the routing engine.
  *
  * @property enabled     Whether routing rules are active.
  * @property directRules Rules whose matching traffic should bypass the proxy.

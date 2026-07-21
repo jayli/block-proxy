@@ -1,6 +1,8 @@
 package com.blockproxy.android.socks
 
 import com.blockproxy.android.tunnel.ForwardSession
+import com.blockproxy.android.tunnel.ForwardAdmissionController
+import com.blockproxy.android.tunnel.ForwardAdmissionPermit
 import com.blockproxy.android.tunnel.TunnelClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -110,9 +112,44 @@ class ProtectedDirectConnector(
  */
 class TunnelForwardConnector(
     private val tunnelClient: TunnelClient,
+    private val admissionController: ForwardAdmissionController = ForwardAdmissionController(),
 ) : ForwardConnector {
 
     override suspend fun openForwardSession(host: String, port: Int): ForwardSessionHandle {
-        return ForwardSessionAdapter(tunnelClient.openForwardSession(host, port))
+        val permit = admissionController.acquire(host, port)
+        return try {
+            AdmissionControlledForwardSessionHandle(
+                delegate = ForwardSessionAdapter(tunnelClient.openForwardSession(host, port)),
+                permit = permit,
+            )
+        } catch (t: Throwable) {
+            permit.release()
+            throw t
+        }
+    }
+}
+
+private class AdmissionControlledForwardSessionHandle(
+    private val delegate: ForwardSessionHandle,
+    private val permit: ForwardAdmissionPermit,
+) : ForwardSessionHandle {
+    override suspend fun sendData(data: ByteArray) = delegate.sendData(data)
+    override val inboundData: Channel<ByteArray> = delegate.inboundData
+    override val isClosed: Boolean get() = delegate.isClosed
+
+    override suspend fun sendClose() {
+        try {
+            delegate.sendClose()
+        } finally {
+            permit.release()
+        }
+    }
+
+    override fun close() {
+        try {
+            delegate.close()
+        } finally {
+            permit.release()
+        }
     }
 }

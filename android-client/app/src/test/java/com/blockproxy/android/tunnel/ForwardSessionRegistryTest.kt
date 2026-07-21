@@ -6,6 +6,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -276,6 +277,32 @@ class ForwardSessionRegistryTest {
 
         assertNull("Session 1 should have no more data", s1.inboundData.tryReceive().getOrNull())
         assertNull("Session 2 should have no more data", s2.inboundData.tryReceive().getOrNull())
+    }
+
+    @Test
+    fun `inbound DATA waits for capacity instead of dropping`() = runTest {
+        val registry = ForwardSessionRegistry(this, inboundCapacity = 1)
+        val sender = FakeFrameSender()
+
+        val deferred = openAsync(registry, "a.com", 80, sender)
+        runCurrent()
+        registry.handleFrame(Frame.ConnectOk(0x8000))
+        runCurrent()
+        val session = deferred.await().session!!
+
+        registry.handleFrame(Frame.Data(0x8000, byteArrayOf(1)))
+        runCurrent()
+
+        val second = async {
+            registry.handleFrame(Frame.Data(0x8000, byteArrayOf(2)))
+        }
+        runCurrent()
+        assertFalse("Second DATA should wait while inbound channel is full", second.isCompleted)
+
+        assertArrayEquals(byteArrayOf(1), session.inboundData.receive())
+        runCurrent()
+        second.await()
+        assertArrayEquals(byteArrayOf(2), session.inboundData.receive())
     }
 
     @Test

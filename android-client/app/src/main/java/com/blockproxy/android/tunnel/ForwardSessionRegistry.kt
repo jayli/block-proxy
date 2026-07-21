@@ -134,7 +134,7 @@ class ForwardSessionRegistry(
      * Called by TunnelClient's onFrame callback for ConnectOk, ConnectFailed,
      * and Data/Close frames that belong to a known forward session.
      */
-    fun handleFrame(frame: Frame) {
+    suspend fun handleFrame(frame: Frame) {
         when (frame) {
             is Frame.ConnectOk -> {
                 val session = sessions[frame.reqid] ?: return

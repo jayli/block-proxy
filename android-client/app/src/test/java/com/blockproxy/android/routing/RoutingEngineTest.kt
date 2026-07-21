@@ -22,11 +22,11 @@ class RoutingEngineTest {
     // ── Disabled config ─────────────────────────────────────────────────
 
     @Test
-    fun `disabled config always returns PROXY`() {
+    fun `disabled config falls back to DIRECT`() {
         val config = RoutingConfig(enabled = false)
         val engine = RoutingEngine(config, emptyMatcher())
-        assertEquals(RouteDecision.PROXY, engine.resolve("example.com", "example.com"))
-        assertEquals(RouteDecision.PROXY, engine.resolve("1.2.3.4", null))
+        assertEquals(RouteDecision.DIRECT, engine.resolve("example.com", "example.com"))
+        assertEquals(RouteDecision.DIRECT, engine.resolve("1.2.3.4", null))
     }
 
     // ── Enabled with empty rules ────────────────────────────────────────

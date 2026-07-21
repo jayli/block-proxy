@@ -248,7 +248,7 @@ class ReverseConnectHandler(
         }
     }
 
-    private fun handleData(frame: Frame.Data) {
+    private suspend fun handleData(frame: Frame.Data) {
         val session = sessions[frame.reqid] ?: return // Late DATA after close — discard
         session.enqueueWrite(frame.payload)
     }
@@ -280,7 +280,7 @@ internal class RequestSession(
     private val onEnd: (RequestSession) -> Unit,
 ) {
     internal val closed = AtomicBoolean(false)
-    private val writeChannel = Channel<ByteArray>(Channel.UNLIMITED)
+    private val writeChannel = Channel<ByteArray>(WRITE_CHANNEL_CAPACITY)
     private var writeJob: Job? = null
     private var relayJob: Job? = null
 
@@ -300,9 +300,9 @@ internal class RequestSession(
      * Enqueues data from the tunnel to be written to the target socket.
      * Silently discards data if the session is already closed.
      */
-    fun enqueueWrite(data: ByteArray) {
+    suspend fun enqueueWrite(data: ByteArray) {
         if (closed.get()) return
-        writeChannel.trySend(data) // UNLIMITED channel — never suspends; no-op if closed
+        writeChannel.send(data)
     }
 
     /**
@@ -371,5 +371,9 @@ internal class RequestSession(
                 onEnd(this)
             }
         }
+    }
+
+    companion object {
+        private const val WRITE_CHANNEL_CAPACITY = 256
     }
 }

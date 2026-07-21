@@ -16,7 +16,6 @@ import java.net.Socket
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.Base64
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.TimeUnit
 import javax.net.SocketFactory
@@ -62,7 +61,13 @@ class XhttpTransport(
     val isOpenFlow: StateFlow<Boolean> = _isOpen.asStateFlow()
 
     private val _frameChannel = Channel<ByteArray>(Channel.UNLIMITED)
-    private val seqCounter = AtomicLong(0)
+    private val uploadScheduler = XhttpUploadScheduler(
+        scope = scope,
+        baseUrl = baseUrl,
+        sessionId = sessionId,
+        uploadClient = uploadClient,
+        paddingHeaders = { buildPaddingHeader()?.let { mapOf("X-Padding" to it) } ?: emptyMap() },
+    )
 
     private val sseDisconnectNotified = AtomicBoolean(false)
 
@@ -222,9 +227,7 @@ class XhttpTransport(
 
     override suspend fun sendFrame(encoded: ByteArray): Boolean {
         if (!isOpen) return false
-        val seq = seqCounter.getAndIncrement()
-        val headers = buildPaddingHeader()?.let { mapOf("X-Padding" to it) } ?: emptyMap()
-        return uploadClient.postFrame("$baseUrl/upload/$sessionId/$seq", encoded, headers)
+        return uploadScheduler.sendFrame(encoded)
     }
 
     private fun buildPaddingHeader(): String? {
@@ -251,6 +254,7 @@ class XhttpTransport(
         sseJob = null
 
         sseConnected = false
+        uploadScheduler.close()
         uploadClient.close()
 
         try { sseReader?.close() } catch (_: Exception) {}
