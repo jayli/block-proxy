@@ -78,6 +78,8 @@ class XhttpSession(
             .post(requestBody)
             .header("Content-Type", OCTET_STREAM)
             .header("Cache-Control", "no-store")
+            .header("Host", hostAuthority(config.serverHost, config.serverPort))
+            .header("Connection", "close")
             .build()
 
         val response = try {
@@ -93,6 +95,10 @@ class XhttpSession(
 
             if (!resp.isSuccessful) {
                 val body = resp.body?.string() ?: ""
+                Log.w(
+                    TAG,
+                    "Create session failed: HTTP ${resp.code}, server=${resp.header("server")}, cf-ray=${resp.header("cf-ray")}, location=${resp.header("location")}, body=$body"
+                )
                 throw TunnelProtocolException("Create session failed: HTTP ${resp.code} - $body")
             }
 
@@ -120,5 +126,9 @@ class XhttpSession(
         val bytes = MessageDigest.getInstance("SHA-256")
             .digest("${credentials.username}:${credentials.password}".toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun hostAuthority(host: String, port: Int): String {
+        return if (port == 443) host else "$host:$port"
     }
 }

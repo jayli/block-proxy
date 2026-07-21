@@ -1,7 +1,10 @@
 package com.blockproxy.android.cdn
 
+import android.util.Log
 import okhttp3.Dns
 import java.net.InetAddress
+
+private const val TAG = "CfIpDns"
 
 class CfIpDns(
     private val serverHost: String,
@@ -20,12 +23,15 @@ class CfIpDns(
             selector.selectForLookup()
         }
         if (selectedIp.isNullOrBlank()) {
+            Log.w(TAG, "No CF IP selected for $hostname; falling back to system DNS")
             return delegate.lookup(hostname)
         }
 
         return runCatching {
-            listOf(InetAddress.getByName(selectedIp))
+            val ipBytes = InetAddress.getByName(selectedIp).address
+            listOf(InetAddress.getByAddress(hostname, ipBytes))
         }.getOrElse {
+            Log.w(TAG, "Invalid CF IP $selectedIp for $hostname; falling back to system DNS")
             delegate.lookup(hostname)
         }
     }

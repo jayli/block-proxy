@@ -12,6 +12,7 @@ import okhttp3.*
 import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStreamReader
+import java.net.Proxy
 import java.net.Socket
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
@@ -89,6 +90,9 @@ class XhttpTransport(
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.MILLISECONDS)
                 .writeTimeout(0, TimeUnit.MILLISECONDS)
+                .protocols(listOf(Protocol.HTTP_1_1))
+                .connectionPool(ConnectionPool(0, 1, TimeUnit.MILLISECONDS))
+                .proxy(Proxy.NO_PROXY)
 
             if (protect != null) {
                 builder.socketFactory(ProtectedSocketFactory(protect))

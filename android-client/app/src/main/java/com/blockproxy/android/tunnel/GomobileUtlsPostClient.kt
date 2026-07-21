@@ -1,5 +1,7 @@
 package com.blockproxy.android.tunnel
 
+import java.lang.reflect.InvocationTargetException
+
 class GomobileUtlsPostClient private constructor(
     private val nativeClient: Any,
     private val nativeClientClass: Class<*>,
@@ -18,8 +20,12 @@ class GomobileUtlsPostClient private constructor(
         for ((name, value) in options.headers) {
             nativeOptions.call("addHeader", name, value)
         }
-        nativeClientClass.getMethod("postPacket", nativeOptionsClass, ByteArray::class.java)
-            .invoke(nativeClient, nativeOptions, body)
+        try {
+            nativeClientClass.getMethod("postPacket", nativeOptionsClass, ByteArray::class.java)
+                .invoke(nativeClient, nativeOptions, body)
+        } catch (e: InvocationTargetException) {
+            throw e.targetException ?: e
+        }
     }
 
     override fun close() {

@@ -265,8 +265,10 @@ class TunnelClient(
 
     private fun sseConnectionClient(): OkHttpClient {
         return if (sseCfIpDns != null) {
+            Log.i(TAG, "Using CF DNS override for SSE/create session")
             sseOkHttpClient.newBuilder().dns(sseCfIpDns).build()
         } else {
+            Log.i(TAG, "Using system DNS for SSE/create session")
             sseOkHttpClient
         }
     }

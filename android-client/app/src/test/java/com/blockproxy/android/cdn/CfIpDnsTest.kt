@@ -42,6 +42,18 @@ class CfIpDnsTest {
     }
 
     @Test
+    fun `server host result preserves hostname for sni`() {
+        val delegate = FakeDns()
+        val selector = CfIpSelector(CfIpSnapshot(listOf("104.16.4.14"), 0)) {}
+        val dns = CfIpDns("tunnel.example.com", selector, delegate)
+
+        val result = dns.lookup("tunnel.example.com")
+
+        assertEquals("104.16.4.14", result.single().hostAddress)
+        assertEquals("tunnel.example.com", result.single().hostName)
+    }
+
+    @Test
     fun `rotate mode resolves a different cf ip when pool has alternatives`() {
         val delegate = FakeDns()
         val persisted = mutableListOf<Int>()

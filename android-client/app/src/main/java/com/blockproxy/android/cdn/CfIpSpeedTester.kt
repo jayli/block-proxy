@@ -1,14 +1,21 @@
 package com.blockproxy.android.cdn
 
+import com.blockproxy.android.tunnel.XhttpTransport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import okhttp3.Dns
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.InetSocketAddress
+import java.net.InetAddress
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.TimeUnit
 
 interface SocketConnector {
     fun connect(
@@ -44,11 +51,75 @@ class RealSocketConnector : SocketConnector {
     }
 }
 
+data class CfIpRouteProbeConfig(
+    val host: String,
+    val port: Int,
+    val xhttpBasePath: String,
+    val allowInsecure: Boolean,
+)
+
+interface CfIpRouteProbe {
+    fun supportsXhttpRoute(
+        ip: String,
+        host: String,
+        port: Int,
+        xhttpBasePath: String,
+        allowInsecure: Boolean,
+        protect: ((Socket) -> Boolean)?,
+    ): Boolean
+}
+
+class RealCfIpRouteProbe : CfIpRouteProbe {
+    override fun supportsXhttpRoute(
+        ip: String,
+        host: String,
+        port: Int,
+        xhttpBasePath: String,
+        allowInsecure: Boolean,
+        protect: ((Socket) -> Boolean)?,
+    ): Boolean {
+        val basePath = if (xhttpBasePath.startsWith("/")) xhttpBasePath else "/$xhttpBasePath"
+        val url = "https://$host:$port$basePath/create"
+        val client = XhttpTransport.createOkHttpClient(
+            allowInsecure = allowInsecure,
+            protect = protect,
+        ).newBuilder()
+            .dns(object : Dns {
+                override fun lookup(hostname: String): List<InetAddress> {
+                    return if (hostname.equals(host, ignoreCase = true)) {
+                        val ipBytes = InetAddress.getByName(ip).address
+                        listOf(InetAddress.getByAddress(hostname, ipBytes))
+                    } else {
+                        Dns.SYSTEM.lookup(hostname)
+                    }
+                }
+            })
+            .readTimeout(5, TimeUnit.SECONDS)
+            .writeTimeout(5, TimeUnit.SECONDS)
+            .build()
+
+        val request = Request.Builder()
+            .url(url)
+            .post(ByteArray(0).toRequestBody("application/octet-stream".toMediaType()))
+            .header("Content-Type", "application/octet-stream")
+            .header("Cache-Control", "no-store")
+            .build()
+
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                response.code in setOf(200, 400, 401, 409)
+            }
+        }.getOrDefault(false)
+    }
+}
+
 class CfIpSpeedTester(
     private val ipPool: CfIpPool,
     private val testPort: Int,
     private val protect: ((Socket) -> Boolean)? = null,
     private val socketConnector: SocketConnector = RealSocketConnector(),
+    private val routeProbe: CfIpRouteProbe? = null,
+    private val routeProbeConfig: CfIpRouteProbeConfig? = null,
 ) {
     companion object {
         const val TOP_N = 50
@@ -79,6 +150,7 @@ class CfIpSpeedTester(
             .mapNotNull { (ip, latency) -> latency?.let { ip to it } }
             .sortedBy { it.second }
             .take(TOP_N)
+            .filter { (ip, _) -> supportsXhttpRoute(ip) }
             .map { it.first }
 
         if (selected.isNotEmpty()) {
@@ -95,5 +167,18 @@ class CfIpSpeedTester(
             latencies += latency
         }
         return latencies.sorted()[latencies.size / 2]
+    }
+
+    private fun supportsXhttpRoute(ip: String): Boolean {
+        val probe = routeProbe ?: return true
+        val config = routeProbeConfig ?: return true
+        return probe.supportsXhttpRoute(
+            ip = ip,
+            host = config.host,
+            port = config.port,
+            xhttpBasePath = config.xhttpBasePath,
+            allowInsecure = config.allowInsecure,
+            protect = protect,
+        )
     }
 }

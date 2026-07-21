@@ -575,6 +575,39 @@ private fun ConnectionTestResultDialog(
                         )
                     }
 
+                    result.xhttpRouteOk?.let { ok ->
+                        ResultRow(
+                            label = "xhttp/create",
+                            value = if (ok) {
+                                "✓ 路由命中"
+                            } else {
+                                "✗ HTTP ${result.xhttpRouteStatus ?: "-"}"
+                            },
+                            valueColor = if (ok) Color(0xFF4CAF50) else Color(0xFFF44336),
+                        )
+                        result.xhttpRouteServer?.let { server ->
+                            ResultRow(
+                                label = "Server",
+                                value = server,
+                                valueColor = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                        result.xhttpRouteCfRay?.let { ray ->
+                            ResultRow(
+                                label = "CF-Ray",
+                                value = ray,
+                                valueColor = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                        result.xhttpRouteError?.let { error ->
+                            ResultRow(
+                                label = "路由错误",
+                                value = error,
+                                valueColor = Color(0xFFF44336),
+                            )
+                        }
+                    }
+
                     // MITM 检测
                     if (result.isMitm) {
                         ResultRow(

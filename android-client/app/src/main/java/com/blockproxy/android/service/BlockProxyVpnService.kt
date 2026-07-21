@@ -321,7 +321,6 @@ class BlockProxyVpnService : VpnService() {
             enterErrorAndStop("缺少服务器配置")
             return
         }
-
         // Load credentials
         val credentials: TunnelCredentials? = try {
             credentialStore.observe().first()
@@ -386,7 +385,7 @@ class BlockProxyVpnService : VpnService() {
         }
         if (cfIpPool != null && cfIpSelector != null && uploadCfIpSelector != null) {
             CfIpRuntimeRegistry.attach(cfIpPool!!, listOf(cfIpSelector!!, uploadCfIpSelector!!), protectCallback)
-            CfIpRefreshWorker.schedule(applicationContext, config.serverPort)
+            CfIpRefreshWorker.schedule(applicationContext, config)
         } else {
             CfIpRefreshWorker.cancelSchedule(applicationContext)
             statusStore.updateCfIp(null)

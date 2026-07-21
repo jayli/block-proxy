@@ -3,9 +3,12 @@ package com.blockproxy.android.util
 import android.util.Log
 import com.blockproxy.android.cdn.CfIpRuntimeRegistry
 import okhttp3.Dns
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.InetAddress
+import java.net.Proxy
 import java.security.cert.X509Certificate
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -42,6 +45,19 @@ data class TlsTestResult(
     val durationMs: Long,
     val error: String?,
     val connectedIp: String?,
+    val xhttpRouteStatus: Int? = null,
+    val xhttpRouteOk: Boolean? = null,
+    val xhttpRouteServer: String? = null,
+    val xhttpRouteCfRay: String? = null,
+    val xhttpRouteError: String? = null,
+)
+
+data class XhttpRouteTestResult(
+    val status: Int?,
+    val ok: Boolean,
+    val server: String?,
+    val cfRay: String?,
+    val error: String?,
 )
 
 /**
@@ -102,6 +118,7 @@ object TlsTester {
                 .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
                 .readTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
                 .writeTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+                .proxy(Proxy.NO_PROXY)
                 .sslSocketFactory(sslContext.socketFactory, recordingTm)
                 .hostnameVerifier { _, _ -> true }
 
@@ -223,6 +240,79 @@ object TlsTester {
                 durationMs = durationMs,
                 error = e.message ?: "连接失败",
                 connectedIp = ipOverride,
+            )
+        }
+    }
+
+    fun testXhttpCreateRoute(
+        host: String,
+        port: Int,
+        xhttpBasePath: String = "/xhttp",
+        ipOverride: String? = null,
+        timeoutMs: Int = 5000,
+    ): XhttpRouteTestResult {
+        val basePath = if (xhttpBasePath.startsWith("/")) xhttpBasePath else "/$xhttpBasePath"
+        val url = "https://$host:$port$basePath/create"
+        val recordingTm = RecordingTrustManager()
+
+        return try {
+            val sslContext = SSLContext.getInstance("TLS").apply {
+                init(null, arrayOf<TrustManager>(recordingTm), null)
+            }
+            val builder = OkHttpClient.Builder()
+                .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+                .readTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+                .writeTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+                .proxy(Proxy.NO_PROXY)
+                .sslSocketFactory(sslContext.socketFactory, recordingTm)
+                .hostnameVerifier { _, _ -> true }
+
+            if (ipOverride != null) {
+                builder.dns(object : Dns {
+                    override fun lookup(hostname: String): List<InetAddress> {
+                        val ipBytes = InetAddress.getByName(ipOverride).address
+                        return listOf(InetAddress.getByAddress(hostname, ipBytes))
+                    }
+                })
+            }
+
+            CfIpRuntimeRegistry.currentProtect()?.let { protect ->
+                builder.socketFactory(
+                    com.blockproxy.android.tunnel.ProtectedSocketFactory(protect)
+                )
+            }
+
+            val request = Request.Builder()
+                .url(url)
+                .post(ByteArray(0).toRequestBody("application/octet-stream".toMediaType()))
+                .header("Content-Type", "application/octet-stream")
+                .header("Cache-Control", "no-store")
+                .build()
+
+            val client = builder.build()
+            client.newCall(request).execute().use { response ->
+                val status = response.code
+                response.body?.string()
+                XhttpRouteTestResult(
+                    status = status,
+                    ok = status in setOf(200, 400, 401, 409),
+                    server = response.header("server"),
+                    cfRay = response.header("cf-ray"),
+                    error = null,
+                )
+            }.also {
+                client.dispatcher.executorService.shutdown()
+                client.connectionPool.evictAll()
+                Log.i(TAG, "xhttp create route test: status=${it.status}, ok=${it.ok}, server=${it.server}, cf-ray=${it.cfRay}, ip=$ipOverride")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "xhttp create route test failed: ${e.message}", e)
+            XhttpRouteTestResult(
+                status = null,
+                ok = false,
+                server = null,
+                cfRay = null,
+                error = e.message ?: "xhttp route test failed",
             )
         }
     }

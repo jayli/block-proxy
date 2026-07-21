@@ -247,8 +247,15 @@ func validatePostResponse(r *bufio.Reader) error {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
+	details := fmt.Sprintf(
+		"post failed: status=%s server=%q cf-ray=%q location=%q",
+		resp.Status,
+		resp.Header.Get("server"),
+		resp.Header.Get("cf-ray"),
+		resp.Header.Get("location"),
+	)
 	if len(snippet) > 0 {
-		return fmt.Errorf("post failed: status=%s body=%q", resp.Status, string(snippet))
+		return fmt.Errorf("%s body=%q", details, string(snippet))
 	}
-	return fmt.Errorf("post failed: status=%s", resp.Status)
+	return fmt.Errorf("%s", details)
 }

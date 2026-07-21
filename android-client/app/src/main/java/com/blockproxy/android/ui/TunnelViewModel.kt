@@ -15,6 +15,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.blockproxy.android.cdn.CfCdnConfig
+import com.blockproxy.android.cdn.CfIpPool
 import com.blockproxy.android.cdn.CfIpRuntimeRegistry
 import com.blockproxy.android.cdn.CfIpRefreshWorker
 import com.blockproxy.android.config.ConfigRepository
@@ -294,7 +295,7 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
             credentialStore.save(creds)
 
             if (config.cfCdnEnabled) {
-                CfIpRefreshWorker.schedule(context, config.serverPort)
+                CfIpRefreshWorker.schedule(context, config)
             } else {
                 CfIpRefreshWorker.cancelSchedule(context)
             }
@@ -311,7 +312,14 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
-        val id = CfIpRefreshWorker.refreshNow(context, port)
+        val config = ServerConfig(
+            serverHost = state.host,
+            serverPort = port,
+            useTls = state.useTls,
+            allowInsecure = state.allowInsecure,
+            cfCdnEnabled = state.cfCdnEnabled,
+        )
+        val id = CfIpRefreshWorker.refreshNow(context, config)
         viewModelScope.launch {
             WorkManager.getInstance(context)
                 .getWorkInfoByIdFlow(id)
@@ -369,24 +377,44 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
-        // CF CDN 模式下直连 CF IP，避免 DNS 被公司网关劫持到 MITM 代理
-        val ipOverride = if (state.cfCdnEnabled) {
-            val cfIp = CfIpRuntimeRegistry.currentIp()
-            if (cfIp != null) {
-                Log.d(TAG, "TLS test: using CF IP $cfIp for host $host")
-                cfIp
-            } else {
-                Log.w(TAG, "TLS test: CF CDN enabled but no IP available, falling back to DNS")
-                null
-            }
-        } else {
-            null
-        }
-
         _connectionTestState.value = ConnectionTestState.Testing
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val result = TlsTester.test(host, port, ipOverride = ipOverride)
+                // CF CDN 模式下直连 CF IP，避免 DNS 被公司网关劫持到 MITM 代理。
+                // VPN 未运行时 runtime registry 为空，因此回退到本地保存的 IP 池。
+                val ipOverride = if (state.cfCdnEnabled) {
+                    val cfIp = CfIpRuntimeRegistry.currentIp() ?: runCatching {
+                        val snapshot = CfIpPool(context).loadSnapshot()
+                        snapshot.goodIps.getOrNull(snapshot.normalizedCursor())
+                    }.getOrNull()
+                    if (cfIp != null) {
+                        Log.d(TAG, "TLS test: using CF IP $cfIp for host $host")
+                        cfIp
+                    } else {
+                        Log.w(TAG, "TLS test: CF CDN enabled but no IP available, falling back to DNS")
+                        null
+                    }
+                } else {
+                    null
+                }
+
+                val tlsResult = TlsTester.test(host, port, ipOverride = ipOverride)
+                val routeResult = if (tlsResult.reachable && state.useTls) {
+                    TlsTester.testXhttpCreateRoute(
+                        host = host,
+                        port = port,
+                        ipOverride = ipOverride,
+                    )
+                } else {
+                    null
+                }
+                val result = tlsResult.copy(
+                    xhttpRouteStatus = routeResult?.status,
+                    xhttpRouteOk = routeResult?.ok,
+                    xhttpRouteServer = routeResult?.server,
+                    xhttpRouteCfRay = routeResult?.cfRay,
+                    xhttpRouteError = routeResult?.error,
+                )
                 _connectionTestState.value = ConnectionTestState.Success(result)
             } catch (e: Exception) {
                 _connectionTestState.value = ConnectionTestState.Error(e.message ?: "测试失败")

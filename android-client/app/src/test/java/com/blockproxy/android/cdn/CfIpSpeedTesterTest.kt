@@ -28,6 +28,38 @@ private class FakeSocketConnector(
     }
 }
 
+private class FakeRouteProbe(
+    private val results: Map<String, Boolean>,
+) : CfIpRouteProbe {
+    data class Call(
+        val ip: String,
+        val host: String,
+        val port: Int,
+        val xhttpBasePath: String,
+        val allowInsecure: Boolean,
+        val protected: Boolean,
+    )
+
+    val calls = mutableListOf<Call>()
+
+    override fun supportsXhttpRoute(
+        ip: String,
+        host: String,
+        port: Int,
+        xhttpBasePath: String,
+        allowInsecure: Boolean,
+        protect: ((Socket) -> Boolean)?,
+    ): Boolean {
+        val socket = Socket()
+        var protected = false
+        if (protect != null) {
+            protected = protect(socket)
+        }
+        calls += Call(ip, host, port, xhttpBasePath, allowInsecure, protected)
+        return results[ip] ?: false
+    }
+}
+
 class CfIpSpeedTesterTest {
 
     @Test
@@ -109,5 +141,44 @@ class CfIpSpeedTesterTest {
 
         assertEquals(emptyList<String>(), result)
         assertEquals(emptyList<String>(), storage.writes)
+    }
+
+    @Test
+    fun `runTest keeps only ips that pass xhttp route probe`() = runTest {
+        val storage = FakeCfIpStorage(
+            assets = mutableMapOf("cf-ips.txt" to "1.1.1.1\n2.2.2.2\n")
+        )
+        val pool = CfIpPool(storage, FakeCursorStore())
+        val connector = FakeSocketConnector(
+            mapOf(
+                "1.1.1.1" to ArrayDeque(listOf(10L, 10L)),
+                "2.2.2.2" to ArrayDeque(listOf(20L, 20L)),
+            )
+        )
+        val routeProbe = FakeRouteProbe(
+            mapOf(
+                "1.1.1.1" to false,
+                "2.2.2.2" to true,
+            )
+        )
+
+        val result = CfIpSpeedTester(
+            ipPool = pool,
+            testPort = 443,
+            protect = { true },
+            socketConnector = connector,
+            routeProbe = routeProbe,
+            routeProbeConfig = CfIpRouteProbeConfig(
+                host = "8003.perf.qzz.io",
+                port = 443,
+                xhttpBasePath = "/xhttp",
+                allowInsecure = true,
+            ),
+        ).runTest()
+
+        assertEquals(listOf("2.2.2.2"), result)
+        assertEquals(listOf("2.2.2.2"), storage.writes)
+        assertEquals(listOf("1.1.1.1", "2.2.2.2"), routeProbe.calls.map { it.ip })
+        assertEquals(listOf(true, true), routeProbe.calls.map { it.protected })
     }
 }
