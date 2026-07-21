@@ -1,6 +1,7 @@
 package com.blockproxy.android.tunnel
 
 import android.util.Log
+import com.blockproxy.android.diagnostics.TunnelDiagnosticsLog
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -9,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.*
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStreamReader
@@ -55,6 +57,10 @@ class XhttpTransport(
         timeoutMs = sseIdleTimeoutMs,
     ) {
         Log.w(TAG, "SSE idle timeout after ${sseIdleTimeoutMs}ms, reconnecting")
+        TunnelDiagnosticsLog.write(
+            "sse.idle_timeout",
+            "session=${shortSessionId()} timeoutMs=$sseIdleTimeoutMs"
+        )
         sseCall?.cancel()
     }
 
@@ -126,19 +132,31 @@ class XhttpTransport(
      */
     fun start() {
         sseDisconnectNotified.set(false)
+        TunnelDiagnosticsLog.write("transport.start", "session=${shortSessionId()}")
         sseJob = scope.launch {
+            var failure: Throwable? = null
             try {
                 connectSse()
             } catch (e: CancellationException) {
+                failure = e
                 throw e
             } catch (e: Exception) {
+                failure = e
                 Log.e(TAG, "SSE fatal error", e)
+                TunnelDiagnosticsLog.write(
+                    "sse.fatal_error",
+                    "session=${shortSessionId()} type=${e::class.java.simpleName} message=${e.message ?: ""}"
+                )
             } finally {
                 sseIdleWatchdog.stop()
                 sseConnected = false
                 _isOpen.value = false
                 _frameChannel.close()
                 sseDisconnectNotified.set(true)
+                TunnelDiagnosticsLog.write(
+                    "sse.disconnected",
+                    "session=${shortSessionId()} failure=${failure?.let { it::class.java.simpleName } ?: "none"}"
+                )
                 onSseDisconnected?.invoke()
             }
         }
@@ -165,15 +183,27 @@ class XhttpTransport(
         sseCall = call
 
         Log.i(TAG, "Connecting SSE: $url")
+        TunnelDiagnosticsLog.write(
+            "sse.connecting",
+            "session=${shortSessionId()} endpoint=${redactedStreamEndpoint()}"
+        )
         call.execute().use { response ->
             if (!response.isSuccessful) {
                 Log.e(TAG, "SSE failed: HTTP ${response.code}")
+                TunnelDiagnosticsLog.write(
+                    "sse.http_failed",
+                    "session=${shortSessionId()} code=${response.code}"
+                )
                 return
             }
 
             val contentType = response.header("Content-Type") ?: ""
             if (!contentType.startsWith("text/event-stream")) {
                 Log.e(TAG, "SSE wrong content type: $contentType")
+                TunnelDiagnosticsLog.write(
+                    "sse.wrong_content_type",
+                    "session=${shortSessionId()} contentType=$contentType"
+                )
                 return
             }
 
@@ -182,6 +212,7 @@ class XhttpTransport(
             sseReader = BufferedReader(InputStreamReader(stream))
             sseConnected = true
             Log.i(TAG, "SSE connected")
+            TunnelDiagnosticsLog.write("sse.connected", "session=${shortSessionId()}")
             _isOpen.value = true
             sseIdleWatchdog.start()
 
@@ -197,7 +228,11 @@ class XhttpTransport(
 
         try {
             while (true) {
-                val line = reader.readLine() ?: break
+                val line = reader.readLine()
+                if (line == null) {
+                    TunnelDiagnosticsLog.write("sse.eof", "session=${shortSessionId()}")
+                    break
+                }
                 sseIdleWatchdog.markActivity()
 
                 if (line.isEmpty()) {
@@ -226,6 +261,10 @@ class XhttpTransport(
             if (_isOpen.value) {
                 Log.w(TAG, "SSE read error: ${e.message}")
             }
+            TunnelDiagnosticsLog.write(
+                "sse.read_error",
+                "session=${shortSessionId()} type=${e::class.java.simpleName} message=${e.message ?: ""}"
+            )
         }
     }
 
@@ -250,6 +289,10 @@ class XhttpTransport(
 
     override fun close(code: Int, reason: String) {
         Log.i(TAG, "Closing transport: code=$code reason=$reason")
+        TunnelDiagnosticsLog.write(
+            "transport.close",
+            "session=${shortSessionId()} code=$code reason=$reason"
+        )
         _isOpen.value = false
 
         sseCall?.cancel()
@@ -266,6 +309,19 @@ class XhttpTransport(
 
         _frameChannel.close()
         scope.cancel()
+    }
+
+    private fun shortSessionId(): String = sessionId.take(8)
+
+    fun sessionDebugId(): String = shortSessionId()
+
+    private fun redactedStreamEndpoint(): String {
+        return try {
+            val parsed = baseUrl.toHttpUrl()
+            "${parsed.scheme}://${parsed.host}:${parsed.port}${parsed.encodedPath}/stream"
+        } catch (_: Exception) {
+            "$baseUrl/stream"
+        }
     }
 }
 

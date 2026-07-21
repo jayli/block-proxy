@@ -1,6 +1,7 @@
 package com.blockproxy.android.tunnel
 
 import android.util.Log
+import com.blockproxy.android.diagnostics.TunnelDiagnosticsLog
 import com.blockproxy.android.cdn.CfIpDns
 import com.blockproxy.android.cdn.CfIpSelector
 import com.blockproxy.android.config.ServerConfig
@@ -115,12 +116,17 @@ class TunnelClient(
     fun start() {
         if (!stopped) return
         stopped = false
+        TunnelDiagnosticsLog.write(
+            "tunnel.start",
+            "host=${config.serverHost} port=${config.serverPort} cfCdn=${config.cfCdnEnabled}"
+        )
         _status.value = TunnelStatus.Connecting
         mainJob = clientScope.launch { mainLoop() }
     }
 
     suspend fun stop(timeoutMs: Long = 5_000L) {
         stopped = true
+        TunnelDiagnosticsLog.write("tunnel.stop", "timeoutMs=$timeoutMs")
         sseCfIpSelector?.markStoppedCleanly()
         uploadCfIpSelector?.markStoppedCleanly()
         onCfIpChanged(null)
@@ -174,11 +180,13 @@ class TunnelClient(
             } catch (e: TunnelAuthFailedException) {
                 terminalStatus = TunnelStatus.AuthFailed
                 _status.value = TunnelStatus.AuthFailed
+                TunnelDiagnosticsLog.write("tunnel.auth_failed", "message=${e.message ?: ""}")
                 Log.e(TAG, "Tunnel authentication failed", e)
                 break
             } catch (e: TunnelOccupiedException) {
                 terminalStatus = TunnelStatus.Occupied
                 _status.value = TunnelStatus.Occupied
+                TunnelDiagnosticsLog.write("tunnel.occupied", "message=${e.message ?: ""}")
                 Log.e(TAG, "Tunnel occupied", e)
                 break
             } catch (e: CancellationException) {
@@ -186,6 +194,10 @@ class TunnelClient(
             } catch (e: Exception) {
                 Log.w(TAG, "Tunnel connection failed: ${e.message}")
                 _status.value = TunnelStatus.Reconnecting
+                TunnelDiagnosticsLog.write(
+                    "tunnel.connection_failed",
+                    "type=${e::class.java.simpleName} message=${e.message ?: ""} nextBackoffMs=$backoff"
+                )
                 try { delay(backoff) } catch (_: CancellationException) { break }
                 backoff = min(backoff * 2, MAX_BACKOFF_MS)
             }
@@ -193,6 +205,7 @@ class TunnelClient(
 
         if (terminalStatus == null) {
             _status.value = TunnelStatus.Disconnected
+            TunnelDiagnosticsLog.write("tunnel.disconnected", "stopped=$stopped")
         }
     }
 
@@ -215,6 +228,10 @@ class TunnelClient(
         connected = true
         lastActivityAt = System.currentTimeMillis()
         _status.value = TunnelStatus.Connected
+        TunnelDiagnosticsLog.write(
+            "tunnel.connected",
+            "session=${transport.sessionDebugId()} cfIp=${sseCfIpSelector?.currentIp() ?: sseCfIpDns?.getCurrentIp() ?: ""}"
+        )
         sseCfIpSelector?.markConnected()
         onCfIpChanged(sseCfIpSelector?.currentIp() ?: sseCfIpDns?.getCurrentIp())
 
@@ -223,12 +240,20 @@ class TunnelClient(
         // Set SSE disconnected callback
         transport.onSseDisconnected = {
             Log.w(TAG, "SSE disconnected, triggering reconnect")
+            TunnelDiagnosticsLog.write(
+                "tunnel.sse_disconnected_callback",
+                "session=${transport.sessionDebugId()}"
+            )
             clientScope.launch { closeTransport(transport) }
         }
 
         clientScope.launch {
             readJob?.join()
             Log.i(TAG, "handleFrames exited for transport")
+            TunnelDiagnosticsLog.write(
+                "tunnel.handle_frames_exited",
+                "session=${transport.sessionDebugId()}"
+            )
             closeTransport(transport)
         }
 
@@ -239,6 +264,10 @@ class TunnelClient(
             }
         } finally {
             connected = false
+            TunnelDiagnosticsLog.write(
+                "tunnel.serve_exited",
+                "session=${transport.sessionDebugId()} stopped=$stopped active=${activeTransport != null}"
+            )
             rotationJob?.cancel()
             rotationJob = null
         }
@@ -246,6 +275,10 @@ class TunnelClient(
 
     private suspend fun establishConnection(): XhttpTransport {
         Log.i(TAG, "Connecting to tunnel ${config.serverHost}:${config.serverPort}")
+        TunnelDiagnosticsLog.write(
+            "tunnel.connecting",
+            "host=${config.serverHost} port=${config.serverPort}"
+        )
 
         val transportFactory = TunnelTransportFactory(
             config = config,
@@ -259,6 +292,10 @@ class TunnelClient(
             transportFactory.connect()
         } catch (e: Exception) {
             sseCfIpSelector?.markCandidateFailed()
+            TunnelDiagnosticsLog.write(
+                "tunnel.establish_failed",
+                "type=${e::class.java.simpleName} message=${e.message ?: ""}"
+            )
             throw e
         }
     }
@@ -393,11 +430,16 @@ class TunnelClient(
         if (!oldTransport.isOpen) return
 
         sseCfIpSelector?.forceNextOnNextLookup()
+        TunnelDiagnosticsLog.write("rotation.start", "oldSession=${oldTransport.sessionDebugId()}")
 
         val candidate = try {
             establishConnection()
         } catch (e: Exception) {
             Log.w(TAG, "Rotation candidate failed: ${e.message}")
+            TunnelDiagnosticsLog.write(
+                "rotation.candidate_failed",
+                "type=${e::class.java.simpleName} message=${e.message ?: ""}"
+            )
             return
         }
 
@@ -418,6 +460,10 @@ class TunnelClient(
         }
 
         Log.i(TAG, "Rotation: new active transport, old draining")
+        TunnelDiagnosticsLog.write(
+            "rotation.switched",
+            "oldSession=${oldTransport.sessionDebugId()} newSession=${candidate.sessionDebugId()}"
+        )
 
         try {
             delay(DEFAULT_DRAIN_TIMEOUT_MS)
@@ -454,6 +500,10 @@ class TunnelClient(
     }
 
     private suspend fun closeTransport(transport: FrameSender) {
+        TunnelDiagnosticsLog.write(
+            "tunnel.close_transport",
+            "sender=${transport.debugName()}"
+        )
         paddingInjector.clearNegotiation(transport)
         handler.closeSessionsFor(transport)
         forwardRegistry.closeSessionsFor(transport)
@@ -465,5 +515,9 @@ class TunnelClient(
         }
 
         try { transport.close(1000, "done") } catch (_: Exception) {}
+    }
+
+    private fun FrameSender.debugName(): String {
+        return if (this is XhttpTransport) "xhttp:${sessionDebugId()}" else this::class.java.simpleName
     }
 }

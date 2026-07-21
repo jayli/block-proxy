@@ -3,6 +3,7 @@ package com.blockproxy.android.tunnel
 import android.util.Log
 import com.blockproxy.android.config.ServerConfig
 import com.blockproxy.android.config.TunnelCredentials
+import com.blockproxy.android.diagnostics.TunnelDiagnosticsLog
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -47,8 +48,13 @@ class XhttpSession(
 
         // 2. POST /xhttp/create
         Log.i(TAG, "Creating xhttp session at $baseUrl/create")
+        TunnelDiagnosticsLog.write(
+            "xhttp.create.start",
+            "host=${config.serverHost} port=${config.serverPort} path=${config.xhttpBasePath}"
+        )
         val sessionId = createSession(baseUrl, authFrame)
         Log.i(TAG, "Session created: $sessionId")
+        TunnelDiagnosticsLog.write("xhttp.create.success", "session=${sessionId.take(8)}")
 
         // 3. 创建 XhttpTransport（传入 token，内部启动 SSE）
         val transport = XhttpTransport(
@@ -63,6 +69,7 @@ class XhttpSession(
 
         transport.start()
         if (!transport.awaitOpen(10_000L)) {
+            TunnelDiagnosticsLog.write("xhttp.sse_open_timeout", "session=${sessionId.take(8)} timeoutMs=10000")
             transport.close(1000, "sse-open-timeout")
             throw TunnelProtocolException("SSE stream did not open")
         }
@@ -85,16 +92,25 @@ class XhttpSession(
         val response = try {
             sseHttpClient.newCall(request).execute()
         } catch (e: IOException) {
+            TunnelDiagnosticsLog.write(
+                "xhttp.create.io_error",
+                "type=${e::class.java.simpleName} message=${e.message ?: ""}"
+            )
             throw TunnelProtocolException("Failed to create session: ${e.message}")
         }
 
         response.use { resp ->
             if (resp.code == 401) {
+                TunnelDiagnosticsLog.write("xhttp.create.auth_failed", "code=401")
                 throw TunnelAuthFailedException("Authentication failed")
             }
 
             if (!resp.isSuccessful) {
                 val body = resp.body?.string() ?: ""
+                TunnelDiagnosticsLog.write(
+                    "xhttp.create.http_failed",
+                    "code=${resp.code} server=${resp.header("server") ?: ""} cfRay=${resp.header("cf-ray") ?: ""} location=${resp.header("location") ?: ""}"
+                )
                 Log.w(
                     TAG,
                     "Create session failed: HTTP ${resp.code}, server=${resp.header("server")}, cf-ray=${resp.header("cf-ray")}, location=${resp.header("location")}, body=$body"
@@ -103,12 +119,19 @@ class XhttpSession(
             }
 
             val body = resp.body?.string()
-                ?: throw TunnelProtocolException("Empty response body")
+                ?: run {
+                    TunnelDiagnosticsLog.write("xhttp.create.empty_body")
+                    throw TunnelProtocolException("Empty response body")
+                }
 
             return try {
                 val json = JSONObject(body)
                 json.getString("sessionId")
             } catch (e: Exception) {
+                TunnelDiagnosticsLog.write(
+                    "xhttp.create.parse_failed",
+                    "type=${e::class.java.simpleName} message=${e.message ?: ""}"
+                )
                 throw TunnelProtocolException("Failed to parse session response: ${e.message}")
             }
         }

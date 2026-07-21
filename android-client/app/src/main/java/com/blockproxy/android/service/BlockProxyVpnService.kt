@@ -27,6 +27,7 @@ import com.blockproxy.android.config.RoutingConfigRepository
 import com.blockproxy.android.config.DataStoreRoutingConfigDataSource
 import com.blockproxy.android.config.ServerConfig
 import com.blockproxy.android.config.TunnelCredentials
+import com.blockproxy.android.diagnostics.TunnelDiagnosticsLog
 import com.blockproxy.android.routing.GeositeLoader
 import com.blockproxy.android.routing.GeositeMatcher
 import com.blockproxy.android.routing.RoutingEngine
@@ -48,6 +49,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Android VpnService that maintains the tunnel connection lifecycle.
@@ -104,6 +106,8 @@ class BlockProxyVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tunnelClient: TunnelClient? = null
     private var localSocksServer: LocalSocksServer? = null
+    private val protectFalseCount = AtomicLong(0)
+    @Volatile private var lastProtectFalseLogAt = 0L
     @Volatile
     private var cfIpPool: CfIpPool? = null
 
@@ -143,16 +147,22 @@ class BlockProxyVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand: action=${intent?.action}, flags=$flags, startId=$startId")
+        TunnelDiagnosticsLog.write(
+            "service.on_start_command",
+            "action=${intent?.action ?: ""} flags=$flags startId=$startId"
+        )
 
         // Guard against double-start while tunnel is already running
         if (intent?.action != ACTION_STOP && tunnelClient != null) {
             Log.w(TAG, "Tunnel already running, ignoring start command")
+            TunnelDiagnosticsLog.write("service.start_ignored", "reason=tunnel_already_running")
             return START_STICKY
         }
 
         // Handle stop action
         if (intent?.action == ACTION_STOP) {
             Log.i(TAG, "Received ACTION_STOP, stopping service")
+            TunnelDiagnosticsLog.write("service.action_stop")
             WorkManager.getInstance(applicationContext)
                 .cancelUniqueWork(TunnelWatchdogWorker.WORK_NAME)
 
@@ -248,6 +258,7 @@ class BlockProxyVpnService : VpnService() {
 
     override fun onDestroy() {
         isRunning = false
+        TunnelDiagnosticsLog.write("service.on_destroy")
 
         // Cancel the service scope
         serviceScope?.cancel()
@@ -318,6 +329,7 @@ class BlockProxyVpnService : VpnService() {
         }
 
         if (config == null) {
+            TunnelDiagnosticsLog.write("service.config_missing")
             enterErrorAndStop("缺少服务器配置")
             return
         }
@@ -329,9 +341,14 @@ class BlockProxyVpnService : VpnService() {
         }
 
         if (credentials == null) {
+            TunnelDiagnosticsLog.write("service.credentials_missing")
             enterErrorAndStop("缺少认证凭据")
             return
         }
+        TunnelDiagnosticsLog.write(
+            "service.setup_tunnel",
+            "host=${config.serverHost} port=${config.serverPort} tls=${config.useTls} cfCdn=${config.cfCdnEnabled}"
+        )
 
         // Load routing config and create routing components
         val routingConfig: RoutingConfig = try {
@@ -350,12 +367,21 @@ class BlockProxyVpnService : VpnService() {
         val protectCallback: (Socket) -> Boolean = { socket ->
             val ok = protect(socket)
             Log.i(TAG, "VpnService.protect(${socket.hashCode()}) = $ok")
+            if (!ok) {
+                val count = protectFalseCount.incrementAndGet()
+                val now = System.currentTimeMillis()
+                if (count == 1L || now - lastProtectFalseLogAt >= 60_000L) {
+                    lastProtectFalseLogAt = now
+                    TunnelDiagnosticsLog.write("vpn.protect_false", "count=$count")
+                }
+            }
             ok
         }
         // Establish VPN interface with routes and DNS
         val vpnResult = establishVpnInterface()
         if (vpnResult == null) {
             // User denied VPN permission or establish() failed
+            TunnelDiagnosticsLog.write("vpn.establish_failed")
             releaseWakeLock()
             statusStore.update(TunnelStatus.Error)
             updateNotification(TunnelStatus.Error)
@@ -364,6 +390,10 @@ class BlockProxyVpnService : VpnService() {
         }
         val pfd = vpnResult.descriptor
         vpnInterface = pfd
+        TunnelDiagnosticsLog.write(
+            "vpn.established",
+            "appExclusionSucceeded=${vpnResult.appExclusionSucceeded}"
+        )
 
         val targetSocketFactory = RealTargetSocketFactory(protect = protectCallback)
 
@@ -422,11 +452,16 @@ class BlockProxyVpnService : VpnService() {
             socksServer.start()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start local SOCKS server", e)
+            TunnelDiagnosticsLog.write(
+                "socks.start_failed",
+                "type=${e::class.java.simpleName} message=${e.message ?: ""}"
+            )
             enterErrorAndStop("SOCKS 服务器启动失败")
             return
         }
         localSocksServer = socksServer
         Log.i(TAG, "Local SOCKS server listening on 127.0.0.1:$socksPort")
+        TunnelDiagnosticsLog.write("socks.started", "port=$socksPort")
 
         // Start tun2socks — bridges TUN fd to local SOCKS5 server.
         // The TUN fd ownership is transferred to the native library via detachFd().
@@ -434,6 +469,7 @@ class BlockProxyVpnService : VpnService() {
         val tunStarted = Tun2Socks.start(pfd, "127.0.0.1", socksPort)
         if (!tunStarted) {
             Log.e(TAG, "Failed to start tun2socks")
+            TunnelDiagnosticsLog.write("tun2socks.start_failed")
             socksServer.stop()
             localSocksServer = null
             enterErrorAndStop("tun2socks 启动失败")
@@ -441,10 +477,12 @@ class BlockProxyVpnService : VpnService() {
         }
         vpnFdDetached = true  // fd ownership transferred to native code
         Log.i(TAG, "tun2socks bridging TUN → 127.0.0.1:$socksPort")
+        TunnelDiagnosticsLog.write("tun2socks.started", "socksPort=$socksPort")
 
         // Observe client status and update notification
         scope.launch {
             client.status.collect { status ->
+                TunnelDiagnosticsLog.write("tunnel.status", "value=$status")
                 statusStore.update(status)
                 updateNotification(status)
             }
@@ -499,6 +537,10 @@ class BlockProxyVpnService : VpnService() {
                 true
             } catch (e: Exception) {
                 Log.e(TAG, "addDisallowedApplication failed; relying on per-socket protect()", e)
+                TunnelDiagnosticsLog.write(
+                    "vpn.app_exclusion_failed",
+                    "type=${e::class.java.simpleName} message=${e.message ?: ""}"
+                )
                 false
             }
 
@@ -511,6 +553,7 @@ class BlockProxyVpnService : VpnService() {
     }
 
     private fun enterErrorAndStop(reason: String) {
+        TunnelDiagnosticsLog.write("service.error_stop", "reason=$reason")
         statusStore.update(TunnelStatus.Error)
         updateNotification(TunnelStatus.Error)
         releaseWakeLock()

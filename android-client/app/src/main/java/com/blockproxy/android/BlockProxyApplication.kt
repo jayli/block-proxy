@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import android.os.Process
 import android.util.Log
+import com.blockproxy.android.diagnostics.TunnelDiagnosticsLog
 import java.io.PrintWriter
 import java.io.StringWriter
 import kotlin.system.exitProcess
@@ -17,6 +18,7 @@ class BlockProxyApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        TunnelDiagnosticsLog.initialize(this)
 
         // 保存默认的异常处理器
         defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
@@ -24,6 +26,10 @@ class BlockProxyApplication : Application() {
         // 设置全局异常处理器
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             Log.e(TAG, "Uncaught exception in thread ${thread.name}", throwable)
+            TunnelDiagnosticsLog.write(
+                "app.uncaught_exception",
+                "thread=${thread.name} type=${throwable::class.java.name} message=${throwable.message ?: ""}"
+            )
 
             try {
                 // 构建堆栈信息字符串
