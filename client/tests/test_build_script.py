@@ -6,6 +6,7 @@ def test_build_includes_config_window_runtime_dependencies():
 
     assert "--include-data-files=config_window.py=config_window.py" in build_script
     assert "--include-data-files=autostart.py=autostart.py" in build_script
+    assert "--include-data-files=doh_resolver.py=doh_resolver.py" in build_script
 
 
 def test_build_includes_all_subprocess_windows():
@@ -17,3 +18,10 @@ def test_build_includes_all_subprocess_windows():
         "routing_window.py",
     ]:
         assert f"--include-data-files={window_script}={window_script}" in build_script
+
+
+def test_build_reuses_existing_icns_unless_missing():
+    build_script = Path(__file__).parents[1].joinpath("build.sh").read_text()
+
+    assert 'if [ ! -f "$SCRIPT_DIR/icons/app.icns" ]; then' in build_script
+    assert "app.icns exists, reusing" in build_script

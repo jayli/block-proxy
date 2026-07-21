@@ -9,6 +9,7 @@ import random
 import types
 import time
 from logger import crash_logger
+from doh_resolver import resolve_node_address
 
 try:
     import aiohttp
@@ -512,13 +513,19 @@ class TunnelClient:
         if self._tunnel_cfg.get('http_disguise', False):
             await self._perform_http_disguise(addr, port)
 
-        ws_url = f'wss://{addr}:{port}{ws_path}'
+        resolved = await resolve_node_address(addr)
+        connect_addr = self._url_host(resolved.connect_host)
+        ws_url = f'wss://{connect_addr}:{port}{ws_path}'
         headers = self._tunnel_cfg.get('headers') or None
+        if resolved.server_hostname:
+            headers = self._headers_with_host(headers, f'{resolved.server_hostname}:{port}')
         connect_kwargs = {
             'ssl': self._ssl_ctx,
             'ping_interval': None,
             'ping_timeout': None,
         }
+        if resolved.server_hostname:
+            connect_kwargs['server_hostname'] = resolved.server_hostname
         if headers:
             connect_kwargs['additional_headers'] = headers
 
@@ -553,14 +560,49 @@ class TunnelClient:
             raise RuntimeError('aiohttp dependency is not installed')
 
         connector = aiohttp.TCPConnector(ssl=self._ssl_ctx) if aiohttp.TCPConnector else None
-        base = f'https://{addr}:{port}'
+        resolved = await resolve_node_address(addr)
+        connect_addr = self._url_host(resolved.connect_host)
+        base = f'https://{connect_addr}:{port}'
+        headers = None
+        request_kwargs = {}
+        if resolved.server_hostname:
+            headers = {'Host': f'{resolved.server_hostname}:{port}'}
+            request_kwargs['server_hostname'] = resolved.server_hostname
         async with aiohttp.ClientSession(connector=connector, trust_env=False) as session:
-            async with session.get(f'{base}/'):
+            if headers:
+                request_kwargs['headers'] = headers
+            async with session.get(f'{base}/', **request_kwargs):
                 pass
             await asyncio.sleep(random.uniform(0.5, 2.0))
-            async with session.get(f'{base}/favicon.ico'):
+            async with session.get(f'{base}/favicon.ico', **request_kwargs):
                 pass
             await asyncio.sleep(random.uniform(0.5, 2.0))
+
+    @staticmethod
+    def _headers_with_host(headers, host_header):
+        if headers is None:
+            return {'Host': host_header}
+        if isinstance(headers, dict):
+            next_headers = dict(headers)
+            next_headers['Host'] = host_header
+            return next_headers
+        next_headers = list(headers)
+        next_headers = [
+            item for item in next_headers
+            if not (isinstance(item, tuple) and len(item) >= 1 and str(item[0]).lower() == 'host')
+        ]
+        next_headers.append(('Host', host_header))
+        return next_headers
+
+    @staticmethod
+    def _url_host(host):
+        try:
+            parsed = ipaddress.ip_address(host)
+        except ValueError:
+            return host
+        if isinstance(parsed, ipaddress.IPv6Address):
+            return f'[{host}]'
+        return host
 
     def _ws_is_open(self, ws):
         if ws is None:

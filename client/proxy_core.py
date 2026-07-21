@@ -9,6 +9,7 @@ import threading
 logger = logging.getLogger("proxy_core")
 
 from logger import access_logger, crash_logger
+from doh_resolver import resolve_node_address
 from traffic_stats import add_bytes, flush as flush_stats, init_writer
 
 
@@ -105,11 +106,14 @@ async def connect_upstream_socks5(server_config, dest_addr, dest_port, ssl_ctx=N
     username = server_config["username"]
     password = server_config["password"]
     use_tls = server_config["tls"]
+    resolved = await resolve_node_address(host)
+    connect_host = resolved.connect_host
+    server_hostname = resolved.server_hostname or host
 
     reader, writer = await asyncio.wait_for(
         asyncio.open_connection(
-            host, port, ssl=ssl_ctx if use_tls else None,
-            server_hostname=host if use_tls else None,
+            connect_host, port, ssl=ssl_ctx if use_tls else None,
+            server_hostname=server_hostname if use_tls else None,
         ),
         timeout=CONNECT_TIMEOUT,
     )
@@ -188,11 +192,14 @@ async def connect_upstream_http(server_config, dest_addr, dest_port, ssl_ctx=Non
     username = server_config["username"]
     password = server_config["password"]
     use_tls = server_config["tls"]
+    resolved = await resolve_node_address(host)
+    connect_host = resolved.connect_host
+    server_hostname = resolved.server_hostname or host
 
     reader, writer = await asyncio.wait_for(
         asyncio.open_connection(
-            host, port, ssl=ssl_ctx if use_tls else None,
-            server_hostname=host if use_tls else None,
+            connect_host, port, ssl=ssl_ctx if use_tls else None,
+            server_hostname=server_hostname if use_tls else None,
         ),
         timeout=CONNECT_TIMEOUT,
     )
@@ -239,11 +246,14 @@ async def connect_upstream_udp_associate(server_config, ssl_ctx=None):
     username = server_config["username"]
     password = server_config["password"]
     use_tls = server_config["tls"]
+    resolved = await resolve_node_address(host)
+    connect_host = resolved.connect_host
+    server_hostname = resolved.server_hostname or host
 
     reader, writer = await asyncio.wait_for(
         asyncio.open_connection(
-            host, port, ssl=ssl_ctx if use_tls else None,
-            server_hostname=host if use_tls else None,
+            connect_host, port, ssl=ssl_ctx if use_tls else None,
+            server_hostname=server_hostname if use_tls else None,
         ),
         timeout=CONNECT_TIMEOUT,
     )
@@ -467,6 +477,9 @@ class ProxyCore:
 
         addr = self._server_config["address"]
         port = self._server_config["port"]
+        resolved = await resolve_node_address(addr)
+        connect_addr = resolved.connect_host
+        server_hostname = resolved.server_hostname or addr
 
         start = time.monotonic()
         reader = None
@@ -474,9 +487,9 @@ class ProxyCore:
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(
-                    addr, port,
+                    connect_addr, port,
                     ssl=self._ssl_ctx if self._server_config["tls"] else None,
-                    server_hostname=addr if self._server_config["tls"] else None,
+                    server_hostname=server_hostname if self._server_config["tls"] else None,
                 ),
                 timeout=5,
             )

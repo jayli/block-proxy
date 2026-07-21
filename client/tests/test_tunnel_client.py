@@ -198,6 +198,81 @@ class TestTunnelClientLifecycle:
         assert frame['username'] == 'u'
         assert frame['password'] == 'p'
 
+    def test_establish_connection_uses_doh_ip_but_preserves_tls_hostname_and_host_header(self, monkeypatch):
+        connect_calls = []
+
+        class FakeWs:
+            async def send(self, data):
+                pass
+
+            async def recv(self):
+                return encode_frame(FRAME_AUTH_OK)
+
+        async def fake_connect(url, **kwargs):
+            connect_calls.append((url, kwargs))
+            return FakeWs()
+
+        class FakeResolved:
+            connect_host = '198.51.100.7'
+            server_hostname = 'buffer.fun'
+            is_resolved = True
+
+        async def fake_resolve(host):
+            assert host == 'buffer.fun'
+            return FakeResolved()
+
+        monkeypatch.setattr('tunnel_client.websockets.connect', fake_connect)
+        monkeypatch.setattr('tunnel_client.resolve_node_address', fake_resolve)
+
+        cfg = {
+            'server': {'address': 'buffer.fun', 'username': 'u', 'password': 'p', 'allowInsecure': False},
+            'tunnel': {'server_address': 'buffer.fun', 'server_port': 8003},
+        }
+        tc = TunnelClient(cfg, lambda status, detail='': None)
+        tc._ssl_ctx = object()
+
+        asyncio.run(tc._establish_connection('buffer.fun', 8003, {'username': 'u', 'password': 'p'}))
+
+        url, kwargs = connect_calls[0]
+        assert url == 'wss://198.51.100.7:8003/websocket'
+        assert kwargs['server_hostname'] == 'buffer.fun'
+        assert kwargs['additional_headers']['Host'] == 'buffer.fun:8003'
+
+    def test_establish_connection_wraps_resolved_ipv6_in_ws_url(self, monkeypatch):
+        urls = []
+
+        class FakeWs:
+            async def send(self, data):
+                pass
+
+            async def recv(self):
+                return encode_frame(FRAME_AUTH_OK)
+
+        async def fake_connect(url, **kwargs):
+            urls.append(url)
+            return FakeWs()
+
+        class FakeResolved:
+            connect_host = '2001:db8::7'
+            server_hostname = 'buffer.fun'
+            is_resolved = True
+
+        async def fake_resolve(host):
+            return FakeResolved()
+
+        monkeypatch.setattr('tunnel_client.websockets.connect', fake_connect)
+        monkeypatch.setattr('tunnel_client.resolve_node_address', fake_resolve)
+
+        cfg = {
+            'server': {'address': 'buffer.fun', 'username': 'u', 'password': 'p', 'allowInsecure': True},
+            'tunnel': {'server_address': 'buffer.fun', 'server_port': 8003},
+        }
+        tc = TunnelClient(cfg, lambda status, detail='': None)
+
+        asyncio.run(tc._establish_connection('buffer.fun', 8003, {'username': 'u', 'password': 'p'}))
+
+        assert urls[0] == 'wss://[2001:db8::7]:8003/websocket'
+
     def test_http_disguise_fetches_root_and_favicon_before_ws(self, monkeypatch):
         events = []
 

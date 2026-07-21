@@ -35,21 +35,25 @@ fi
 echo "==> Generating geodata_tags.json..."
 $PYTHON "$SCRIPT_DIR/scripts/gen_geodata_tags.py"
 
-echo "==> Generating app.icns from app_icon.png..."
-ICONSET=$(mktemp -d)/app.iconset
-mkdir -p "$ICONSET"
-sips -z 16 16 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_16x16.png" &>/dev/null
-sips -z 32 32 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_16x16@2x.png" &>/dev/null
-sips -z 32 32 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_32x32.png" &>/dev/null
-sips -z 64 64 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_32x32@2x.png" &>/dev/null
-sips -z 128 128 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_128x128.png" &>/dev/null
-sips -z 256 256 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_128x128@2x.png" &>/dev/null
-sips -z 256 256 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_256x256.png" &>/dev/null
-sips -z 512 512 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_256x256@2x.png" &>/dev/null
-sips -z 512 512 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_512x512.png" &>/dev/null
-sips -z 1024 1024 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_512x512@2x.png" &>/dev/null
-iconutil -c icns "$ICONSET" -o "$SCRIPT_DIR/icons/app.icns"
-rm -rf "$(dirname "$ICONSET")"
+if [ ! -f "$SCRIPT_DIR/icons/app.icns" ]; then
+    echo "==> Generating app.icns from app_icon.png..."
+    ICONSET=$(mktemp -d)/app.iconset
+    mkdir -p "$ICONSET"
+    sips -z 16 16 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_16x16.png" &>/dev/null
+    sips -z 32 32 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_16x16@2x.png" &>/dev/null
+    sips -z 32 32 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_32x32.png" &>/dev/null
+    sips -z 64 64 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_32x32@2x.png" &>/dev/null
+    sips -z 128 128 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_128x128.png" &>/dev/null
+    sips -z 256 256 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_128x128@2x.png" &>/dev/null
+    sips -z 256 256 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_256x256.png" &>/dev/null
+    sips -z 512 512 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_256x256@2x.png" &>/dev/null
+    sips -z 512 512 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_512x512.png" &>/dev/null
+    sips -z 1024 1024 "$SCRIPT_DIR/icons/app_icon.png" --out "$ICONSET/icon_512x512@2x.png" &>/dev/null
+    iconutil -c icns "$ICONSET" -o "$SCRIPT_DIR/icons/app.icns"
+    rm -rf "$(dirname "$ICONSET")"
+else
+    echo "==> app.icns exists, reusing (delete icons/app.icns to regenerate)"
+fi
 
 echo "==> Building with Nuitka..."
 cd "$SCRIPT_DIR"
@@ -64,6 +68,7 @@ $PYTHON -m nuitka \
     --include-data-files=autostart.py=autostart.py \
     --include-data-files=config.py=config.py \
     --include-data-files=config_window.py=config_window.py \
+    --include-data-files=doh_resolver.py=doh_resolver.py \
     --include-data-files=geodata_loader.py=geodata_loader.py \
     --include-data-files=logger.py=logger.py \
     --include-data-files=log_window.py=log_window.py \
