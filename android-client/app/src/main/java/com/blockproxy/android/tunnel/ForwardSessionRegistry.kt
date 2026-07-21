@@ -1,5 +1,6 @@
 package com.blockproxy.android.tunnel
 
+import android.util.Log
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
@@ -42,6 +43,7 @@ class ForwardSessionRegistry(
     private val paddingInjector: PaddingInjector? = null,
 ) {
     companion object {
+        private const val TAG = "ForwardSessionRegistry"
         /** First reqid in the forward range. */
         const val FORWARD_REQID_MIN = 0x8000
         /** Last reqid in the forward range. */
@@ -97,11 +99,18 @@ class ForwardSessionRegistry(
 
         // Send CONNECT frame
         try {
-            sender.sendFrame(
+            val sent = sender.sendFrame(
                 FrameCodec.encode(Frame.Connect(reqid, hostToAddress(host), port))
             )
+            Log.i(TAG, "Forward CONNECT sent reqid=$reqid target=$host:$port sent=$sent")
+            if (!sent) {
+                sessions.remove(reqid, session)
+                session.close()
+                throw IOException("Forward CONNECT send returned false for reqid $reqid target=$host:$port")
+            }
         } catch (e: Exception) {
             sessions.remove(reqid, session)
+            Log.w(TAG, "Forward CONNECT send failed reqid=$reqid target=$host:$port: ${e.message}")
             throw e
         }
 
@@ -113,6 +122,7 @@ class ForwardSessionRegistry(
         } catch (_: TimeoutCancellationException) {
             sessions.remove(reqid, session)
             session.close()
+            Log.w(TAG, "Forward CONNECT timeout reqid=$reqid target=$host:$port")
             throw IOException("Forward CONNECT timed out after ${connectTimeoutMs}ms")
         } catch (e: kotlinx.coroutines.CancellationException) {
             sessions.remove(reqid, session)
@@ -138,10 +148,12 @@ class ForwardSessionRegistry(
         when (frame) {
             is Frame.ConnectOk -> {
                 val session = sessions[frame.reqid] ?: return
+                Log.i(TAG, "Forward CONNECT OK reqid=${frame.reqid} target=${session.host}:${session.port}")
                 session.openResult.complete(Unit)
             }
             is Frame.ConnectFailed -> {
                 val session = sessions.remove(frame.reqid) ?: return
+                Log.w(TAG, "Forward CONNECT FAILED reqid=${frame.reqid} target=${session.host}:${session.port}")
                 session.openResult.completeExceptionally(
                     IOException("Forward CONNECT failed for reqid ${frame.reqid}")
                 )

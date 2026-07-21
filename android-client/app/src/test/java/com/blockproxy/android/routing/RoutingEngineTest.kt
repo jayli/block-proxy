@@ -108,6 +108,19 @@ class RoutingEngineTest {
     }
 
     @Test
+    fun `alibaba-inc domains are always direct even when proxy rules match`() {
+        val matcher = matcherWith("cn" to rules(DomainType.DOMAIN to "alibaba-inc.com"))
+        val config = RoutingConfig(
+            enabled = true,
+            proxyRules = listOf("geosite:cn", "domain:alibaba-inc.com"),
+        )
+        val engine = RoutingEngine(config, matcher)
+
+        assertEquals(RouteDecision.DIRECT, engine.resolve("alibaba-inc.com", "alibaba-inc.com"))
+        assertEquals(RouteDecision.DIRECT, engine.resolve("admin-alilang.alibaba-inc.com", "admin-alilang.alibaba-inc.com"))
+    }
+
+    @Test
     fun `geosite rule no match falls back`() {
         val matcher = matcherWith("cn" to rules(DomainType.DOMAIN to "baidu.com"))
         val config = RoutingConfig(

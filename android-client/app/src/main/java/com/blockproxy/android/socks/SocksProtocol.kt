@@ -37,6 +37,8 @@ enum class DomainSource {
     SOCKS5_DOMAIN,
     /** Domain was resolved via IP-to-domain mapping store (fake DNS). */
     DOMAIN_MAPPING,
+    /** Domain was recovered from the first TCP payload (HTTP Host or TLS SNI). */
+    FIRST_PAYLOAD,
     /** No domain available, only raw IP. */
     NONE,
 }

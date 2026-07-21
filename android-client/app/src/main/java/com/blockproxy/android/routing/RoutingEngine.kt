@@ -23,6 +23,7 @@ class RoutingEngine(
         if (!config.enabled) return RouteDecision.DIRECT
 
         val matchTarget = domain ?: targetHost
+        if (isHardDirectDomain(matchTarget)) return RouteDecision.DIRECT
 
         // 2. Check direct rules first (higher priority)
         for (rule in config.directRules) {
@@ -70,4 +71,7 @@ class RoutingEngine(
         val lowerHost = host.lowercase()
         return lowerHost == lowerPattern || lowerHost.endsWith(".$lowerPattern")
     }
+
+    private fun isHardDirectDomain(host: String): Boolean =
+        matchDomain("alibaba-inc.com", host)
 }

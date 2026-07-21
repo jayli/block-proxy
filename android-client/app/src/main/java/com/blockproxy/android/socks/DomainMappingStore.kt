@@ -38,6 +38,7 @@ class DomainMappingStore {
  * **Critical**: When [source] is [DomainSource.DOMAIN_MAPPING], [connectHost] is the
  * mapped domain, NOT the fake IP. This prevents forwarding fake IPs to direct sockets
  * or the Forward CONNECT tunnel.
+ * The same connect-host rule applies to domains recovered from first payload sniffing.
  */
 data class ResolvedEndpoint(
     val originalHost: String,

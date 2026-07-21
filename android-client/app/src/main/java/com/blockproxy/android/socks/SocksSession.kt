@@ -37,6 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * @param routingEngine    Engine for routing decisions (DIRECT vs PROXY)
  * @param directConnector  Factory for protected direct TCP connections
  * @param forwardConnector Factory for tunnel forward sessions
+ * @param trafficSniffer   Recovers domain names from first TCP payload for IP-only requests
  * @param scope            Coroutine scope for relay jobs
  */
 class SocksSession(
@@ -45,6 +46,7 @@ class SocksSession(
     private val routingEngine: RoutingEngine,
     private val directConnector: DirectConnector,
     private val forwardConnector: ForwardConnector,
+    private val trafficSniffer: TrafficSniffer = TrafficSniffer(),
     private val scope: CoroutineScope,
 ) {
     companion object {
@@ -93,14 +95,17 @@ class SocksSession(
             when (request) {
                 is SocksRequest.Connect -> handleConnect(request, clientIn, clientOut)
                 is SocksRequest.UnsupportedCommand -> {
+                    android.util.Log.w("SocksSession", "Unsupported SOCKS command=${request.command}")
                     clientOut.write(SocksProtocol.buildResponse(SocksReply.COMMAND_NOT_SUPPORTED))
                     clientOut.flush()
                 }
                 is SocksRequest.UnsupportedAddressType -> {
+                    android.util.Log.w("SocksSession", "Unsupported SOCKS address type")
                     clientOut.write(SocksProtocol.buildResponse(SocksReply.ADDRESS_TYPE_NOT_SUPPORTED))
                     clientOut.flush()
                 }
                 is SocksRequest.Malformed -> {
+                    android.util.Log.w("SocksSession", "Malformed SOCKS request")
                     clientOut.write(SocksProtocol.buildResponse(SocksReply.GENERAL_FAILURE))
                     clientOut.flush()
                 }
@@ -148,37 +153,78 @@ class SocksSession(
         clientOut: OutputStream,
     ) {
         // Resolve endpoint (handles fake IP → domain mapping)
-        val endpoint = ResolvedEndpoint.resolve(request, domainMappingStore)
+        var endpoint = ResolvedEndpoint.resolve(request, domainMappingStore)
+        var bufferedBytes = ByteArray(0)
+        var socksSuccessSent = false
+
+        if (shouldSniff(endpoint)) {
+            clientOut.write(SocksProtocol.buildResponse(SocksReply.SUCCESS))
+            clientOut.flush()
+            socksSuccessSent = true
+
+            val oldTimeout = clientSocket.soTimeout
+            try {
+                clientSocket.soTimeout = trafficSniffer.timeoutMs()
+                val sniffResult = trafficSniffer.sniff(endpoint, clientIn)
+                bufferedBytes = sniffResult.bufferedBytes
+                if (sniffResult.domain != null) {
+                    endpoint = endpoint.copy(
+                        connectHost = sniffResult.domain,
+                        domain = sniffResult.domain,
+                        source = DomainSource.FIRST_PAYLOAD,
+                    )
+                }
+            } finally {
+                clientSocket.soTimeout = oldTimeout
+            }
+        }
 
         // Make routing decision using connectHost and domain
         val decision = routingEngine.resolve(endpoint.connectHost, endpoint.domain)
+        android.util.Log.i(
+            "SocksSession",
+            "ROUTE original=${endpoint.originalHost}:${endpoint.port} domain=${endpoint.domain} " +
+                "source=${endpoint.source} decision=$decision",
+        )
 
         when (decision) {
-            RouteDecision.DIRECT -> handleDirect(endpoint, clientIn, clientOut)
-            RouteDecision.PROXY -> handleProxy(endpoint, clientIn, clientOut)
+            RouteDecision.DIRECT -> handleDirect(endpoint, clientIn, clientOut, bufferedBytes, socksSuccessSent)
+            RouteDecision.PROXY -> handleProxy(endpoint, clientIn, clientOut, bufferedBytes, socksSuccessSent)
         }
     }
+
+    private fun shouldSniff(endpoint: ResolvedEndpoint): Boolean =
+        endpoint.source == DomainSource.NONE && endpoint.domain == null && (endpoint.port == 80 || endpoint.port == 443)
 
     private suspend fun handleDirect(
         endpoint: ResolvedEndpoint,
         clientIn: InputStream,
         clientOut: OutputStream,
+        bufferedBytes: ByteArray = ByteArray(0),
+        socksSuccessSent: Boolean = false,
     ) {
         val socket = try {
             directConnector.connect(endpoint.connectHost, endpoint.port)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
-            clientOut.write(SocksProtocol.buildResponse(SocksReply.HOST_UNREACHABLE))
-            clientOut.flush()
+            if (!socksSuccessSent) {
+                clientOut.write(SocksProtocol.buildResponse(SocksReply.HOST_UNREACHABLE))
+                clientOut.flush()
+            }
             return
         }
 
         targetSocket = socket
         try {
-            // Send success response before starting relay
-            clientOut.write(SocksProtocol.buildResponse(SocksReply.SUCCESS))
-            clientOut.flush()
+            if (!socksSuccessSent) {
+                clientOut.write(SocksProtocol.buildResponse(SocksReply.SUCCESS))
+                clientOut.flush()
+            }
+            if (bufferedBytes.isNotEmpty()) {
+                socket.getOutputStream().write(bufferedBytes)
+                socket.getOutputStream().flush()
+            }
 
             // Bidirectional relay: client ↔ target socket
             relaySockets(clientIn, clientOut, socket)
@@ -191,6 +237,8 @@ class SocksSession(
         endpoint: ResolvedEndpoint,
         clientIn: InputStream,
         clientOut: OutputStream,
+        bufferedBytes: ByteArray = ByteArray(0),
+        socksSuccessSent: Boolean = false,
     ) {
         android.util.Log.i("SocksSession", "PROXY → ${endpoint.connectHost}:${endpoint.port} (domain=${endpoint.domain})")
         val session = try {
@@ -199,16 +247,22 @@ class SocksSession(
             throw e
         } catch (e: Exception) {
             android.util.Log.e("SocksSession", "Forward CONNECT failed: ${endpoint.connectHost}:${endpoint.port}", e)
-            clientOut.write(SocksProtocol.buildResponse(SocksReply.GENERAL_FAILURE))
-            clientOut.flush()
+            if (!socksSuccessSent) {
+                clientOut.write(SocksProtocol.buildResponse(SocksReply.GENERAL_FAILURE))
+                clientOut.flush()
+            }
             return
         }
 
         forwardSession = session
         try {
-            // Send success response before starting relay
-            clientOut.write(SocksProtocol.buildResponse(SocksReply.SUCCESS))
-            clientOut.flush()
+            if (!socksSuccessSent) {
+                clientOut.write(SocksProtocol.buildResponse(SocksReply.SUCCESS))
+                clientOut.flush()
+            }
+            if (bufferedBytes.isNotEmpty()) {
+                session.sendData(bufferedBytes)
+            }
 
             // Bidirectional relay: client ↔ forward session
             relayTunnel(clientIn, clientOut, session)

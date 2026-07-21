@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * @param routingEngine      Engine for routing decisions
  * @param directConnector    Factory for protected direct TCP connections
  * @param forwardConnector   Factory for tunnel forward sessions
+ * @param trafficSniffer     Recovers domain names from first TCP payload for IP-only requests
  * @param scope              Coroutine scope for the server and session jobs
  */
 class LocalSocksServer(
@@ -43,6 +44,7 @@ class LocalSocksServer(
     private val routingEngine: RoutingEngine,
     private val directConnector: DirectConnector,
     private val forwardConnector: ForwardConnector,
+    private val trafficSniffer: TrafficSniffer = TrafficSniffer(),
     private val scope: CoroutineScope,
 ) {
     private val started = AtomicBoolean(false)
@@ -135,6 +137,7 @@ class LocalSocksServer(
                     routingEngine = routingEngine,
                     directConnector = directConnector,
                     forwardConnector = forwardConnector,
+                    trafficSniffer = trafficSniffer,
                     scope = scope,
                 )
 

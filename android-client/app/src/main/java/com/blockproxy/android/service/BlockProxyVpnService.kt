@@ -37,6 +37,7 @@ import com.blockproxy.android.socks.TunnelForwardConnector
 import com.blockproxy.android.status.StatusStore
 import com.blockproxy.android.status.TunnelStatus
 import com.blockproxy.android.tun.Tun2Socks
+import com.blockproxy.android.tun.Tun2SocksMapDnsConfig
 import com.blockproxy.android.tunnel.RealTargetSocketFactory
 import com.blockproxy.android.tunnel.TunnelClient
 import kotlinx.coroutines.CoroutineScope
@@ -479,8 +480,7 @@ class BlockProxyVpnService : VpnService() {
             val builder = Builder()
                 .addAddress("10.255.0.2", 32)
                 .addRoute("0.0.0.0", 0)           // Capture all IPv4 traffic
-                // DNS queries use system default (not via VPN) since tun2socks
-                // only handles TCP and UDP DNS would be dropped
+                .addDnsServer(Tun2SocksMapDnsConfig.dnsAddress)
                 .setSession("BlockProxy")
                 .setMtu(1500)
 

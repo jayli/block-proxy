@@ -93,7 +93,16 @@ object Tun2Socks {
         val fd = pfd.detachFd()
         Log.i(TAG, "Starting tun2socks: fd=$fd, socks=$socksHost:$socksPort")
 
-        val ret = nativeStart(fd, socksHost, socksPort)
+        val ret = nativeStart(
+            fd,
+            socksHost,
+            socksPort,
+            Tun2SocksMapDnsConfig.dnsAddress,
+            Tun2SocksMapDnsConfig.dnsPort,
+            Tun2SocksMapDnsConfig.fakeNetwork,
+            Tun2SocksMapDnsConfig.fakeNetmask,
+            Tun2SocksMapDnsConfig.cacheSize,
+        )
         if (ret == 0) {
             isRunning = true
             Log.i(TAG, "tun2socks started successfully")
@@ -164,7 +173,16 @@ object Tun2Socks {
      * @param port SOCKS5 server port
      * @return 0 on success, negative on error
      */
-    private external fun nativeStart(fd: Int, host: String, port: Int): Int
+    private external fun nativeStart(
+        fd: Int,
+        host: String,
+        port: Int,
+        mapDnsAddress: String,
+        mapDnsPort: Int,
+        mapDnsNetwork: String,
+        mapDnsNetmask: String,
+        mapDnsCacheSize: Int,
+    ): Int
 
     /**
      * Signals the native tunnel to stop.

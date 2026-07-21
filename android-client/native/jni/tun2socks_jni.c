@@ -224,7 +224,10 @@ static void *tunnel_thread_func(void *arg) {
 JNIEXPORT jint JNICALL
 Java_com_blockproxy_android_tun_Tun2Socks_nativeStart(
     JNIEnv *env, jclass clazz,
-    jint fd, jstring host, jint port)
+    jint fd, jstring host, jint port,
+    jstring map_dns_address, jint map_dns_port,
+    jstring map_dns_network, jstring map_dns_netmask,
+    jint map_dns_cache_size)
 {
     (void)clazz;
 
@@ -236,6 +239,17 @@ Java_com_blockproxy_android_tun_Tun2Socks_nativeStart(
     const char *socks_host = (*env)->GetStringUTFChars(env, host, NULL);
     if (!socks_host) {
         LOGE("nativeStart: GetStringUTFChars failed");
+        return -1;
+    }
+    const char *dns_address = (*env)->GetStringUTFChars(env, map_dns_address, NULL);
+    const char *dns_network = (*env)->GetStringUTFChars(env, map_dns_network, NULL);
+    const char *dns_netmask = (*env)->GetStringUTFChars(env, map_dns_netmask, NULL);
+    if (!dns_address || !dns_network || !dns_netmask) {
+        LOGE("nativeStart: mapdns GetStringUTFChars failed");
+        if (dns_address) (*env)->ReleaseStringUTFChars(env, map_dns_address, dns_address);
+        if (dns_network) (*env)->ReleaseStringUTFChars(env, map_dns_network, dns_network);
+        if (dns_netmask) (*env)->ReleaseStringUTFChars(env, map_dns_netmask, dns_netmask);
+        (*env)->ReleaseStringUTFChars(env, host, socks_host);
         return -1;
     }
 
@@ -253,15 +267,27 @@ Java_com_blockproxy_android_tun_Tun2Socks_nativeStart(
         "socks5:\n"
         "  address: %s\n"
         "  port: %d\n"
-        "  udp: tcp\n",
-        socks_host, (int)port);
-
-    (*env)->ReleaseStringUTFChars(env, host, socks_host);
+        "  udp: tcp\n"
+        "\n"
+        "mapdns:\n"
+        "  address: %s\n"
+        "  port: %d\n"
+        "  network: %s\n"
+        "  netmask: %s\n"
+        "  cache-size: %d\n",
+        socks_host, (int)port,
+        dns_address, (int)map_dns_port,
+        dns_network, dns_netmask, (int)map_dns_cache_size);
 
     g_tun_fd = (int)fd;
 
     LOGI("Starting tun2socks: tun_fd=%d, socks5=%s:%d", (int)fd, socks_host, (int)port);
     LOGD("Config:\n%s", g_config_buf);
+
+    (*env)->ReleaseStringUTFChars(env, host, socks_host);
+    (*env)->ReleaseStringUTFChars(env, map_dns_address, dns_address);
+    (*env)->ReleaseStringUTFChars(env, map_dns_network, dns_network);
+    (*env)->ReleaseStringUTFChars(env, map_dns_netmask, dns_netmask);
 
     /* Spawn the tunnel thread */
     g_tunnel_running = 1;

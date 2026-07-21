@@ -1,6 +1,8 @@
 package com.blockproxy.android.socks
 
 import com.blockproxy.android.config.RoutingConfig
+import com.blockproxy.android.routing.DomainRule
+import com.blockproxy.android.routing.DomainType
 import com.blockproxy.android.routing.GeositeMatcher
 import com.blockproxy.android.routing.RoutingEngine
 import kotlinx.coroutines.CoroutineScope
@@ -61,6 +63,14 @@ class LocalSocksServerTest {
     private fun engineWith(directRules: List<String> = emptyList(), proxyRules: List<String> = emptyList()): RoutingEngine {
         val config = RoutingConfig(enabled = true, directRules = directRules, proxyRules = proxyRules)
         return RoutingEngine(config, GeositeMatcher(emptyMap()))
+    }
+
+    private fun engineWithGeositeCnProxy(): RoutingEngine {
+        val config = RoutingConfig(enabled = true, directRules = emptyList(), proxyRules = listOf("geosite:cn"))
+        val matcher = GeositeMatcher(
+            mapOf("cn" to listOf(DomainRule(DomainType.DOMAIN, "weibo.cn"))),
+        )
+        return RoutingEngine(config, matcher)
     }
 
     // ── Helper: Create server ──────────────────────────────────────────
@@ -130,6 +140,13 @@ class LocalSocksServerTest {
         out.write(request)
         out.flush()
 
+        return socket
+    }
+
+    private fun socksConnectIPv4ExpectEarlySuccess(server: LocalSocksServer, ip: String, port: Int): Socket {
+        val socket = socksConnectIPv4(server, ip, port)
+        val replyCode = readSocksResponse(socket.getInputStream())
+        assertEquals(0x00.toByte(), replyCode)
         return socket
     }
 
@@ -270,7 +287,7 @@ class LocalSocksServerTest {
         val server = createServer(alwaysDirectEngine())
         server.start()
         try {
-            val socket = socksConnectIPv4(server, "1.2.3.4", 443)
+            val socket = socksConnectIPv4(server, "1.2.3.4", 22)
             val replyCode = readSocksResponse(socket.getInputStream())
             assertEquals(0x00.toByte(), replyCode)
 
@@ -278,7 +295,7 @@ class LocalSocksServerTest {
                 while (directConnector.connectCalls.isEmpty()) delay(10)
             }
             assertEquals("1.2.3.4", directConnector.connectCalls.first().first)
-            assertEquals(443, directConnector.connectCalls.first().second)
+            assertEquals(22, directConnector.connectCalls.first().second)
             socket.close()
         } finally {
             server.stop()
@@ -340,6 +357,64 @@ class LocalSocksServerTest {
             assertEquals(0, directConnector.connectCalls.size)
             assertEquals("proxy.example.com", forwardConnector.openCalls.first().first)
             assertEquals(443, forwardConnector.openCalls.first().second)
+            socket.close()
+        } finally {
+            server.stop()
+        }
+    }
+
+    @Test
+    fun `IP-only HTTP CONNECT uses sniffed Host for proxy routing and replays first bytes`() = runTest {
+        val server = createServer(engineWith(proxyRules = listOf("domain:ip.cn")))
+        server.start()
+        try {
+            val socket = socksConnectIPv4ExpectEarlySuccess(server, "1.2.3.4", 80)
+            val payload = "GET / HTTP/1.1\r\nHost: ip.cn\r\n\r\n".toByteArray()
+            socket.getOutputStream().write(payload)
+            socket.getOutputStream().flush()
+
+            withTimeout(2000) {
+                while (forwardConnector.lastSession == null) delay(10)
+            }
+
+            assertEquals(0, directConnector.connectCalls.size)
+            assertEquals("ip.cn", forwardConnector.openCalls.first().first)
+            assertEquals(80, forwardConnector.openCalls.first().second)
+
+            val session = forwardConnector.lastSession!!
+            withTimeout(2000) {
+                while (session.sentData.isEmpty()) delay(10)
+            }
+            assertArrayEquals(payload, session.sentData.first())
+            socket.close()
+        } finally {
+            server.stop()
+        }
+    }
+
+    @Test
+    fun `IP-only HTTPS CONNECT uses sniffed SNI for geosite proxy routing and replays ClientHello`() = runTest {
+        val server = createServer(engineWithGeositeCnProxy())
+        server.start()
+        try {
+            val socket = socksConnectIPv4ExpectEarlySuccess(server, "1.2.3.4", 443)
+            val payload = tlsClientHello("www.weibo.cn")
+            socket.getOutputStream().write(payload)
+            socket.getOutputStream().flush()
+
+            withTimeout(2000) {
+                while (forwardConnector.lastSession == null) delay(10)
+            }
+
+            assertEquals(0, directConnector.connectCalls.size)
+            assertEquals("www.weibo.cn", forwardConnector.openCalls.first().first)
+            assertEquals(443, forwardConnector.openCalls.first().second)
+
+            val session = forwardConnector.lastSession!!
+            withTimeout(2000) {
+                while (session.sentData.isEmpty()) delay(10)
+            }
+            assertArrayEquals(payload, session.sentData.first())
             socket.close()
         } finally {
             server.stop()
@@ -750,5 +825,55 @@ class LocalSocksServerTest {
         fun deliverToClient(data: ByteArray) {
             inboundData.trySend(data.copyOf())
         }
+    }
+
+    companion object {
+        private fun tlsClientHello(hostname: String): ByteArray {
+            val body = java.io.ByteArrayOutputStream()
+            body.write(byteArrayOf(0x03, 0x03))
+            body.write(ByteArray(32) { 0x11 })
+            body.write(0x00)
+            body.write(byteArrayOf(0x00, 0x02, 0x13, 0x01))
+            body.write(byteArrayOf(0x01, 0x00))
+
+            val hostBytes = hostname.toByteArray(Charsets.US_ASCII)
+            val serverName = java.io.ByteArrayOutputStream()
+            serverName.write(0x00)
+            serverName.write(shortBytes(hostBytes.size))
+            serverName.write(hostBytes)
+
+            val sniData = java.io.ByteArrayOutputStream()
+            sniData.write(shortBytes(serverName.size()))
+            sniData.write(serverName.toByteArray())
+
+            val extensions = java.io.ByteArrayOutputStream()
+            extensions.write(byteArrayOf(0x00, 0x00))
+            extensions.write(shortBytes(sniData.size()))
+            extensions.write(sniData.toByteArray())
+
+            body.write(shortBytes(extensions.size()))
+            body.write(extensions.toByteArray())
+
+            val handshakeBody = body.toByteArray()
+            val handshake = java.io.ByteArrayOutputStream()
+            handshake.write(0x01)
+            handshake.write(byteArrayOf(
+                ((handshakeBody.size shr 16) and 0xFF).toByte(),
+                ((handshakeBody.size shr 8) and 0xFF).toByte(),
+                (handshakeBody.size and 0xFF).toByte(),
+            ))
+            handshake.write(handshakeBody)
+
+            val recordBody = handshake.toByteArray()
+            val record = java.io.ByteArrayOutputStream()
+            record.write(0x16)
+            record.write(byteArrayOf(0x03, 0x03))
+            record.write(shortBytes(recordBody.size))
+            record.write(recordBody)
+            return record.toByteArray()
+        }
+
+        private fun shortBytes(value: Int): ByteArray =
+            byteArrayOf(((value shr 8) and 0xFF).toByte(), (value and 0xFF).toByte())
     }
 }
