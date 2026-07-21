@@ -77,6 +77,8 @@ $PYTHON -m nuitka \
     --include-data-files=routing.py=routing.py \
     --include-data-files=routing_window.py=routing_window.py \
     --include-data-files=system_proxy.py=system_proxy.py \
+    --include-data-files=super_dns_control.py=super_dns_control.py \
+    --include-data-files=super_dns_window.py=super_dns_window.py \
     --include-data-files=traffic_stats.py=traffic_stats.py \
     --include-data-files=traffic_view.py=traffic_view.py \
     --include-data-files=tunnel_client.py=tunnel_client.py \

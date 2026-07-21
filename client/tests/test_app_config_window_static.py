@@ -164,3 +164,80 @@ def test_routing_menu_uses_title_state_instead_of_checkmark():
         for node in body
         for child in ast.walk(node)
     )
+
+
+def test_super_dns_menu_opens_dedicated_subprocess_window():
+    source_path = Path(__file__).parents[1].joinpath("app.py")
+    source = source_path.read_text()
+    tree = ast.parse(source)
+    app_controller = _class_node(tree, "AppController")
+
+    init_body = _method_body(app_controller, "init")
+    open_body = _method_body(app_controller, "openSuperDns_")
+    show_body = _method_body(app_controller, "_show_super_dns_window")
+
+    assert "Super DNS..." in source
+    assert "super_dns_window.py" in source
+    assert any(
+        isinstance(child, ast.Attribute)
+        and child.attr == "_super_dns_proc"
+        for node in init_body
+        for child in ast.walk(node)
+    )
+    assert any(_calls_self_method(node, "_show_super_dns_window") for node in open_body)
+    assert _popen_first_arg_name(ast.Module(body=show_body, type_ignores=[])) == (
+        "python_path"
+    )
+
+
+def test_super_dns_window_creates_nsapplication_before_menu_setup():
+    source_path = Path(__file__).parents[1].joinpath("super_dns_window.py")
+    source = source_path.read_text()
+    main_block = source[source.index('if __name__ == "__main__":'):]
+
+    shared_app_index = main_block.index("NSApplication.sharedApplication()")
+    setup_menu_index = main_block.index("_setup_minimal_menu()")
+
+    assert shared_app_index < setup_menu_index
+
+
+def test_super_dns_window_has_docs_link_and_colored_status_dot():
+    source_path = Path(__file__).parents[1].joinpath("super_dns_window.py")
+    source = source_path.read_text()
+
+    assert "https://www.npmjs.com/package/super-dns" in source
+    assert "openDocs:" in source
+    assert "_status_dot" in source
+    assert "NSColor.systemGreenColor()" in source
+    assert "NSColor.systemOrangeColor()" in source
+    assert "NSColor.labelColor()" in source
+
+
+def test_super_dns_menu_title_reflects_running_state():
+    source_path = Path(__file__).parents[1].joinpath("app.py")
+    source = source_path.read_text()
+    tree = ast.parse(source)
+    app_controller = _class_node(tree, "AppController")
+
+    menu_open_body = _method_body(app_controller, "_on_menu_open")
+    update_body = _method_body(app_controller, "_update_super_dns_menu_title")
+
+    assert "Super DNS（运行中）..." in source
+    assert "Super DNS（未运行）..." in source
+    assert any(
+        _calls_self_method(node, "_update_super_dns_menu_title")
+        for node in menu_open_body
+    )
+    assert any(
+        isinstance(child, ast.Attribute)
+        and child.attr == "super_dns_item"
+        for node in update_body
+        for child in ast.walk(node)
+    )
+
+
+def test_super_dns_window_title_describes_domain_list():
+    source_path = Path(__file__).parents[1].joinpath("super_dns_window.py")
+    source = source_path.read_text()
+
+    assert 'win.setTitle_("Super DNS - 防止 DNS 污染的域名列表")' in source

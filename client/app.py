@@ -38,6 +38,7 @@ from AppKit import (
 
 from config import Config
 from proxy_core import ProxyCore
+from super_dns_control import is_super_dns_running
 from system_proxy import SystemProxy
 from tunnel_client import TunnelClient
 
@@ -97,6 +98,7 @@ class AppController(NSObject):
         self.connected = False
         self._config_proc = None
         self._routing_proc = None
+        self._super_dns_proc = None
         self._log_proc = None
         self._measuring = False
         self._connecting = False
@@ -165,6 +167,9 @@ class AppController(NSObject):
         self.routing_item.setKeyEquivalent_("f")
         self.routing_item.setKeyEquivalentModifierMask_(NSCommandKeyMask)
         self._update_routing_check()
+
+        self.super_dns_item = self._add_menu_item(menu, "Super DNS...", "openSuperDns:")
+        self._update_super_dns_menu_title()
         menu.addItem_(NSMenuItem.separatorItem())
 
         self.global_item = self._add_menu_item(
@@ -229,6 +234,12 @@ class AppController(NSObject):
         """Update routing menu item title based on routing enabled state."""
         routing_enabled = self.config.data.get("routing", {}).get("enabled", False)
         self.routing_item.setTitle_(self._routing_menu_title(routing_enabled))
+
+    def _super_dns_menu_title(self, running):
+        return "Super DNS（运行中）..." if running else "Super DNS（未运行）..."
+
+    def _update_super_dns_menu_title(self):
+        self.super_dns_item.setTitle_(self._super_dns_menu_title(is_super_dns_running()))
 
     # ------------------------------------------------------------------
     # Proxy toggle
@@ -419,6 +430,11 @@ class AppController(NSObject):
             return
         self._show_routing_window()
 
+    def openSuperDns_(self, sender):
+        if self._super_dns_proc and self._super_dns_proc.poll() is None:
+            return
+        self._show_super_dns_window()
+
     def openLog_(self, sender):
         if self._log_proc and self._log_proc.poll() is None:
             return
@@ -486,6 +502,17 @@ class AppController(NSObject):
                 self._run_on_main(self._reconnect)
 
         threading.Thread(target=_reload_after, daemon=True).start()
+
+    def _show_super_dns_window(self):
+        script_path = os.path.join(_bundle_resource_dir(), "super_dns_window.py")
+        python_path = self._find_python() if _is_compiled() else sys.executable
+        self._super_dns_proc = subprocess.Popen([python_path, script_path])
+
+        def _clear_after():
+            self._super_dns_proc.wait()
+            self._super_dns_proc = None
+
+        threading.Thread(target=_clear_after, daemon=True).start()
 
     def _reconnect(self):
         """Full reconnect: stop everything, restart everything."""
@@ -634,6 +661,8 @@ class AppController(NSObject):
             self._config_proc.terminate()
         if self._routing_proc and self._routing_proc.poll() is None:
             self._routing_proc.terminate()
+        if self._super_dns_proc and self._super_dns_proc.poll() is None:
+            self._super_dns_proc.terminate()
         if self._log_proc and self._log_proc.poll() is None:
             self._log_proc.terminate()
         if self.connected:
@@ -787,6 +816,7 @@ class AppController(NSObject):
     # ------------------------------------------------------------------
 
     def _on_menu_open(self):
+        self._update_super_dns_menu_title()
         if not self.connected or self._measuring:
             return
         self._measuring = True

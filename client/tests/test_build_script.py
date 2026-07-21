@@ -16,8 +16,15 @@ def test_build_includes_all_subprocess_windows():
         "config_window.py",
         "log_window.py",
         "routing_window.py",
+        "super_dns_window.py",
     ]:
         assert f"--include-data-files={window_script}={window_script}" in build_script
+
+
+def test_build_includes_super_dns_control_helper():
+    build_script = Path(__file__).parents[1].joinpath("build.sh").read_text()
+
+    assert "--include-data-files=super_dns_control.py=super_dns_control.py" in build_script
 
 
 def test_build_reuses_existing_icns_unless_missing():
