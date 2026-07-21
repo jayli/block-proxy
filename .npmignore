@@ -1,6 +1,11 @@
 # Client applications
 android-client/
 client/
+ios-client/
+
+# Frontend source (npm package serves compiled build/)
+src/
+public/
 
 # Documentation
 docs/
@@ -8,6 +13,7 @@ docs/
 # Tests and dev tools
 test/
 tools/
+scripts/
 
 # Runtime config (generated at runtime)
 config.json
@@ -17,6 +23,8 @@ certificates/
 # Build / CI
 Dockerfile
 docker-compose*
+.go-cache/
+.go-mod-cache/
 
 # Internal / agent configs
 .agents/
