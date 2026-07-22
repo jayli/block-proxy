@@ -67,6 +67,7 @@ class XhttpHandler {
     this._sessions = new Map();
     /** @type {Map<string, Set<string>>} token → Set<sessionId> */
     this._tokenSessions = new Map();
+    this._sessionOrder = 0;
   }
 
   setCredentials(credentials) {
@@ -182,7 +183,7 @@ class XhttpHandler {
         keepaliveTimer: null,
         lastSseWriteAt: 0,
         cleanupTimer: null,
-        createdAt: Date.now(),
+        connectedOrder: 0,
         consumeLoopRunning: false,
       };
 
@@ -193,7 +194,6 @@ class XhttpHandler {
         this._tokenSessions.set(token, new Set());
       }
       this._tokenSessions.get(token).add(sessionId);
-      this._closeSessionsForTokenExcept(token, sessionId);
 
       // 30 秒内若无 SSE stream 连接则自动清理
       session.cleanupTimer = setTimeout(() => {
@@ -310,6 +310,7 @@ class XhttpHandler {
 
     // 发送 SSE retry 指令
     session.sseRes = res;
+    session.connectedOrder = ++this._sessionOrder;
     this._writeSse(session, 'retry: 5000\n\n');
 
     // 发送 AUTH_OK
@@ -393,15 +394,15 @@ class XhttpHandler {
 
   /**
    * 获取当前活跃的 sessionId（用于 manager.forward()）。
-   * 返回最新创建的有 SSE 连接的 session。
+   * 返回最新建立 SSE 连接的 session；较旧的在线 session 作为 draining 保留。
    */
   getActiveSessionId() {
     let latest = null;
-    let latestTime = 0;
+    let latestOrder = 0;
     for (const [sid, session] of this._sessions) {
-      if (session.sseRes && session.createdAt > latestTime) {
+      if (session.sseRes && session.connectedOrder > latestOrder) {
         latest = sid;
-        latestTime = session.createdAt;
+        latestOrder = session.connectedOrder;
       }
     }
     return latest;
@@ -414,12 +415,12 @@ class XhttpHandler {
     const sessionIds = this._tokenSessions.get(token);
     if (!sessionIds) return null;
     let latest = null;
-    let latestTime = 0;
+    let latestOrder = 0;
     for (const sid of sessionIds) {
       const session = this._sessions.get(sid);
-      if (session && session.sseRes && session.createdAt > latestTime) {
+      if (session && session.sseRes && session.connectedOrder > latestOrder) {
         latest = sid;
-        latestTime = session.createdAt;
+        latestOrder = session.connectedOrder;
       }
     }
     return latest;
@@ -429,14 +430,21 @@ class XhttpHandler {
    * 获取连接统计。
    */
   getConnectionCounts() {
+    const activeSessionId = this.getActiveSessionId();
     let active = 0;
+    let draining = 0;
     let total = 0;
-    for (const session of this._sessions.values()) {
+    for (const [sid, session] of this._sessions) {
       if (!session.authenticated) continue;
       total++;
-      if (session.sseRes) active++;
+      if (!session.sseRes) continue;
+      if (sid === activeSessionId) {
+        active++;
+      } else {
+        draining++;
+      }
     }
-    return { active, candidate: 0, draining: 0, total };
+    return { active, candidate: 0, draining, total };
   }
 
   /**
@@ -530,20 +538,6 @@ class XhttpHandler {
 
     console.log(`[xhttp] Session closed: ${sessionId}`);
     this._onSessionClosed(sessionId, session.token);
-  }
-
-  /**
-   * 同一认证 token 只保留最新 session，重连时清理旧传输实例。
-   */
-  _closeSessionsForTokenExcept(token, keepSessionId) {
-    const tokenSet = this._tokenSessions.get(token);
-    if (!tokenSet) return;
-
-    for (const sessionId of [...tokenSet]) {
-      if (sessionId !== keepSessionId) {
-        this._closeSession(sessionId);
-      }
-    }
   }
 
   /**

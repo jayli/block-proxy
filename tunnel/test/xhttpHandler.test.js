@@ -129,13 +129,13 @@ describe('XhttpHandler session model', () => {
     handler.closeAll();
   });
 
-  it('closes older sessions for the same token when a new session is created', async () => {
+  it('keeps older sessions alive when a new session is created for the same token', async () => {
     const { handler, events } = createHandler();
     const oldSessionId = await createSession(handler);
     const newSessionId = await createSession(handler);
 
     assert.notEqual(oldSessionId, newSessionId);
-    assert.equal(handler._sessions.has(oldSessionId), false);
+    assert.equal(handler._sessions.has(oldSessionId), true);
     assert.equal(handler._sessions.has(newSessionId), true);
 
     const oldUploadReq = mockRequest('POST', `/xhttp/upload/${oldSessionId}/0`, encodeFrame({
@@ -145,9 +145,15 @@ describe('XhttpHandler session model', () => {
     const oldUploadRes = mockResponse();
     assert.equal(handler.handleRequest(oldUploadReq, oldUploadRes), true);
     oldUploadReq.emitBody();
-    assert.equal(oldUploadRes.statusCode, 404);
+    assert.equal(oldUploadRes.statusCode, 200);
 
-    assert.ok(events.some(event => event.type === 'closed' && event.sessionId === oldSessionId));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(events.some(event =>
+      event.type === 'frame' &&
+      event.sessionId === oldSessionId &&
+      event.frame.payload.toString('utf8') === 'old'
+    ));
+    assert.equal(events.some(event => event.type === 'closed' && event.sessionId === oldSessionId), false);
     handler.closeAll();
   });
 
@@ -185,6 +191,36 @@ describe('XhttpHandler session model', () => {
 
     res.emit('close');
     assert.equal(handler.getActiveSessionId(), null);
+    handler.closeAll();
+  });
+
+  it('selects the newest connected SSE while older sessions keep draining', async () => {
+    const { handler } = createHandler();
+    const oldSessionId = await createSession(handler);
+
+    const oldReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${oldSessionId}`);
+    const oldRes = mockResponse();
+    assert.equal(handler.handleRequest(oldReq, oldRes), true);
+    assert.equal(handler.getActiveSessionId(), oldSessionId);
+
+    const newSessionId = await createSession(handler);
+    const newReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${newSessionId}`);
+    const newRes = mockResponse();
+    assert.equal(handler.handleRequest(newReq, newRes), true);
+
+    assert.equal(handler.getActiveSessionId(), newSessionId);
+    assert.equal(handler.pushFrame(oldSessionId, encodeFrame({ type: FRAME_TYPES.PONG, payload: Buffer.from('old') })), true);
+    assert.deepEqual(handler.getConnectionCounts(), {
+      active: 1,
+      candidate: 0,
+      draining: 1,
+      total: 2,
+    });
+
+    oldRes.emit('close');
+    assert.equal(handler.getActiveSessionId(), newSessionId);
+    assert.equal(handler._sessions.has(oldSessionId), true);
+    assert.equal(handler._sessions.has(newSessionId), true);
     handler.closeAll();
   });
 
