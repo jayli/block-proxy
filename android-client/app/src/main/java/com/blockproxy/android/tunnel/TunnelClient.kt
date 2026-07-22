@@ -23,8 +23,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.random.Random
-import kotlin.random.nextLong
 
 private const val TAG = "TunnelClient"
 
@@ -50,8 +48,6 @@ class TunnelClient(
     companion object {
         const val INITIAL_BACKOFF_MS = 1_000L
         const val MAX_BACKOFF_MS = 60_000L
-        private const val DEFAULT_ROTATION_MIN_MS = 600_000L   // 10 min
-        private const val DEFAULT_ROTATION_MAX_MS = 1_800_000L // 30 min
         private const val DEFAULT_DRAIN_TIMEOUT_MS = 10_000L   // 10 s
         private const val DEFAULT_DRAIN_IDLE_TIMEOUT_MS = 20_000L // 20 s
     }
@@ -412,7 +408,7 @@ class TunnelClient(
 
     private suspend fun rotationLoop() {
         while (clientScope.isActive && !stopped) {
-            val interval = Random.nextLong(DEFAULT_ROTATION_MIN_MS, DEFAULT_ROTATION_MAX_MS)
+            val interval = TunnelRotationPolicy.nextIntervalMs()
             try { delay(interval) } catch (_: CancellationException) { break }
             if (stopped) break
             try {
