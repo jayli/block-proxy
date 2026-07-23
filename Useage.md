@@ -223,8 +223,6 @@ SOCKS5 还支持 UDP over TCP（通过自定义帧协议在 TLS 隧道中承载 
 
 MITM（中间人解密）是 block-proxy 的核心能力。开启后代理可解密 HTTPS 流量，实现 URL 路径级过滤和请求内容重写。
 
-<img width="700" alt="image" src="https://github.com/user-attachments/assets/2d8a4ec7-8ced-446d-8777-6eaa30e27bc0" />
-
 MITM 用在两个地方，第一个是内网小朋友上网的（定向）拦截，二是一些请求的 MITM 重写，重写规则以自定义的方式开放了出来，可自己添加和定制。
 
 ### 开启 MITM
@@ -511,6 +509,7 @@ A: 如果 block-proxy 部署在路由器上且配置了代理认证，iOS 会拒
 
 MITM 作为 服务中心，外围连接节点起点，远程办公/代理回家，双向访问...
 
-<img width="720" alt="image" src="https://github.com/user-attachments/assets/0e65b068-438a-4b14-90a7-f5f658fdea86" />
+<img width="720" alt="image" src="https://github.com/user-attachments/assets/9a4c32cc-9c90-4443-8380-fcaf69120ad8" />
+
 
 
