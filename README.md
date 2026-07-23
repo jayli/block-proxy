@@ -1,4 +1,5 @@
-<img width="287" alt="image" src="https://github.com/user-attachments/assets/2bb069d8-508a-41b9-9fee-94a1e31cc0cb" />
+<img width="270" alt="image" src="https://github.com/user-attachments/assets/e7c421a7-21d8-4d8e-a71e-7f409d6711ff" />
+
 
 <a href="https://nodei.co/npm/block-proxy/"><img src="https://nodei.co/npm/block-proxy.svg?style=mini"></a>
 
