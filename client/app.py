@@ -141,7 +141,7 @@ class AppController(NSObject):
         image = NSImage.alloc().initByReferencingFile_(icon_path)
         if image is None:
             return
-        image.setSize_(NSSize(24, 24))
+        image.setSize_(NSSize(23, 23))
         if self._template is not None:
             image.setTemplate_(self._template)
         self._status_item.button().setImage_(image)
