@@ -166,6 +166,15 @@ class XhttpHandler {
       const token = this._computeToken();
       const clientCapabilities = new Set(frame.capabilities || []);
 
+      if (this.hasActiveSse(token)) {
+        console.warn('[xhttp] Create: tunnel occupied for token');
+        this._sendJson(res, 409, {
+          error: 'tunnel occupied',
+          message: '隧道已占用',
+        });
+        return;
+      }
+
       // 协商 capabilities
       const serverCapabilities = new Set();
       if (this._paddingEnabled && clientCapabilities.has(CAP_PADDING)) {

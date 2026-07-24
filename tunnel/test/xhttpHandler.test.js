@@ -157,6 +157,34 @@ describe('XhttpHandler session model', () => {
     handler.closeAll();
   });
 
+  it('rejects a new session for the same token while an SSE stream is active', async () => {
+    const { handler } = createHandler();
+    const sessionId = await createSession(handler);
+
+    const streamReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}`);
+    const streamRes = mockResponse();
+    assert.equal(handler.handleRequest(streamReq, streamRes), true);
+    assert.equal(streamRes.statusCode, 200);
+
+    const createReq = mockRequest('POST', '/xhttp/create', encodeFrame({
+      type: FRAME_TYPES.AUTH,
+      username: 'admin',
+      password: 'secret',
+      capabilities: [],
+    }));
+    const createRes = mockResponse();
+    assert.equal(handler.handleRequest(createReq, createRes), true);
+    createReq.emitBody();
+
+    assert.equal(createRes.statusCode, 409);
+    assert.deepEqual(JSON.parse(createRes.writes.join('')), {
+      error: 'tunnel occupied',
+      message: '隧道已占用',
+    });
+    assert.equal(handler._sessions.size, 1);
+    handler.closeAll();
+  });
+
   it('pushes server frames over the SSE session channel', async () => {
     const { handler } = createHandler();
     const sessionId = await createSession(handler);
@@ -194,7 +222,7 @@ describe('XhttpHandler session model', () => {
     handler.closeAll();
   });
 
-  it('selects the newest connected SSE while older sessions keep draining', async () => {
+  it('keeps the active SSE selected when a duplicate session create is rejected', async () => {
     const { handler } = createHandler();
     const oldSessionId = await createSession(handler);
 
@@ -203,23 +231,39 @@ describe('XhttpHandler session model', () => {
     assert.equal(handler.handleRequest(oldReq, oldRes), true);
     assert.equal(handler.getActiveSessionId(), oldSessionId);
 
+    const duplicateCreateReq = mockRequest('POST', '/xhttp/create', encodeFrame({
+      type: FRAME_TYPES.AUTH,
+      username: 'admin',
+      password: 'secret',
+      capabilities: [],
+    }));
+    const duplicateCreateRes = mockResponse();
+    assert.equal(handler.handleRequest(duplicateCreateReq, duplicateCreateRes), true);
+    duplicateCreateReq.emitBody();
+    assert.equal(duplicateCreateRes.statusCode, 409);
+    assert.equal(handler.getActiveSessionId(), oldSessionId);
+    assert.deepEqual(handler.getConnectionCounts(), {
+      active: 1,
+      candidate: 0,
+      draining: 0,
+      total: 1,
+    });
+
+    oldRes.emit('close');
+    assert.equal(handler.getActiveSessionId(), null);
+
     const newSessionId = await createSession(handler);
     const newReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${newSessionId}`);
     const newRes = mockResponse();
     assert.equal(handler.handleRequest(newReq, newRes), true);
 
     assert.equal(handler.getActiveSessionId(), newSessionId);
-    assert.equal(handler.pushFrame(oldSessionId, encodeFrame({ type: FRAME_TYPES.PONG, payload: Buffer.from('old') })), true);
     assert.deepEqual(handler.getConnectionCounts(), {
       active: 1,
       candidate: 0,
-      draining: 1,
+      draining: 0,
       total: 2,
     });
-
-    oldRes.emit('close');
-    assert.equal(handler.getActiveSessionId(), newSessionId);
-    assert.equal(handler._sessions.has(oldSessionId), true);
     assert.equal(handler._sessions.has(newSessionId), true);
     handler.closeAll();
   });
