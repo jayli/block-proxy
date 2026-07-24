@@ -12,8 +12,8 @@ android {
         applicationId = "com.blockproxy.android"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.5"
+        versionCode = 3
+        versionName = "0.1.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

@@ -27,9 +27,24 @@ private class FakeConfigDataSource : ConfigDataSource {
         awaitClose { listeners.remove(listener) }
     }
 
+    private var tunnelEnabled = false
+    private val tunnelEnabledListeners = mutableListOf<(Boolean) -> Unit>()
+
+    override fun observeTunnelEnabled(): kotlinx.coroutines.flow.Flow<Boolean> = callbackFlow {
+        trySend(tunnelEnabled)
+        val listener: (Boolean) -> Unit = { trySend(it) }
+        tunnelEnabledListeners.add(listener)
+        awaitClose { tunnelEnabledListeners.remove(listener) }
+    }
+
     override suspend fun save(config: ServerConfig) {
         current = config
         listeners.toList().forEach { it(config) }
+    }
+
+    override suspend fun setTunnelEnabled(enabled: Boolean) {
+        tunnelEnabled = enabled
+        tunnelEnabledListeners.toList().forEach { it(enabled) }
     }
 
     override suspend fun clear() {
@@ -178,6 +193,29 @@ class ConfigRepositoryTest {
 
             repository.clear()
             assertNull(awaitItem())
+
+            cancelAndConsumeRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `tunnel enabled defaults to false`() = scope.runTest {
+        repository.observeTunnelEnabled().test {
+            assertEquals(false, awaitItem())
+            cancelAndConsumeRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `setTunnelEnabled emits updated value`() = scope.runTest {
+        repository.observeTunnelEnabled().test {
+            assertEquals(false, awaitItem())
+
+            repository.setTunnelEnabled(true)
+            assertEquals(true, awaitItem())
+
+            repository.setTunnelEnabled(false)
+            assertEquals(false, awaitItem())
 
             cancelAndConsumeRemainingEvents()
         }

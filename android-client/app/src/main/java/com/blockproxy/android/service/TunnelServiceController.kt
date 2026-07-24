@@ -4,8 +4,13 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import com.blockproxy.android.config.ConfigRepository
+import com.blockproxy.android.config.DataStoreConfigDataSource
 import com.blockproxy.android.status.StatusStore
 import com.blockproxy.android.status.TunnelStatus
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * Helper for starting and stopping [BlockProxyVpnService] from UI components.
@@ -22,6 +27,8 @@ import com.blockproxy.android.status.TunnelStatus
  * ```
  */
 class TunnelServiceController(private val context: Context) {
+    private val configRepository = ConfigRepository(DataStoreConfigDataSource(context))
+    private val controllerScope = CoroutineScope(Dispatchers.IO)
 
     companion object {
         /** Default request code for VPN preparation. */
@@ -57,6 +64,9 @@ class TunnelServiceController(private val context: Context) {
      * intent was completed with RESULT_OK).
      */
     fun startServiceInternal() {
+        controllerScope.launch {
+            configRepository.setTunnelEnabled(true)
+        }
         val intent = Intent(context, BlockProxyVpnService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             context.startForegroundService(intent)
@@ -69,6 +79,9 @@ class TunnelServiceController(private val context: Context) {
      * Sends a stop action to the running VPN service.
      */
     fun stop() {
+        controllerScope.launch {
+            configRepository.setTunnelEnabled(false)
+        }
         val intent = Intent(context, BlockProxyVpnService::class.java).apply {
             action = BlockProxyVpnService.ACTION_STOP
         }

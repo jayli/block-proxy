@@ -1,6 +1,5 @@
 package com.blockproxy.android.service
 
-import com.blockproxy.android.status.TunnelStatus
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -9,10 +8,10 @@ import org.junit.Test
  * Unit tests for the [TunnelWatchdogWorker.shouldRestart] decision logic.
  *
  * The [shouldRestart] companion method is a pure function that determines
- * whether the watchdog should restart the VPN service. It takes three boolean/status
- * inputs and returns true only when all conditions are met:
+ * whether the watchdog should restart the VPN service. It returns true only
+ * when all conditions are met:
  * 1. A server config is persisted
- * 2. The last status was Connected or Reconnecting
+ * 2. The user persisted the tunnel as enabled
  * 3. The service is not currently running
  */
 class TunnelWatchdogWorkerTest {
@@ -20,22 +19,11 @@ class TunnelWatchdogWorkerTest {
     // ── Test: Worker returns success (decision logic tests) ──────────────
 
     @Test
-    fun `shouldRestart returns true when config exists, status is Connected, and service not running`() {
+    fun `shouldRestart returns true when config exists, tunnel is enabled, and service not running`() {
         assertTrue(
             TunnelWatchdogWorker.shouldRestart(
                 hasConfig = true,
-                lastStatus = TunnelStatus.Connected,
-                isServiceRunning = false,
-            )
-        )
-    }
-
-    @Test
-    fun `shouldRestart returns true when config exists, status is Reconnecting, and service not running`() {
-        assertTrue(
-            TunnelWatchdogWorker.shouldRestart(
-                hasConfig = true,
-                lastStatus = TunnelStatus.Reconnecting,
+                tunnelEnabled = true,
                 isServiceRunning = false,
             )
         )
@@ -48,44 +36,20 @@ class TunnelWatchdogWorkerTest {
         assertFalse(
             TunnelWatchdogWorker.shouldRestart(
                 hasConfig = false,
-                lastStatus = TunnelStatus.Connected,
+                tunnelEnabled = true,
                 isServiceRunning = false,
             )
         )
     }
 
-    @Test
-    fun `shouldRestart returns false when no config and status is Reconnecting`() {
-        assertFalse(
-            TunnelWatchdogWorker.shouldRestart(
-                hasConfig = false,
-                lastStatus = TunnelStatus.Reconnecting,
-                isServiceRunning = false,
-            )
-        )
-    }
-
-    // ── Test: Status is Disconnected → do NOT start service ──────────────
+    // ── Test: Persisted tunnel disabled → do NOT start service ───────────
 
     @Test
-    fun `shouldRestart returns false when status is Disconnected`() {
+    fun `shouldRestart returns false when tunnel is disabled`() {
         assertFalse(
             TunnelWatchdogWorker.shouldRestart(
                 hasConfig = true,
-                lastStatus = TunnelStatus.Disconnected,
-                isServiceRunning = false,
-            )
-        )
-    }
-
-    // ── Test: Status is AuthFailed → do NOT start service ────────────────
-
-    @Test
-    fun `shouldRestart returns false when status is AuthFailed`() {
-        assertFalse(
-            TunnelWatchdogWorker.shouldRestart(
-                hasConfig = true,
-                lastStatus = TunnelStatus.AuthFailed,
+                tunnelEnabled = false,
                 isServiceRunning = false,
             )
         )
@@ -94,69 +58,12 @@ class TunnelWatchdogWorkerTest {
     // ── Test: Service already running → do nothing ───────────────────────
 
     @Test
-    fun `shouldRestart returns false when service is already running with Connected status`() {
+    fun `shouldRestart returns false when service is already running`() {
         assertFalse(
             TunnelWatchdogWorker.shouldRestart(
                 hasConfig = true,
-                lastStatus = TunnelStatus.Connected,
+                tunnelEnabled = true,
                 isServiceRunning = true,
-            )
-        )
-    }
-
-    @Test
-    fun `shouldRestart returns false when service is already running with Reconnecting status`() {
-        assertFalse(
-            TunnelWatchdogWorker.shouldRestart(
-                hasConfig = true,
-                lastStatus = TunnelStatus.Reconnecting,
-                isServiceRunning = true,
-            )
-        )
-    }
-
-    // ── Test: Other statuses → do NOT start service ──────────────────────
-
-    @Test
-    fun `shouldRestart returns false when status is Preparing`() {
-        assertFalse(
-            TunnelWatchdogWorker.shouldRestart(
-                hasConfig = true,
-                lastStatus = TunnelStatus.Preparing,
-                isServiceRunning = false,
-            )
-        )
-    }
-
-    @Test
-    fun `shouldRestart returns false when status is Connecting`() {
-        assertFalse(
-            TunnelWatchdogWorker.shouldRestart(
-                hasConfig = true,
-                lastStatus = TunnelStatus.Connecting,
-                isServiceRunning = false,
-            )
-        )
-    }
-
-    @Test
-    fun `shouldRestart returns false when status is Occupied`() {
-        assertFalse(
-            TunnelWatchdogWorker.shouldRestart(
-                hasConfig = true,
-                lastStatus = TunnelStatus.Occupied,
-                isServiceRunning = false,
-            )
-        )
-    }
-
-    @Test
-    fun `shouldRestart returns false when status is Error`() {
-        assertFalse(
-            TunnelWatchdogWorker.shouldRestart(
-                hasConfig = true,
-                lastStatus = TunnelStatus.Error,
-                isServiceRunning = false,
             )
         )
     }
@@ -169,7 +76,7 @@ class TunnelWatchdogWorkerTest {
         assertFalse(
             TunnelWatchdogWorker.shouldRestart(
                 hasConfig = false,
-                lastStatus = TunnelStatus.Error,
+                tunnelEnabled = false,
                 isServiceRunning = true,
             )
         )
@@ -180,7 +87,7 @@ class TunnelWatchdogWorkerTest {
         assertFalse(
             TunnelWatchdogWorker.shouldRestart(
                 hasConfig = false,
-                lastStatus = TunnelStatus.Disconnected,
+                tunnelEnabled = true,
                 isServiceRunning = false,
             )
         )

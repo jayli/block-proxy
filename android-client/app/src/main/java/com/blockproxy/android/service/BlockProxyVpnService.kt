@@ -45,6 +45,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -91,6 +92,7 @@ class BlockProxyVpnService : VpnService() {
 
         /** Intent action to stop the service from outside. */
         const val ACTION_STOP = TunnelNotification.ACTION_STOP
+        const val EXTRA_BOOT_RESTORE = "com.blockproxy.android.extra.BOOT_RESTORE"
 
         private const val WAKELOCK_TAG = "block-proxy:tunnel"
         private const val STOP_TIMEOUT_MS = 5_000L
@@ -147,9 +149,10 @@ class BlockProxyVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "onStartCommand: action=${intent?.action}, flags=$flags, startId=$startId")
+        val bootRestore = intent?.getBooleanExtra(EXTRA_BOOT_RESTORE, false) == true
         TunnelDiagnosticsLog.write(
             "service.on_start_command",
-            "action=${intent?.action ?: ""} flags=$flags startId=$startId"
+            "action=${intent?.action ?: ""} flags=$flags startId=$startId bootRestore=$bootRestore"
         )
 
         // Guard against double-start while tunnel is already running
@@ -163,6 +166,9 @@ class BlockProxyVpnService : VpnService() {
         if (intent?.action == ACTION_STOP) {
             Log.i(TAG, "Received ACTION_STOP, stopping service")
             TunnelDiagnosticsLog.write("service.action_stop")
+            runBlocking {
+                configRepository.setTunnelEnabled(false)
+            }
             WorkManager.getInstance(applicationContext)
                 .cancelUniqueWork(TunnelWatchdogWorker.WORK_NAME)
 
@@ -250,7 +256,8 @@ class BlockProxyVpnService : VpnService() {
 
         // Launch the tunnel setup in the service scope
         scope.launch {
-            setupTunnel()
+            configRepository.setTunnelEnabled(true)
+            setupTunnel(bootRestore = bootRestore)
         }
 
         return START_STICKY
@@ -318,7 +325,10 @@ class BlockProxyVpnService : VpnService() {
 
     // ── Tunnel setup ──────────────────────────────────────────────────
 
-    private suspend fun setupTunnel() {
+    private suspend fun setupTunnel(
+        bootRestore: Boolean = false,
+        bootRestoreAttempt: Int = 0,
+    ) {
         statusStore.update(TunnelStatus.Preparing)
 
         // Load config
@@ -380,6 +390,24 @@ class BlockProxyVpnService : VpnService() {
         // Establish VPN interface with routes and DNS
         val vpnResult = establishVpnInterface()
         if (vpnResult == null) {
+            val retryDelayMs = BootRestoreRetryPolicy.nextDelayMillis(
+                bootRestore = bootRestore,
+                attempt = bootRestoreAttempt,
+            )
+            if (retryDelayMs != null) {
+                TunnelDiagnosticsLog.write(
+                    "vpn.establish_retry_scheduled",
+                    "attempt=$bootRestoreAttempt delayMs=$retryDelayMs"
+                )
+                statusStore.update(TunnelStatus.Connecting)
+                updateNotification(TunnelStatus.Connecting)
+                delay(retryDelayMs)
+                setupTunnel(
+                    bootRestore = true,
+                    bootRestoreAttempt = bootRestoreAttempt + 1,
+                )
+                return
+            }
             // User denied VPN permission or establish() failed
             TunnelDiagnosticsLog.write("vpn.establish_failed")
             releaseWakeLock()

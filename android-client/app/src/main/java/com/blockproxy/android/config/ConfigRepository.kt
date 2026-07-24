@@ -18,8 +18,12 @@ import kotlinx.coroutines.flow.map
 interface ConfigDataSource {
     /** Observe the persisted config; emits `null` when nothing is stored. */
     fun observe(): Flow<ServerConfig?>
+    /** Observe whether the user wants the tunnel to be kept running. */
+    fun observeTunnelEnabled(): Flow<Boolean>
     /** Persist [config], replacing any previous value. */
     suspend fun save(config: ServerConfig)
+    /** Persist whether the user wants the tunnel to be kept running. */
+    suspend fun setTunnelEnabled(enabled: Boolean)
     /** Remove any persisted config. */
     suspend fun clear()
 }
@@ -36,6 +40,9 @@ class ConfigRepository(private val source: ConfigDataSource) {
     /** Cold [Flow] that emits the current config whenever it changes. */
     fun observe(): Flow<ServerConfig?> = source.observe()
 
+    /** Cold [Flow] that emits whether the tunnel should survive process/device restarts. */
+    fun observeTunnelEnabled(): Flow<Boolean> = source.observeTunnelEnabled()
+
     /** Persist [config] after basic validation. Suspending; safe to call from any coroutine. */
     suspend fun save(config: ServerConfig) {
         require(config.serverHost.isNotBlank()) { "serverHost must not be blank" }
@@ -51,6 +58,9 @@ class ConfigRepository(private val source: ConfigDataSource) {
 
     /** Remove the persisted config. */
     suspend fun clear() = source.clear()
+
+    /** Persist whether the user intentionally enabled the tunnel. */
+    suspend fun setTunnelEnabled(enabled: Boolean) = source.setTunnelEnabled(enabled)
 }
 
 // ─── DataStore implementation ────────────────────────────────────────────────
@@ -87,6 +97,10 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
         )
     }
 
+    override fun observeTunnelEnabled(): Flow<Boolean> = store.data.map { prefs ->
+        prefs[KEY_TUNNEL_ENABLED] ?: false
+    }
+
     override suspend fun save(config: ServerConfig) {
         store.edit { prefs ->
             prefs[KEY_HOST] = config.serverHost
@@ -96,6 +110,12 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             prefs[KEY_XHTTP_BASE_PATH] = config.xhttpBasePath
             prefs[KEY_HTTP_DISGUISE] = config.httpDisguise
             prefs[KEY_CF_CDN_ENABLED] = config.cfCdnEnabled
+        }
+    }
+
+    override suspend fun setTunnelEnabled(enabled: Boolean) {
+        store.edit { prefs ->
+            prefs[KEY_TUNNEL_ENABLED] = enabled
         }
     }
 
@@ -111,5 +131,6 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
         val KEY_XHTTP_BASE_PATH = stringPreferencesKey("xhttp_base_path")
         val KEY_HTTP_DISGUISE = booleanPreferencesKey("http_disguise")
         val KEY_CF_CDN_ENABLED = booleanPreferencesKey("cf_cdn_enabled")
+        val KEY_TUNNEL_ENABLED = booleanPreferencesKey("tunnel_enabled")
     }
 }

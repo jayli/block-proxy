@@ -79,7 +79,7 @@ fun AboutScreen(onNavigateToHome: () -> Unit, modifier: Modifier = Modifier) {
                     HorizontalDivider()
                     InfoRow("App 名称", "BlockProxyClient")
                     HorizontalDivider()
-                    InfoRow("版本", "v0.1.5")
+                    InfoRow("版本", "v0.1.6")
                     HorizontalDivider()
                     InfoRow("作者", "jayli")
                     HorizontalDivider()

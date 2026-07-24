@@ -7,7 +7,6 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.blockproxy.android.config.ConfigRepository
 import com.blockproxy.android.config.DataStoreConfigDataSource
-import com.blockproxy.android.status.TunnelStatus
 import kotlinx.coroutines.flow.first
 
 /**
@@ -21,8 +20,8 @@ import kotlinx.coroutines.flow.first
  *
  * **Restart criteria (all must be true):**
  * 1. A server configuration is persisted (the user previously configured a tunnel).
- * 2. The last known status was an active tunnel state (i.e., the user intended
- *    the tunnel to be active).
+ * 2. The persisted tunnel-enabled flag says the user intended the tunnel to
+ *    stay active across process/device restarts.
  * 3. The [BlockProxyVpnService] is **not** currently running.
  *
  * If any condition is false the worker does nothing.
@@ -40,38 +39,36 @@ class TunnelWatchdogWorker(
          * Pure decision function: should the watchdog restart the tunnel service?
          *
          * @param hasConfig       Whether a server configuration is persisted.
-         * @param lastStatus      The last known [TunnelStatus] from [StatusStore].
+         * @param tunnelEnabled   Whether the user persisted the tunnel as enabled.
          * @param isServiceRunning Whether [BlockProxyVpnService] is currently alive.
          */
         fun shouldRestart(
             hasConfig: Boolean,
-            lastStatus: TunnelStatus,
+            tunnelEnabled: Boolean,
             isServiceRunning: Boolean,
         ): Boolean {
             return hasConfig &&
-                lastStatus in setOf(
-                    TunnelStatus.Connected,
-                    TunnelStatus.SilentListening,
-                    TunnelStatus.Reconnecting,
-                ) &&
+                tunnelEnabled &&
                 !isServiceRunning
         }
     }
 
     override suspend fun doWork(): Result {
         val configRepo = ConfigRepository(DataStoreConfigDataSource(applicationContext))
-        val statusStore = BlockProxyVpnService.statusStore
-
         val config = try {
             configRepo.observe().first()
         } catch (_: Exception) {
             null
         }
+        val tunnelEnabled = try {
+            configRepo.observeTunnelEnabled().first()
+        } catch (_: Exception) {
+            false
+        }
 
-        val lastStatus = statusStore.current
         val isRunning = BlockProxyVpnService.isRunning
 
-        if (shouldRestart(config != null, lastStatus, isRunning)) {
+        if (shouldRestart(config != null, tunnelEnabled, isRunning)) {
             val intent = Intent(applicationContext, BlockProxyVpnService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 applicationContext.startForegroundService(intent)
