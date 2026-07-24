@@ -217,14 +217,14 @@ VpnService TUN fd → tun2socks (native C, JNI) → 127.0.0.1:socksPort
 - `XhttpSession` — 会话建立：POST `/xhttp/create`（发送 AUTH 帧）→ 获取 sessionId → 创建 XhttpTransport
 - `XhttpTransport` — 传输层实现：SSE 下行（OkHttp 长连接）+ 按需 POST 上行（每帧一次 POST `/xhttp/upload/:sessionId/:seq`）
 - `TunnelTransportFactory` — 工厂：封装 XhttpSession → XhttpTransport 流程
-- `TunnelClient` — 顶层管理器：生命周期（start/stop）、自动重连、连接轮换（10~30 分钟随机间隔）、drain 排空
+- `TunnelClient` — 顶层管理器：生命周期（start/stop）、自动重连、连接轮换（1~2 小时随机间隔，刷新 NAT 映射）、drain 排空
 - `ReverseConnectHandler` — 反向 CONNECT：收到服务端 CONNECT 帧后创建 plain TCP 目标连接，双向中继数据
 - `ForwardSession` / `ForwardSessionRegistry` — 正向 CONNECT：客户端主动发起，通过 tunnel 代理到服务端
 - `PaddingInjector` — 流量填充：协商后按概率在 DATA 帧后追加 PADDING 帧
 - `TargetSocket` / `RealTargetSocket` — 目标 TCP socket 抽象（支持 VpnService.protect）
 
 **连接轮换 (rotation)**:
-- 每 10~30 分钟（随机）建立新 xhttp session 替换旧的
+- 每 1~2 小时（随机）建立新 xhttp session 替换旧的，通过新 TCP 连接刷新 NAT 映射
 - 旧连接进入 draining 状态，等待活跃请求完成后关闭
 - drain 超时 10 秒 + 空闲超时 20 秒
 

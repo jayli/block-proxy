@@ -18,6 +18,7 @@ import com.blockproxy.android.cdn.CfIpPool
 import com.blockproxy.android.cdn.CfIpRefreshWorker
 import com.blockproxy.android.cdn.CfIpRuntimeRegistry
 import com.blockproxy.android.cdn.CfIpSelector
+import com.blockproxy.android.doh.DohDns
 import com.blockproxy.android.config.ConfigRepository
 import com.blockproxy.android.config.DataStoreConfigDataSource
 import com.blockproxy.android.config.DataStoreCredentialDataSource
@@ -101,6 +102,11 @@ class BlockProxyVpnService : VpnService() {
         @Volatile
         var isRunning: Boolean = false
             private set
+
+        /** Whether a tunnel connection is actively managed (tunnelClient != null). */
+        @Volatile
+        var isTunnelRunning: Boolean = false
+            internal set
     }
 
     private var serviceScope: CoroutineScope? = null
@@ -155,10 +161,25 @@ class BlockProxyVpnService : VpnService() {
             "action=${intent?.action ?: ""} flags=$flags startId=$startId bootRestore=$bootRestore"
         )
 
+        // Immediately show foreground notification (must happen early to satisfy
+        // Android's 5-second startForeground() deadline on every start path).
+        val initialNotification = TunnelNotification.build(this, TunnelStatus.Preparing)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                TunnelNotification.NOTIFICATION_ID,
+                initialNotification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+            )
+        } else {
+            startForeground(TunnelNotification.NOTIFICATION_ID, initialNotification)
+        }
+
         // Guard against double-start while tunnel is already running
         if (intent?.action != ACTION_STOP && tunnelClient != null) {
             Log.w(TAG, "Tunnel already running, ignoring start command")
             TunnelDiagnosticsLog.write("service.start_ignored", "reason=tunnel_already_running")
+            statusStore.update(TunnelStatus.Occupied)
+            updateNotification(TunnelStatus.Occupied)
             return START_STICKY
         }
 
@@ -199,6 +220,7 @@ class BlockProxyVpnService : VpnService() {
                     }
                 }
                 tunnelClient = null
+                isTunnelRunning = false
             }
 
             // Release WakeLock
@@ -230,18 +252,6 @@ class BlockProxyVpnService : VpnService() {
             }
             stopSelf()
             return START_NOT_STICKY
-        }
-
-        // Immediately show foreground notification
-        val initialNotification = TunnelNotification.build(this, TunnelStatus.Preparing)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                TunnelNotification.NOTIFICATION_ID,
-                initialNotification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-            )
-        } else {
-            startForeground(TunnelNotification.NOTIFICATION_ID, initialNotification)
         }
 
         // Acquire WakeLock
@@ -289,6 +299,7 @@ class BlockProxyVpnService : VpnService() {
                 }
             }
             tunnelClient = null
+            isTunnelRunning = false
         }
 
         // Release WakeLock
@@ -449,6 +460,12 @@ class BlockProxyVpnService : VpnService() {
             statusStore.updateCfIp(null)
         }
 
+        // Create DoH DNS when CF CDN is not enabled (shares cache across SSE and upload)
+        val sseDohDns: DohDns? = if (!config.cfCdnEnabled) {
+            DohDns(serverHost = config.serverHost, protect = protectCallback)
+        } else null
+        val uploadDohDns: DohDns? = sseDohDns
+
         // Create TunnelClient (needed by TunnelForwardConnector for LocalSocksServer)
         val scope = serviceScope ?: return
         val client = TunnelClient(
@@ -461,10 +478,13 @@ class BlockProxyVpnService : VpnService() {
             sseCfIpSelector = cfIpSelector,
             uploadCfIpDns = uploadCfIpDns,
             uploadCfIpSelector = uploadCfIpSelector,
+            sseDohDns = sseDohDns,
+            uploadDohDns = uploadDohDns,
             nativeUtlsUploadEnabled = vpnResult.appExclusionSucceeded,
             onCfIpChanged = statusStore::updateCfIp,
         )
         tunnelClient = client
+        isTunnelRunning = true
 
         // Start local SOCKS5 server on loopback.
         // tun2socks will forward TUN traffic to this server, which applies

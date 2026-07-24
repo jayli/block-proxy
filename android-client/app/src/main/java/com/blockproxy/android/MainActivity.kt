@@ -3,6 +3,7 @@ package com.blockproxy.android
 import android.content.Intent
 import android.os.Bundle
 import android.os.PowerManager
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,7 +35,9 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.blockproxy.android.config.DataStoreRoutingConfigDataSource
 import com.blockproxy.android.config.RoutingConfigRepository
+import com.blockproxy.android.service.BlockProxyVpnService
 import com.blockproxy.android.service.TunnelServiceController
+import com.blockproxy.android.status.TunnelStatus
 import com.blockproxy.android.ui.AboutScreen
 import com.blockproxy.android.ui.ConfigScreen
 import com.blockproxy.android.ui.MainScreen
@@ -312,6 +315,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun restartTunnelFromLatestConfig() {
+        if (BlockProxyVpnService.isTunnelRunning) {
+            Log.w("MainActivity", "restartTunnelFromLatestConfig blocked — tunnel already running")
+            BlockProxyVpnService.statusStore.update(TunnelStatus.Occupied)
+            android.widget.Toast.makeText(this, "隧道已占用", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         lifecycleScope.launch {
             controller.stop()
             delay(SLIDER_RESTART_DELAY_MS)

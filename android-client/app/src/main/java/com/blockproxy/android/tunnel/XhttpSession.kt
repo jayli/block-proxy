@@ -105,6 +105,13 @@ class XhttpSession(
                 throw TunnelAuthFailedException("Authentication failed")
             }
 
+            if (resp.code == 409 || resp.code == 423) {
+                val body = resp.body?.string() ?: ""
+                TunnelDiagnosticsLog.write("xhttp.create.occupied", "code=${resp.code}")
+                Log.w(TAG, "Create session rejected as occupied: HTTP ${resp.code}, body=$body")
+                throw TunnelOccupiedException("隧道已占用")
+            }
+
             if (!resp.isSuccessful) {
                 val body = resp.body?.string() ?: ""
                 TunnelDiagnosticsLog.write(

@@ -159,8 +159,8 @@ class SliderStateMachine {
             TunnelStatus.Reconnecting -> false
             TunnelStatus.Disconnected,
             TunnelStatus.Error,
-            TunnelStatus.AuthFailed,
-            TunnelStatus.Occupied -> true
+            TunnelStatus.AuthFailed -> true
+            TunnelStatus.Occupied -> false // terminal — user must manually stop first
         }
     }
 }

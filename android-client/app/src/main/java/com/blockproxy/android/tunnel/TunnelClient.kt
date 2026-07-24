@@ -4,6 +4,7 @@ import android.util.Log
 import com.blockproxy.android.diagnostics.TunnelDiagnosticsLog
 import com.blockproxy.android.cdn.CfIpDns
 import com.blockproxy.android.cdn.CfIpSelector
+import com.blockproxy.android.doh.DohDns
 import com.blockproxy.android.config.ServerConfig
 import com.blockproxy.android.config.TunnelCredentials
 import com.blockproxy.android.status.TunnelStatus
@@ -41,6 +42,8 @@ class TunnelClient(
     private val sseCfIpSelector: CfIpSelector? = null,
     private val uploadCfIpDns: CfIpDns? = null,
     private val uploadCfIpSelector: CfIpSelector? = null,
+    private val sseDohDns: DohDns? = null,
+    private val uploadDohDns: DohDns? = null,
     private val nativeUtlsUploadEnabled: Boolean = true,
     private val nativePostClientFactory: () -> NativeUtlsPostClient? = { GomobileUtlsPostClient.createOrNull() },
     private val onCfIpChanged: (String?) -> Unit = {},
@@ -226,10 +229,14 @@ class TunnelClient(
         _status.value = TunnelStatus.Connected
         TunnelDiagnosticsLog.write(
             "tunnel.connected",
-            "session=${transport.sessionDebugId()} cfIp=${sseCfIpSelector?.currentIp() ?: sseCfIpDns?.getCurrentIp() ?: ""}"
+            "session=${transport.sessionDebugId()} cfIp=${sseCfIpSelector?.currentIp() ?: sseCfIpDns?.getCurrentIp() ?: sseDohDns?.getCurrentIp() ?: ""}"
         )
         sseCfIpSelector?.markConnected()
-        onCfIpChanged(sseCfIpSelector?.currentIp() ?: sseCfIpDns?.getCurrentIp())
+        onCfIpChanged(
+            sseCfIpSelector?.currentIp()
+                ?: sseCfIpDns?.getCurrentIp()
+                ?: sseDohDns?.getCurrentIp()
+        )
 
         readJob = clientScope.launch { handleFrames(transport) }
 
@@ -297,20 +304,33 @@ class TunnelClient(
     }
 
     private fun sseConnectionClient(): OkHttpClient {
-        return if (sseCfIpDns != null) {
-            Log.i(TAG, "Using CF DNS override for SSE/create session")
-            sseOkHttpClient.newBuilder().dns(sseCfIpDns).build()
-        } else {
-            Log.i(TAG, "Using system DNS for SSE/create session")
-            sseOkHttpClient
+        return when {
+            sseCfIpDns != null -> {
+                Log.i(TAG, "Using CF DNS override for SSE/create session")
+                sseOkHttpClient.newBuilder().dns(sseCfIpDns).build()
+            }
+            sseDohDns != null -> {
+                Log.i(TAG, "Using DoH DNS override for SSE/create session")
+                sseOkHttpClient.newBuilder().dns(sseDohDns).build()
+            }
+            else -> {
+                Log.i(TAG, "Using system DNS for SSE/create session")
+                sseOkHttpClient
+            }
         }
     }
 
     private fun uploadConnectionClient(): OkHttpClient {
-        return if (uploadCfIpDns != null) {
-            uploadOkHttpClient.newBuilder().dns(uploadCfIpDns).build()
-        } else {
-            uploadOkHttpClient
+        return when {
+            uploadCfIpDns != null -> {
+                uploadOkHttpClient.newBuilder().dns(uploadCfIpDns).build()
+            }
+            uploadDohDns != null -> {
+                uploadOkHttpClient.newBuilder().dns(uploadDohDns).build()
+            }
+            else -> {
+                uploadOkHttpClient
+            }
         }
     }
 

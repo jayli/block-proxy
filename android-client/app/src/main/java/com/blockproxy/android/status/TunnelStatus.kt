@@ -13,7 +13,7 @@ enum class TunnelStatus(val displayText: String) {
     Connected("已连接"),
     SilentListening("静默监听中"),
     Reconnecting("重连中"),
-    Occupied("端口被占用"),
+    Occupied("隧道已占用"),
     AuthFailed("认证失败"),
     Error("错误"),
 }
