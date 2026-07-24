@@ -24,6 +24,8 @@ const MAX_FRAME_PAYLOAD = 0xFFFF;
 const DATA_HEADER_LEN = 3; // type(1) + reqid(2)
 const MAX_DATA_CHUNK = MAX_FRAME_PAYLOAD - DATA_HEADER_LEN;
 const CAP_PADDING = 'padding';
+const CAP_UPLOAD_BATCH = 'upload-batch-v1';
+const CAP_UPLOAD_H2 = 'upload-h2-v1';
 
 function encodeCapabilities(capabilities) {
   const caps = Array.isArray(capabilities) ? capabilities : [];
@@ -255,14 +257,39 @@ function decodeFrame(buffer) {
   }
 }
 
+function decodeFrames(buffer) {
+  const frames = [];
+  let offset = 0;
+
+  while (offset < buffer.length) {
+    if (buffer.length - offset < 2) {
+      throw new Error('Incomplete frame header');
+    }
+
+    const length = buffer.readUInt16BE(offset);
+    const end = offset + 2 + length;
+    if (end > buffer.length) {
+      throw new Error('Incomplete frame');
+    }
+
+    frames.push(decodeFrame(buffer.slice(offset, end)));
+    offset = end;
+  }
+
+  return frames;
+}
+
 module.exports = {
   FRAME_TYPES,
   ATYP,
   MAX_FRAME_PAYLOAD,
   MAX_DATA_CHUNK,
   CAP_PADDING,
+  CAP_UPLOAD_BATCH,
+  CAP_UPLOAD_H2,
   encodeFrame,
   decodeFrame,
+  decodeFrames,
   encodeAddress,
   decodeAddress,
   encodeCapabilities,

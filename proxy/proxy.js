@@ -250,8 +250,8 @@ async function loadConfig() {
     tunnel_port: 8003,
     tunnel_xhttp_base_path: "/xhttp",
     tunnel_sse_path: "/api/v1/events",
-    tunnel_sse_keepalive_min_ms: 35000,
-    tunnel_sse_keepalive_max_ms: 45000,
+    tunnel_sse_keepalive_min_ms: 20000,
+    tunnel_sse_keepalive_max_ms: 25000,
     tunnel_silent_idle_timeout: 3000,
     tunnel_rotation_drain_timeout: 10,
     tunnel_rotation_drain_idle_timeout: 20,
@@ -334,8 +334,8 @@ async function loadConfig() {
       config.tunnel_port = loadedConfig.tunnel_port || 8003;
       config.tunnel_xhttp_base_path = loadedConfig.tunnel_xhttp_base_path || "/xhttp";
       config.tunnel_sse_path = loadedConfig.tunnel_sse_path || "/api/v1/events";
-      config.tunnel_sse_keepalive_min_ms = loadedConfig.tunnel_sse_keepalive_min_ms || 35000;
-      config.tunnel_sse_keepalive_max_ms = loadedConfig.tunnel_sse_keepalive_max_ms || 45000;
+      config.tunnel_sse_keepalive_min_ms = loadedConfig.tunnel_sse_keepalive_min_ms || 20000;
+      config.tunnel_sse_keepalive_max_ms = loadedConfig.tunnel_sse_keepalive_max_ms || 25000;
       config.tunnel_silent_idle_timeout = loadedConfig.tunnel_silent_idle_timeout || 3000;
       config.tunnel_rotation_drain_timeout = loadedConfig.tunnel_rotation_drain_timeout || 10;
       config.tunnel_rotation_drain_idle_timeout = loadedConfig.tunnel_rotation_drain_idle_timeout || 20;
@@ -1360,8 +1360,8 @@ async function initTunnel(config) {
     },
     tunnel_xhttp_base_path: config.tunnel_xhttp_base_path || '/xhttp',
     tunnel_sse_path: config.tunnel_sse_path || '/api/v1/events',
-    tunnel_sse_keepalive_min_ms: config.tunnel_sse_keepalive_min_ms || 35000,
-    tunnel_sse_keepalive_max_ms: config.tunnel_sse_keepalive_max_ms || 45000,
+    tunnel_sse_keepalive_min_ms: config.tunnel_sse_keepalive_min_ms || 20000,
+    tunnel_sse_keepalive_max_ms: config.tunnel_sse_keepalive_max_ms || 25000,
     tunnel_silent_idle_timeout: config.tunnel_silent_idle_timeout || 3000,
     tunnel_rotation_drain_timeout: config.tunnel_rotation_drain_timeout,
     tunnel_rotation_drain_idle_timeout: config.tunnel_rotation_drain_idle_timeout,

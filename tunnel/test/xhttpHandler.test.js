@@ -89,6 +89,16 @@ describe('XhttpHandler session model', () => {
     handler.closeAll();
   });
 
+  it('negotiates upload batch capability when advertised', async () => {
+    const { handler, events } = createHandler();
+
+    await createSession(handler, ['upload-batch-v1']);
+
+    const created = events.find(event => event.type === 'created');
+    assert.deepEqual(created.info.capabilities, ['upload-batch-v1']);
+    handler.closeAll();
+  });
+
   it('rejects stream-up upload without seq; upload is per-frame POST only', async () => {
     const { handler } = createHandler();
     const sessionId = await createSession(handler);
@@ -126,6 +136,57 @@ describe('XhttpHandler session model', () => {
     await new Promise(resolve => setImmediate(resolve));
     const frames = events.filter(event => event.type === 'frame').map(event => event.frame);
     assert.deepEqual(frames.map(frame => frame.payload.toString('utf8')), ['first', 'second']);
+    handler.closeAll();
+  });
+
+  it('accepts batched upload bodies and delivers frames in body order', async () => {
+    const { handler, events } = createHandler();
+    const sessionId = await createSession(handler, ['upload-batch-v1']);
+    const body = Buffer.concat([
+      encodeFrame({ type: FRAME_TYPES.PING, payload: Buffer.from('first') }),
+      encodeFrame({ type: FRAME_TYPES.PING, payload: Buffer.from('second') }),
+    ]);
+
+    const req = mockRequest('POST', `/xhttp/upload/${sessionId}/0`, body);
+    const res = mockResponse();
+    assert.equal(handler.handleRequest(req, res), true);
+    req.emitBody();
+
+    assert.equal(res.statusCode, 200);
+    await new Promise(resolve => setImmediate(resolve));
+    const frames = events.filter(event => event.type === 'frame').map(event => event.frame);
+    assert.deepEqual(frames.map(frame => frame.payload.toString('utf8')), ['first', 'second']);
+    handler.closeAll();
+  });
+
+  it('reorders batched uploads by POST seq before decoding frames', async () => {
+    const { handler, events } = createHandler();
+    const sessionId = await createSession(handler, ['upload-batch-v1']);
+
+    for (const [seq, labels] of [
+      [1, ['second-a', 'second-b']],
+      [0, ['first-a', 'first-b']],
+    ]) {
+      const req = mockRequest('POST', `/xhttp/upload/${sessionId}/${seq}`, Buffer.concat(
+        labels.map(label => encodeFrame({
+          type: FRAME_TYPES.PING,
+          payload: Buffer.from(label),
+        }))
+      ));
+      const res = mockResponse();
+      assert.equal(handler.handleRequest(req, res), true);
+      req.emitBody();
+      assert.equal(res.statusCode, 200);
+    }
+
+    await new Promise(resolve => setImmediate(resolve));
+    const frames = events.filter(event => event.type === 'frame').map(event => event.frame);
+    assert.deepEqual(frames.map(frame => frame.payload.toString('utf8')), [
+      'first-a',
+      'first-b',
+      'second-a',
+      'second-b',
+    ]);
     handler.closeAll();
   });
 

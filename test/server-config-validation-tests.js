@@ -20,8 +20,8 @@ function minimalConfig(overrides = {}) {
     tunnel_port: 8003,
     tunnel_ws_path: '/websocket',
     tunnel_sse_path: '/api/v1/events',
-    tunnel_sse_keepalive_min_ms: 35000,
-    tunnel_sse_keepalive_max_ms: 45000,
+    tunnel_sse_keepalive_min_ms: 20000,
+    tunnel_sse_keepalive_max_ms: 25000,
     tunnel_silent_idle_timeout: 3000,
     tunnel_domains: [],
     chain_proxy_enabled: '0',
@@ -64,14 +64,14 @@ function testImportValidationAcceptsValidChainProxyConfig() {
   assert.deepStrictEqual(result.details, []);
 }
 
-function testImportValidationBackfillsTunnelWsPath() {
+function testImportValidationBackfillsTunnelXhttpBasePath() {
   const config = minimalConfig();
-  delete config.tunnel_ws_path;
+  delete config.tunnel_xhttp_base_path;
 
   const result = Server._test.validateImportedConfig(config);
 
   assert.strictEqual(result.ok, true);
-  assert.strictEqual(result.config.tunnel_ws_path, '/websocket');
+  assert.strictEqual(result.config.tunnel_xhttp_base_path, '/xhttp');
 }
 
 function testImportValidationBackfillsSseSilentDefaults() {
@@ -85,25 +85,25 @@ function testImportValidationBackfillsSseSilentDefaults() {
 
   assert.strictEqual(result.ok, true);
   assert.strictEqual(result.config.tunnel_sse_path, '/api/v1/events');
-  assert.strictEqual(result.config.tunnel_sse_keepalive_min_ms, 35000);
-  assert.strictEqual(result.config.tunnel_sse_keepalive_max_ms, 45000);
+  assert.strictEqual(result.config.tunnel_sse_keepalive_min_ms, 20000);
+  assert.strictEqual(result.config.tunnel_sse_keepalive_max_ms, 25000);
   assert.strictEqual(result.config.tunnel_silent_idle_timeout, 3000);
 }
 
-function testImportValidationRejectsInvalidTunnelWsPath() {
+function testImportValidationRejectsInvalidTunnelXhttpBasePath() {
   const result = Server._test.validateImportedConfig(minimalConfig({
-    tunnel_ws_path: 123,
+    tunnel_xhttp_base_path: 123,
   }));
 
   assert.strictEqual(result.ok, false);
-  assert(result.details.some((detail) => detail.includes('隧道 WebSocket 路径')));
+  assert(result.details.some((detail) => detail.includes('隧道 xhttp 路径')));
 }
 
 function run() {
-  testImportValidationBackfillsTunnelWsPath();
-  console.log('PASS testImportValidationBackfillsTunnelWsPath');
-  testImportValidationRejectsInvalidTunnelWsPath();
-  console.log('PASS testImportValidationRejectsInvalidTunnelWsPath');
+  testImportValidationBackfillsTunnelXhttpBasePath();
+  console.log('PASS testImportValidationBackfillsTunnelXhttpBasePath');
+  testImportValidationRejectsInvalidTunnelXhttpBasePath();
+  console.log('PASS testImportValidationRejectsInvalidTunnelXhttpBasePath');
   testImportValidationBackfillsSseSilentDefaults();
   console.log('PASS testImportValidationBackfillsSseSilentDefaults');
   testImportValidationRejectsInvalidChainProxyType();

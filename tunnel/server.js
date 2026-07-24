@@ -1,4 +1,4 @@
-const https = require('https');
+const http2 = require('http2');
 const { encodeFrame } = require('./protocol');
 const { handleDisguiseRequest } = require('./disguiseResponse');
 const SseControlHandler = require('./sseControl');
@@ -41,8 +41,8 @@ class TunnelServer {
       credentials: this.credentials,
       maxBufferedPosts: options.maxBufferedPosts || 64,
       sessionTimeoutMs: options.sessionTimeoutMs || 30_000,
-      keepaliveMinMs: options.sseKeepaliveMinMs || options.tunnel_sse_keepalive_min_ms || 35_000,
-      keepaliveMaxMs: options.sseKeepaliveMaxMs || options.tunnel_sse_keepalive_max_ms || 45_000,
+      keepaliveMinMs: options.sseKeepaliveMinMs || options.tunnel_sse_keepalive_min_ms || 20_000,
+      keepaliveMaxMs: options.sseKeepaliveMaxMs || options.tunnel_sse_keepalive_max_ms || 25_000,
       paddingEnabled: this.paddingEnabled,
       paddingProbability: this.paddingProbability,
       paddingMinBytes: this.paddingMinBytes,
@@ -58,11 +58,12 @@ class TunnelServer {
 
   start() {
     return new Promise((resolve, reject) => {
-      this._server = https.createServer({
+      this._server = http2.createSecureServer({
         key: this.key,
         cert: this.cert,
         minVersion: 'TLSv1.2',
         sessionTimeout: 300,
+        allowHTTP1: true,
       }, (req, res) => this._handleHttpRequest(req, res));
 
       this._server.once('error', reject);

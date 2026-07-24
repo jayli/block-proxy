@@ -7,6 +7,8 @@ object FrameCodec {
     const val MAX_PAYLOAD_SIZE = 65535
     const val MAX_DATA_CHUNK = 65532
     const val CAP_PADDING = "padding"
+    const val CAP_UPLOAD_BATCH = "upload-batch-v1"
+    const val CAP_UPLOAD_H2 = "upload-h2-v1"
 
     fun encode(frame: Frame): ByteArray {
         val payload = encodePayload(frame)
@@ -225,6 +227,25 @@ object FrameCodec {
 
         val payload = frameBytes.sliceArray(2 until 2 + length)
         return decodePayload(payload)
+    }
+
+    fun decodeMany(body: ByteArray): List<Frame> {
+        val frames = mutableListOf<Frame>()
+        var offset = 0
+        while (offset < body.size) {
+            if (body.size - offset < 2) {
+                throw IllegalArgumentException("Incomplete frame header")
+            }
+            val length = ((body[offset].toInt() and 0xFF) shl 8) or
+                (body[offset + 1].toInt() and 0xFF)
+            val end = offset + 2 + length
+            if (end > body.size) {
+                throw IllegalArgumentException("Incomplete frame")
+            }
+            frames.add(decode(body.copyOfRange(offset, end)))
+            offset = end
+        }
+        return frames
     }
 
     fun decodePayload(payload: ByteArray): Frame {

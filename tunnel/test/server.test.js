@@ -1,6 +1,7 @@
 const { describe, it, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const https = require('https');
+const http2 = require('http2');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -40,6 +41,32 @@ function request(port, method, requestPath, body = null, headers = {}) {
     });
     req.setTimeout(1000, () => req.destroy(new Error('HTTPS request timeout')));
     req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+function h2Request(client, method, requestPath, body = null, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = client.request({
+      ':method': method,
+      ':path': requestPath,
+      ...(body ? { 'content-length': String(body.length) } : {}),
+      ...headers,
+    });
+    const chunks = [];
+    let responseHeaders = null;
+    req.on('response', headers => {
+      responseHeaders = headers;
+    });
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => resolve({
+      status: responseHeaders[':status'],
+      headers: responseHeaders,
+      body: Buffer.concat(chunks),
+    }));
+    req.on('error', reject);
+    req.setTimeout(1000, () => req.close(http2.constants.NGHTTP2_CANCEL));
     if (body) req.write(body);
     req.end();
   });
@@ -167,6 +194,53 @@ describe('TunnelServer xhttp', () => {
     assert.equal(received[0].sessionId, sessionId);
     assert.equal(received[0].frame.type, FRAME_TYPES.PING);
     assert.equal(received[0].frame.payload.toString('utf8'), 'hello');
+  });
+
+  it('accepts xhttp create and upload over HTTP/2 while preserving HTTP/1.1 compatibility', async () => {
+    const port = nextPort();
+    const received = [];
+    server = new TunnelServer({
+      port,
+      cert, key,
+      credentials: { username: 'admin', password: 'secret' },
+    });
+    server.onFrame((frame, sessionId) => received.push({ frame, sessionId }));
+    await server.start();
+
+    const client = http2.connect(`https://localhost:${port}`, { rejectUnauthorized: false });
+    try {
+      const authFrame = encodeFrame({
+        type: FRAME_TYPES.AUTH,
+        username: 'admin',
+        password: 'secret',
+        capabilities: ['upload-h2-v1', 'upload-batch-v1'],
+      });
+      const createRes = await h2Request(client, 'POST', '/xhttp/create', authFrame, {
+        'content-type': 'application/octet-stream',
+      });
+      assert.equal(createRes.status, 200);
+      const body = JSON.parse(createRes.body.toString('utf8'));
+      assert.ok(body.sessionId);
+      assert.deepEqual(body.capabilities, ['upload-batch-v1', 'upload-h2-v1']);
+
+      const uploadRes = await h2Request(client, 'POST', `/xhttp/upload/${body.sessionId}/0`, encodeFrame({
+        type: FRAME_TYPES.PING,
+        payload: Buffer.from('h2'),
+      }), {
+        'content-type': 'application/octet-stream',
+      });
+      assert.equal(uploadRes.status, 200);
+
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(received.length, 1);
+      assert.equal(received[0].sessionId, body.sessionId);
+      assert.equal(received[0].frame.payload.toString('utf8'), 'h2');
+    } finally {
+      client.close();
+    }
+
+    const h1SessionId = await createSession(port);
+    assert.ok(h1SessionId);
   });
 
   it('does not expose the legacy websocket endpoint', async () => {

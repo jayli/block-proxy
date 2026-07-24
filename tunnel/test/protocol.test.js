@@ -1,6 +1,6 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { FRAME_TYPES, ATYP, encodeFrame, decodeFrame } = require('../protocol');
+const { FRAME_TYPES, ATYP, encodeFrame, decodeFrame, decodeFrames } = require('../protocol');
 
 describe('Protocol encodeFrame/decodeFrame', () => {
   it('should roundtrip CONNECT frame with domain address', () => {
@@ -172,5 +172,23 @@ describe('Protocol encodeFrame/decodeFrame', () => {
     assert.equal(decoded.type, 0xFE);
     assert.deepEqual(decoded.data, Buffer.from([0xAA, 0xBB]));
     assert.equal(decoded.bytesRead, 2 + payload.length);
+  });
+
+  it('decodes concatenated encoded frames from an upload body', () => {
+    const first = encodeFrame({ type: FRAME_TYPES.PING, payload: Buffer.from('a') });
+    const second = encodeFrame({ type: FRAME_TYPES.PING, payload: Buffer.from('b') });
+
+    const frames = decodeFrames(Buffer.concat([first, second]));
+
+    assert.equal(frames.length, 2);
+    assert.equal(frames[0].payload.toString('utf8'), 'a');
+    assert.equal(frames[1].payload.toString('utf8'), 'b');
+  });
+
+  it('rejects malformed concatenated frame bodies', () => {
+    const good = encodeFrame({ type: FRAME_TYPES.PING, payload: Buffer.from('a') });
+    const truncated = good.subarray(0, good.length - 1);
+
+    assert.throws(() => decodeFrames(truncated), /Incomplete frame/);
   });
 });

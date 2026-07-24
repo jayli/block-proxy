@@ -7,7 +7,6 @@ import com.blockproxy.android.diagnostics.TunnelDiagnosticsLog
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 import java.io.IOException
 import java.security.MessageDigest
 
@@ -28,7 +27,40 @@ class XhttpSession(
     private val sseHttpClient: OkHttpClient,
     private val uploadClient: XhttpUploadClient,
     private val protect: ((java.net.Socket) -> Boolean)? = null,
+    private val uploadH2Enabled: Boolean = false,
 ) {
+    data class CreatedSession(
+        val sessionId: String,
+        val capabilities: List<String>,
+    )
+
+    companion object {
+        internal fun parseCreateSessionResponse(body: String): CreatedSession {
+            val sessionId = Regex(""""sessionId"\s*:\s*"([^"]+)"""")
+                .find(body)
+                ?.groupValues
+                ?.get(1)
+                ?: throw IllegalArgumentException("Missing sessionId")
+            return CreatedSession(
+                sessionId = sessionId,
+                capabilities = parseStringArray(body, "capabilities"),
+            )
+        }
+
+        private fun parseStringArray(body: String, key: String): List<String> {
+            val arrayBody = Regex(""""$key"\s*:\s*\[(.*?)]""")
+                .find(body)
+                ?.groupValues
+                ?.get(1)
+                ?: return emptyList()
+            if (arrayBody.isBlank()) return emptyList()
+            return Regex(""""([^"]*)"""")
+                .findAll(arrayBody)
+                .map { it.groupValues[1] }
+                .toList()
+        }
+    }
+
     /**
      * 建立 xhttp 会话并启动传输。
      *
@@ -41,6 +73,8 @@ class XhttpSession(
         // 1. 编码 AUTH 帧
         val authCapabilities = buildList {
             if (config.paddingEnabled) add(FrameCodec.CAP_PADDING)
+            add(FrameCodec.CAP_UPLOAD_BATCH)
+            if (uploadH2Enabled) add(FrameCodec.CAP_UPLOAD_H2)
         }
         val authFrame = FrameCodec.encode(
             Frame.Auth(credentials.username, credentials.password, authCapabilities)
@@ -52,31 +86,35 @@ class XhttpSession(
             "xhttp.create.start",
             "host=${config.serverHost} port=${config.serverPort} path=${config.xhttpBasePath}"
         )
-        val sessionId = createSession(baseUrl, authFrame)
-        Log.i(TAG, "Session created: $sessionId")
-        TunnelDiagnosticsLog.write("xhttp.create.success", "session=${sessionId.take(8)}")
+        val created = createSession(baseUrl, authFrame)
+        Log.i(TAG, "Session created: ${created.sessionId}")
+        TunnelDiagnosticsLog.write(
+            "xhttp.create.success",
+            "session=${created.sessionId.take(8)} capabilities=${created.capabilities.joinToString(",")}"
+        )
 
         // 3. 创建 XhttpTransport（传入 token，内部启动 SSE）
         val transport = XhttpTransport(
             baseUrl = baseUrl,
-            sessionId = sessionId,
+            sessionId = created.sessionId,
             token = token,
             sseHttpClient = sseHttpClient,
             uploadClient = uploadClient,
             protect = protect,
             paddingEnabled = config.paddingEnabled,
+            uploadBatchEnabled = created.capabilities.contains(FrameCodec.CAP_UPLOAD_BATCH),
         )
 
         transport.start()
         if (!transport.awaitOpen(10_000L)) {
-            TunnelDiagnosticsLog.write("xhttp.sse_open_timeout", "session=${sessionId.take(8)} timeoutMs=10000")
+            TunnelDiagnosticsLog.write("xhttp.sse_open_timeout", "session=${created.sessionId.take(8)} timeoutMs=10000")
             transport.close(1000, "sse-open-timeout")
             throw TunnelProtocolException("SSE stream did not open")
         }
         return transport
     }
 
-    private suspend fun createSession(baseUrl: String, authFrame: ByteArray): String {
+    private suspend fun createSession(baseUrl: String, authFrame: ByteArray): CreatedSession {
         val url = "$baseUrl/create"
 
         val requestBody = authFrame.toRequestBody(OCTET_STREAM.toMediaType())
@@ -132,8 +170,7 @@ class XhttpSession(
                 }
 
             return try {
-                val json = JSONObject(body)
-                json.getString("sessionId")
+                parseCreateSessionResponse(body)
             } catch (e: Exception) {
                 TunnelDiagnosticsLog.write(
                     "xhttp.create.parse_failed",

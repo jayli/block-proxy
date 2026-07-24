@@ -29,6 +29,8 @@ import kotlin.random.Random
 
 private const val TAG = "XhttpTransport"
 private const val DEFAULT_SSE_IDLE_TIMEOUT_MS = 90_000L
+internal const val XHTTP_CONNECTION_POOL_SIZE = 4
+internal const val XHTTP_CONNECTION_KEEPALIVE_SECONDS = 60L
 
 /**
  * xhttp 传输层：用按需 HTTP POST + SSE 替代 WebSocket 双向隧道。
@@ -44,6 +46,7 @@ class XhttpTransport(
     private val uploadClient: XhttpUploadClient,
     private val protect: ((Socket) -> Boolean)? = null,
     private val paddingEnabled: Boolean = false,
+    private val uploadBatchEnabled: Boolean = false,
     private val sseIdleTimeoutMs: Long = DEFAULT_SSE_IDLE_TIMEOUT_MS,
 ) : FrameSender {
 
@@ -74,6 +77,7 @@ class XhttpTransport(
         sessionId = sessionId,
         uploadClient = uploadClient,
         paddingHeaders = { buildPaddingHeader()?.let { mapOf("X-Padding" to it) } ?: emptyMap() },
+        batchEnabled = uploadBatchEnabled,
     )
 
     private val sseDisconnectNotified = AtomicBoolean(false)
@@ -91,13 +95,23 @@ class XhttpTransport(
         fun createOkHttpClient(
             allowInsecure: Boolean,
             protect: ((Socket) -> Boolean)?,
+            preferHttp2: Boolean = false,
         ): OkHttpClient {
+            val protocols = if (preferHttp2) {
+                listOf(Protocol.HTTP_2, Protocol.HTTP_1_1)
+            } else {
+                listOf(Protocol.HTTP_1_1)
+            }
             val builder = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.MILLISECONDS)
                 .writeTimeout(0, TimeUnit.MILLISECONDS)
-                .protocols(listOf(Protocol.HTTP_1_1))
-                .connectionPool(ConnectionPool(0, 1, TimeUnit.MILLISECONDS))
+                .protocols(protocols)
+                .connectionPool(ConnectionPool(
+                    XHTTP_CONNECTION_POOL_SIZE,
+                    XHTTP_CONNECTION_KEEPALIVE_SECONDS,
+                    TimeUnit.SECONDS,
+                ))
                 .proxy(Proxy.NO_PROXY)
 
             if (protect != null) {

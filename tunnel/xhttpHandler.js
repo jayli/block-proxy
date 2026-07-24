@@ -13,15 +13,23 @@
 'use strict';
 
 const crypto = require('crypto');
-const { FRAME_TYPES, encodeFrame, decodeFrame, CAP_PADDING } = require('./protocol');
+const {
+  FRAME_TYPES,
+  encodeFrame,
+  decodeFrame,
+  decodeFrames,
+  CAP_PADDING,
+  CAP_UPLOAD_BATCH,
+  CAP_UPLOAD_H2,
+} = require('./protocol');
 const UploadQueue = require('./uploadQueue');
 const { handleDisguiseRequest } = require('./disguiseResponse');
 
 const DEFAULT_BASE_PATH = '/xhttp';
 const DEFAULT_SESSION_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_BUFFERED_POSTS = 64;
-const DEFAULT_KEEPALIVE_MIN_MS = 35_000;
-const DEFAULT_KEEPALIVE_MAX_MS = 45_000;
+const DEFAULT_KEEPALIVE_MIN_MS = 20_000;
+const DEFAULT_KEEPALIVE_MAX_MS = 25_000;
 const DEFAULT_PADDING_PROBABILITY = 0.15;
 const DEFAULT_PADDING_MIN_BYTES = 64;
 const DEFAULT_PADDING_MAX_BYTES = 512;
@@ -180,6 +188,12 @@ class XhttpHandler {
       if (this._paddingEnabled && clientCapabilities.has(CAP_PADDING)) {
         serverCapabilities.add(CAP_PADDING);
       }
+      if (clientCapabilities.has(CAP_UPLOAD_BATCH)) {
+        serverCapabilities.add(CAP_UPLOAD_BATCH);
+      }
+      if (clientCapabilities.has(CAP_UPLOAD_H2)) {
+        serverCapabilities.add(CAP_UPLOAD_H2);
+      }
 
       // 创建 session
       const session = {
@@ -222,7 +236,10 @@ class XhttpHandler {
       });
 
       console.log(`[xhttp] Session created: ${sessionId}`);
-      this._sendJson(res, 200, { sessionId }, this._buildPaddingHeaders());
+      this._sendJson(res, 200, {
+        sessionId,
+        capabilities: [...serverCapabilities],
+      }, this._buildPaddingHeaders());
     });
   }
 
@@ -309,13 +326,16 @@ class XhttpHandler {
     }
 
     // 设置 SSE 响应头
-    res.writeHead(200, {
+    const headers = {
       'content-type': 'text/event-stream',
       'cache-control': 'no-store',
-      'connection': 'keep-alive',
       'x-accel-buffering': 'no',
       'access-control-allow-origin': '*',
-    });
+    };
+    if (!this._isHttp2(req)) {
+      headers.connection = 'keep-alive';
+    }
+    res.writeHead(200, headers);
 
     // 发送 SSE retry 指令
     session.sseRes = res;
@@ -482,18 +502,20 @@ class XhttpHandler {
           const payload = await session.uploadQueue.read();
           if (payload === null) break; // 队列关闭
 
-          let frame;
+          let frames;
           try {
-            frame = decodeFrame(payload);
+            frames = decodeFrames(payload);
           } catch (e) {
-            console.warn(`[xhttp] Frame decode error in session ${session.sessionId}:`, e.message);
+            console.warn(`[xhttp] Upload batch decode error in session ${session.sessionId}:`, e.message);
             continue;
           }
 
-          try {
-            this._onFrame(frame, session.sessionId);
-          } catch (e) {
-            console.error(`[xhttp] onFrame error for session ${session.sessionId}:`, e.message);
+          for (const frame of frames) {
+            try {
+              this._onFrame(frame, session.sessionId);
+            } catch (e) {
+              console.error(`[xhttp] onFrame error for session ${session.sessionId}:`, e.message);
+            }
           }
         }
       } catch (e) {
@@ -660,6 +682,10 @@ class XhttpHandler {
     const size = this._paddingMinBytes + Math.floor(Math.random() * range);
     const padding = crypto.randomBytes(size).toString('base64');
     return { 'x-padding': padding };
+  }
+
+  _isHttp2(req) {
+    return req.httpVersionMajor === 2 || String(req.httpVersion || '').startsWith('2');
   }
 
   /**

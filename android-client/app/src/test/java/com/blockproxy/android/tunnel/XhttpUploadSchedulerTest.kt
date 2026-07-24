@@ -88,6 +88,66 @@ class XhttpUploadSchedulerTest {
         scheduler.close()
     }
 
+    @Test
+    fun `batches data frames until max frame count`() = runTest {
+        val uploadClient = RecordingUploadClient()
+        val scheduler = XhttpUploadScheduler(
+            scope = this,
+            baseUrl = "https://example.com/xhttp",
+            sessionId = "sid",
+            uploadClient = uploadClient,
+            maxConcurrentPosts = 1,
+            batchEnabled = true,
+            batchFlushMs = 10_000L,
+            batchMaxBytes = 16 * 1024,
+            batchMaxFrames = 2,
+        )
+
+        val first = async {
+            scheduler.sendFrame(FrameCodec.encode(Frame.Data(0x8000, byteArrayOf(1))))
+        }
+        val second = async {
+            scheduler.sendFrame(FrameCodec.encode(Frame.Data(0x8001, byteArrayOf(2))))
+        }
+        runCurrent()
+
+        assertTrue(first.await())
+        assertTrue(second.await())
+        assertEquals(1, uploadClient.bodies.size)
+        assertEquals(2, FrameCodec.decodeMany(uploadClient.bodies[0]).size)
+        scheduler.close()
+    }
+
+    @Test
+    fun `control frame flushes separately from queued data`() = runTest {
+        val uploadClient = RecordingUploadClient()
+        val scheduler = XhttpUploadScheduler(
+            scope = this,
+            baseUrl = "https://example.com/xhttp",
+            sessionId = "sid",
+            uploadClient = uploadClient,
+            maxConcurrentPosts = 1,
+            batchEnabled = true,
+            batchFlushMs = 10_000L,
+        )
+
+        val data = async {
+            scheduler.sendFrame(FrameCodec.encode(Frame.Data(0x8000, byteArrayOf(1))))
+        }
+        runCurrent()
+        val close = async {
+            scheduler.sendFrame(FrameCodec.encode(Frame.Close(0x8000)))
+        }
+        runCurrent()
+
+        assertTrue(data.await())
+        assertTrue(close.await())
+        assertEquals(2, uploadClient.bodies.size)
+        assertEquals(1, FrameCodec.decodeMany(uploadClient.bodies[0]).size)
+        assertTrue(FrameCodec.decodeMany(uploadClient.bodies[1]).single() is Frame.Close)
+        scheduler.close()
+    }
+
     private class BlockingUploadClient : XhttpUploadClient {
         val active = AtomicInteger(0)
         val maxActive = AtomicInteger(0)
@@ -130,6 +190,19 @@ class XhttpUploadSchedulerTest {
                 is Frame.Padding -> FrameType.PADDING
                 is Frame.Unknown -> error("unexpected unknown frame")
             }
+        }
+    }
+
+    private class RecordingUploadClient : XhttpUploadClient {
+        val bodies = CopyOnWriteArrayList<ByteArray>()
+
+        override suspend fun postFrame(
+            url: String,
+            body: ByteArray,
+            headers: Map<String, String>,
+        ): Boolean {
+            bodies.add(body)
+            return true
         }
     }
 }

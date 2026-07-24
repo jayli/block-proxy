@@ -88,7 +88,7 @@ Client → HTTP Proxy (8001) → proxy-core → MITM Rules → Target
 - **Frontend** (`/src/`) – CRA + CRACO 管理界面, `App.js` 主组件
 - **CLI** (`/bin/start.js`) – 全局入口, 失败自动重启(3s delay, max 10000), 退出清理全局配置
 - **Certs** (`/cert/`) – `rootCA.key` + `rootCA.crt`, 运行时同步到 `certificates/` 目录
-- **Config** (`config.json`) – 运行时配置: `block_hosts[]`, `proxy_port`, `socks5_port`, `enable_express`, `enable_socks5`, `enable_mitm`("0"/"1"), `mitm_debug_log`("0"/"1"), `devices[]`, `auth_username`, `auth_password`, `tunnel_domains[]`, `tunnel_xhttp_base_path`(默认 "/xhttp"), `tunnel_sse_path`(旧路径兼容), `tunnel_sse_keepalive_min_ms`/`max_ms`(SSE 心跳 35-45s), `tunnel_padding_enabled`/`probability`/`min_bytes`/`max_bytes`, `tunnel_rotation_drain_timeout`, `tunnel_rotation_drain_idle_timeout`, `chain_proxy_enabled`, `chain_proxy_type`, `chain_proxy_address`
+- **Config** (`config.json`) – 运行时配置: `block_hosts[]`, `proxy_port`, `socks5_port`, `enable_express`, `enable_socks5`, `enable_mitm`("0"/"1"), `mitm_debug_log`("0"/"1"), `devices[]`, `auth_username`, `auth_password`, `tunnel_domains[]`, `tunnel_xhttp_base_path`(默认 "/xhttp"), `tunnel_sse_path`(旧路径兼容), `tunnel_sse_keepalive_min_ms`/`max_ms`(SSE 心跳 20-25s), `tunnel_padding_enabled`/`probability`/`min_bytes`/`max_bytes`, `tunnel_rotation_drain_timeout`, `tunnel_rotation_drain_idle_timeout`, `chain_proxy_enabled`, `chain_proxy_type`, `chain_proxy_address`
 - **Test Suite** (`/test/`) – `run.js` 一键测试(自动启动 Mock Server), `proxy-tests.js` 连通性/延迟/并发/吞吐量, `proxy-core-connect-tests.js` 连接测试
 
 ### MITM Rule System

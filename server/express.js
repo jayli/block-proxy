@@ -271,8 +271,8 @@ function validateImportedConfig(newConfig) {
   if (!('tunnel_port' in newConfig)) newConfig.tunnel_port = 8003;
   if (!('tunnel_xhttp_base_path' in newConfig)) newConfig.tunnel_xhttp_base_path = "/xhttp";
   if (!('tunnel_sse_path' in newConfig)) newConfig.tunnel_sse_path = "/api/v1/events";
-  if (!('tunnel_sse_keepalive_min_ms' in newConfig)) newConfig.tunnel_sse_keepalive_min_ms = 35000;
-  if (!('tunnel_sse_keepalive_max_ms' in newConfig)) newConfig.tunnel_sse_keepalive_max_ms = 45000;
+  if (!('tunnel_sse_keepalive_min_ms' in newConfig)) newConfig.tunnel_sse_keepalive_min_ms = 20000;
+  if (!('tunnel_sse_keepalive_max_ms' in newConfig)) newConfig.tunnel_sse_keepalive_max_ms = 25000;
   if (!('tunnel_silent_idle_timeout' in newConfig)) newConfig.tunnel_silent_idle_timeout = 3000;
   if (!('tunnel_domains' in newConfig)) newConfig.tunnel_domains = [];
   if (!('chain_proxy_enabled' in newConfig)) newConfig.chain_proxy_enabled = "0";

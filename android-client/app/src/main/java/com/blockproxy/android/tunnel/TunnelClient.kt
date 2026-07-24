@@ -53,6 +53,7 @@ class TunnelClient(
         const val MAX_BACKOFF_MS = 60_000L
         private const val DEFAULT_DRAIN_TIMEOUT_MS = 10_000L   // 10 s
         private const val DEFAULT_DRAIN_IDLE_TIMEOUT_MS = 20_000L // 20 s
+        private const val XHTTP_H2_ENABLED = false
     }
 
     private val _status = MutableStateFlow<TunnelStatus>(TunnelStatus.Disconnected)
@@ -71,14 +72,28 @@ class TunnelClient(
     private val handler = ReverseConnectHandler(clientScope, targetSocketFactory, paddingInjector = paddingInjector)
     private val forwardRegistry = ForwardSessionRegistry(clientScope, paddingInjector = paddingInjector)
 
-    private val sseOkHttpClient = XhttpTransport.createOkHttpClient(
+    private val sseH1OkHttpClient = XhttpTransport.createOkHttpClient(
         allowInsecure = config.allowInsecure,
         protect = protect,
+        preferHttp2 = false,
     )
 
-    private val uploadOkHttpClient = XhttpTransport.createOkHttpClient(
+    private val uploadH1OkHttpClient = XhttpTransport.createOkHttpClient(
         allowInsecure = config.allowInsecure,
         protect = protect,
+        preferHttp2 = false,
+    )
+
+    private val sseH2OkHttpClient = XhttpTransport.createOkHttpClient(
+        allowInsecure = config.allowInsecure,
+        protect = protect,
+        preferHttp2 = true,
+    )
+
+    private val uploadH2OkHttpClient = XhttpTransport.createOkHttpClient(
+        allowInsecure = config.allowInsecure,
+        protect = protect,
+        preferHttp2 = true,
     )
 
     // xhttp transport state
@@ -277,18 +292,35 @@ class TunnelClient(
     }
 
     private suspend fun establishConnection(): XhttpTransport {
+        if (XHTTP_H2_ENABLED) {
+            try {
+                return establishConnection(preferHttp2 = true)
+            } catch (e: Exception) {
+                if (e is TunnelAuthFailedException || e is TunnelOccupiedException) throw e
+                TunnelDiagnosticsLog.write(
+                    "upload.fallback_reason",
+                    "from=h2 to=h1 type=${e::class.java.simpleName} message=${e.message ?: ""}"
+                )
+                Log.w(TAG, "HTTP/2 tunnel establish failed, falling back to HTTP/1.1: ${e.message}")
+            }
+        }
+        return establishConnection(preferHttp2 = false)
+    }
+
+    private suspend fun establishConnection(preferHttp2: Boolean): XhttpTransport {
         Log.i(TAG, "Connecting to tunnel ${config.serverHost}:${config.serverPort}")
         TunnelDiagnosticsLog.write(
             "tunnel.connecting",
-            "host=${config.serverHost} port=${config.serverPort}"
+            "host=${config.serverHost} port=${config.serverPort} preferHttp2=$preferHttp2"
         )
 
         val transportFactory = TunnelTransportFactory(
             config = config,
             credentials = credentials,
-            sseHttpClient = sseConnectionClient(),
-            uploadClient = uploadClient(),
+            sseHttpClient = sseConnectionClient(preferHttp2),
+            uploadClient = uploadClient(preferHttp2),
             protect = protect,
+            uploadH2Enabled = preferHttp2,
         )
 
         return try {
@@ -303,40 +335,42 @@ class TunnelClient(
         }
     }
 
-    private fun sseConnectionClient(): OkHttpClient {
+    private fun sseConnectionClient(preferHttp2: Boolean = false): OkHttpClient {
+        val baseClient = if (preferHttp2) sseH2OkHttpClient else sseH1OkHttpClient
         return when {
             sseCfIpDns != null -> {
                 Log.i(TAG, "Using CF DNS override for SSE/create session")
-                sseOkHttpClient.newBuilder().dns(sseCfIpDns).build()
+                baseClient.newBuilder().dns(sseCfIpDns).build()
             }
             sseDohDns != null -> {
                 Log.i(TAG, "Using DoH DNS override for SSE/create session")
-                sseOkHttpClient.newBuilder().dns(sseDohDns).build()
+                baseClient.newBuilder().dns(sseDohDns).build()
             }
             else -> {
                 Log.i(TAG, "Using system DNS for SSE/create session")
-                sseOkHttpClient
+                baseClient
             }
         }
     }
 
-    private fun uploadConnectionClient(): OkHttpClient {
+    private fun uploadConnectionClient(preferHttp2: Boolean = false): OkHttpClient {
+        val baseClient = if (preferHttp2) uploadH2OkHttpClient else uploadH1OkHttpClient
         return when {
             uploadCfIpDns != null -> {
-                uploadOkHttpClient.newBuilder().dns(uploadCfIpDns).build()
+                baseClient.newBuilder().dns(uploadCfIpDns).build()
             }
             uploadDohDns != null -> {
-                uploadOkHttpClient.newBuilder().dns(uploadDohDns).build()
+                baseClient.newBuilder().dns(uploadDohDns).build()
             }
             else -> {
-                uploadOkHttpClient
+                baseClient
             }
         }
     }
 
-    private fun uploadClient(): XhttpUploadClient {
-        val fallback = OkHttpXhttpUploadClient(uploadConnectionClient())
-        if (!nativeUtlsUploadEnabled || !config.useTls) {
+    private fun uploadClient(preferHttp2: Boolean = false): XhttpUploadClient {
+        val fallback = OkHttpXhttpUploadClient(uploadConnectionClient(preferHttp2))
+        if (preferHttp2 || !nativeUtlsUploadEnabled || !config.useTls) {
             return fallback
         }
         val native = nativePostClientFactory() ?: return fallback
