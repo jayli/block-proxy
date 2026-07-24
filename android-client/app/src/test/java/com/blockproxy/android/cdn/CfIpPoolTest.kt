@@ -114,9 +114,9 @@ class CfIpPoolTest {
     fun `aliyun pool loads fixed edge ips without asset lookup`() {
         val pool = CfIpPool(FakeCfIpStorage(), FakeCursorStore(), CdnProvider.ALIYUN)
 
-        assertEquals("117.177.134.1", pool.loadAllIps().first())
-        assertEquals("42.63.63.100", pool.loadAllIps().last())
-        assertEquals(114, pool.loadAllIps().size)
+        assertEquals("8.147.229.152", pool.loadAllIps().first())
+        assertEquals("223.111.27.112", pool.loadAllIps().last())
+        assertEquals(157, pool.loadAllIps().size)
     }
 
     @Test
