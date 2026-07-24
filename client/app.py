@@ -647,16 +647,22 @@ class AppController(NSObject):
     # ------------------------------------------------------------------
 
     def quitApp_(self, sender):
-        NSApp.terminate_(self)
+        if getattr(self, '_quitting', False):
+            return
+        self._quitting = True
+        self.toggle_item.setEnabled_(False)
+        self.toggle_item.setTitle_("正在退出...")
 
-    def applicationWillTerminate_(self, notification):
-        # Remove sleep/wake observers
-        nc = NSWorkspace.sharedWorkspace().notificationCenter()
-        if self._sleep_obs:
-            nc.removeObserver_(self._sleep_obs)
-        if self._wake_obs:
-            nc.removeObserver_(self._wake_obs)
+        def _cleanup_then_terminate():
+            try:
+                self._pre_quit_cleanup()
+            finally:
+                self._run_on_main(lambda: NSApp.terminate_(self))
 
+        threading.Thread(target=_cleanup_then_terminate, daemon=True).start()
+
+    def _pre_quit_cleanup(self):
+        """Heavy cleanup on background thread to avoid blocking UI."""
         if self._config_proc and self._config_proc.poll() is None:
             self._config_proc.terminate()
         if self._routing_proc and self._routing_proc.poll() is None:
@@ -678,6 +684,35 @@ class AppController(NSObject):
         if not self.config.data.get("autostart", False):
             from autostart import disable
             disable()
+
+    def applicationWillTerminate_(self, notification):
+        # Fast cleanup: remove observers (must be done on main thread)
+        nc = NSWorkspace.sharedWorkspace().notificationCenter()
+        if self._sleep_obs:
+            nc.removeObserver_(self._sleep_obs)
+        if self._wake_obs:
+            nc.removeObserver_(self._wake_obs)
+
+        # If quitApp_ didn't run (SIGTERM / force-quit), do cleanup inline
+        if not getattr(self, '_quitting', False):
+            if self._config_proc and self._config_proc.poll() is None:
+                self._config_proc.terminate()
+            if self._routing_proc and self._routing_proc.poll() is None:
+                self._routing_proc.terminate()
+            if self._super_dns_proc and self._super_dns_proc.poll() is None:
+                self._super_dns_proc.terminate()
+            if self._log_proc and self._log_proc.poll() is None:
+                self._log_proc.terminate()
+            if self.connected:
+                self._stop_tunnel()
+                try:
+                    self.sys_proxy.disable()
+                except Exception:
+                    pass
+                try:
+                    self.proxy.stop()
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Health check
