@@ -1,5 +1,7 @@
 package com.blockproxy.android.config
 
+import com.blockproxy.android.cdn.CdnProvider
+
 /**
  * Server connection configuration persisted by the app.
  *
@@ -19,6 +21,7 @@ data class ServerConfig(
     val httpDisguise: Boolean = true,
     val customHeaders: Map<String, String> = emptyMap(),
     val cfCdnEnabled: Boolean = false,
+    val cdnProvider: CdnProvider = if (cfCdnEnabled) CdnProvider.CLOUDFLARE else CdnProvider.NONE,
     val paddingEnabled: Boolean = false,
     val paddingProbability: Float = 0.05f,
     val paddingMinBytes: Int = 64,

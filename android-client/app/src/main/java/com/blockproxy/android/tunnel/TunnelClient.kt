@@ -132,7 +132,7 @@ class TunnelClient(
         stopped = false
         TunnelDiagnosticsLog.write(
             "tunnel.start",
-            "host=${config.serverHost} port=${config.serverPort} cfCdn=${config.cfCdnEnabled}"
+            "host=${config.serverHost} port=${config.serverPort} cdnProvider=${config.cdnProvider.storageValue}"
         )
         _status.value = TunnelStatus.Connecting
         mainJob = clientScope.launch { mainLoop() }
@@ -244,7 +244,7 @@ class TunnelClient(
         _status.value = TunnelStatus.Connected
         TunnelDiagnosticsLog.write(
             "tunnel.connected",
-            "session=${transport.sessionDebugId()} cfIp=${sseCfIpSelector?.currentIp() ?: sseCfIpDns?.getCurrentIp() ?: sseDohDns?.getCurrentIp() ?: ""}"
+            "session=${transport.sessionDebugId()} cdnIp=${sseCfIpSelector?.currentIp() ?: sseCfIpDns?.getCurrentIp() ?: sseDohDns?.getCurrentIp() ?: ""}"
         )
         sseCfIpSelector?.markConnected()
         onCfIpChanged(

@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.blockproxy.android.cdn.CdnProvider
 import com.blockproxy.android.cdn.CfCdnConfig
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -47,10 +48,10 @@ class ConfigRepository(private val source: ConfigDataSource) {
     suspend fun save(config: ServerConfig) {
         require(config.serverHost.isNotBlank()) { "serverHost must not be blank" }
         require(config.serverPort in 1..65535) { "serverPort must be in 1..65535" }
-        if (config.cfCdnEnabled) {
-            require(config.useTls) { "Cloudflare CDN mode requires TLS" }
+        if (config.cdnProvider.enabled) {
+            require(config.useTls) { "CDN mode requires TLS" }
             require(config.serverPort in CfCdnConfig.HTTPS_PORTS) {
-                "Cloudflare CDN mode requires a Cloudflare HTTPS proxy port"
+                "CDN mode requires a supported HTTPS proxy port"
             }
         }
         source.save(config)
@@ -86,6 +87,10 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
 
     override fun observe(): Flow<ServerConfig?> = store.data.map { prefs ->
         val host = prefs[KEY_HOST] ?: return@map null
+        val legacyCfEnabled = prefs[KEY_CF_CDN_ENABLED] ?: false
+        val cdnProvider = prefs[KEY_CDN_PROVIDER]
+            ?.let(CdnProvider::fromStorage)
+            ?: if (legacyCfEnabled) CdnProvider.CLOUDFLARE else CdnProvider.NONE
         ServerConfig(
             serverHost = host,
             serverPort = prefs[KEY_PORT] ?: ServerConfig.DEFAULT_PORT,
@@ -93,7 +98,8 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             allowInsecure = prefs[KEY_ALLOW_INSECURE] ?: true,
             xhttpBasePath = prefs[KEY_XHTTP_BASE_PATH] ?: "/xhttp",
             httpDisguise = prefs[KEY_HTTP_DISGUISE] ?: true,
-            cfCdnEnabled = prefs[KEY_CF_CDN_ENABLED] ?: false,
+            cfCdnEnabled = cdnProvider == CdnProvider.CLOUDFLARE,
+            cdnProvider = cdnProvider,
         )
     }
 
@@ -109,7 +115,8 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
             prefs[KEY_ALLOW_INSECURE] = config.allowInsecure
             prefs[KEY_XHTTP_BASE_PATH] = config.xhttpBasePath
             prefs[KEY_HTTP_DISGUISE] = config.httpDisguise
-            prefs[KEY_CF_CDN_ENABLED] = config.cfCdnEnabled
+            prefs[KEY_CF_CDN_ENABLED] = config.cdnProvider == CdnProvider.CLOUDFLARE
+            prefs[KEY_CDN_PROVIDER] = config.cdnProvider.storageValue
         }
     }
 
@@ -131,6 +138,7 @@ class DataStoreConfigDataSource(context: Context) : ConfigDataSource {
         val KEY_XHTTP_BASE_PATH = stringPreferencesKey("xhttp_base_path")
         val KEY_HTTP_DISGUISE = booleanPreferencesKey("http_disguise")
         val KEY_CF_CDN_ENABLED = booleanPreferencesKey("cf_cdn_enabled")
+        val KEY_CDN_PROVIDER = stringPreferencesKey("cdn_provider")
         val KEY_TUNNEL_ENABLED = booleanPreferencesKey("tunnel_enabled")
     }
 }

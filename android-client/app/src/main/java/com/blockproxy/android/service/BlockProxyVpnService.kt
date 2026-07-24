@@ -368,7 +368,7 @@ class BlockProxyVpnService : VpnService() {
         }
         TunnelDiagnosticsLog.write(
             "service.setup_tunnel",
-            "host=${config.serverHost} port=${config.serverPort} tls=${config.useTls} cfCdn=${config.cfCdnEnabled}"
+            "host=${config.serverHost} port=${config.serverPort} tls=${config.useTls} cdnProvider=${config.cdnProvider.storageValue}"
         )
 
         // Load routing config and create routing components
@@ -436,7 +436,11 @@ class BlockProxyVpnService : VpnService() {
 
         val targetSocketFactory = RealTargetSocketFactory(protect = protectCallback)
 
-        cfIpPool = if (config.cfCdnEnabled) CfIpPool(applicationContext) else null
+        cfIpPool = if (config.cdnProvider.enabled) {
+            CfIpPool(applicationContext, config.cdnProvider)
+        } else {
+            null
+        }
         cfIpSelector = cfIpPool?.let { pool ->
             val snapshot = pool.loadSnapshot()
             CfIpSelector(snapshot) { cursor ->
@@ -460,8 +464,8 @@ class BlockProxyVpnService : VpnService() {
             statusStore.updateCfIp(null)
         }
 
-        // Create DoH DNS when CF CDN is not enabled (shares cache across SSE and upload)
-        val sseDohDns: DohDns? = if (!config.cfCdnEnabled) {
+        // Create DoH DNS when CDN mode is not enabled (shares cache across SSE and upload)
+        val sseDohDns: DohDns? = if (!config.cdnProvider.enabled) {
             DohDns(serverHost = config.serverHost, protect = protectCallback)
         } else null
         val uploadDohDns: DohDns? = sseDohDns

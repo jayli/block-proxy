@@ -13,7 +13,24 @@ class CfIpRefreshWorkerTest {
         val request = CfIpRefreshWorker.createOneTimeRequest(serverPort = 8443)
 
         assertEquals(8443, request.workSpec.input.getInt(CfIpRefreshWorker.KEY_SERVER_PORT, -1))
+        assertEquals(
+            CdnProvider.CLOUDFLARE.storageValue,
+            request.workSpec.input.getString(CfIpRefreshWorker.KEY_CDN_PROVIDER),
+        )
         assertEquals(NetworkType.CONNECTED, request.workSpec.constraints.requiredNetworkType)
+    }
+
+    @Test
+    fun `one-time request includes aliyun provider from server config`() {
+        val request = CfIpRefreshWorker.createOneTimeRequest(
+            com.blockproxy.android.config.ServerConfig(
+                serverHost = "example.com",
+                serverPort = 443,
+                cdnProvider = CdnProvider.ALIYUN,
+            )
+        )
+
+        assertEquals(CdnProvider.ALIYUN.storageValue, request.workSpec.input.getString(CfIpRefreshWorker.KEY_CDN_PROVIDER))
     }
 
     @Test

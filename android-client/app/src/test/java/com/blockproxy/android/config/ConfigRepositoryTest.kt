@@ -1,6 +1,7 @@
 package com.blockproxy.android.config
 
 import app.cash.turbine.test
+import com.blockproxy.android.cdn.CdnProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.callbackFlow
@@ -110,6 +111,46 @@ class ConfigRepositoryTest {
     }
 
     @Test
+    fun `save and observe preserves aliyun cdn provider`() = scope.runTest {
+        repository.observe().test {
+            assertNull(awaitItem())
+
+            repository.save(
+                ServerConfig(
+                    serverHost = "example.com",
+                    serverPort = 443,
+                    useTls = true,
+                    cdnProvider = CdnProvider.ALIYUN,
+                )
+            )
+
+            val item = awaitItem()
+            assertEquals(CdnProvider.ALIYUN, item?.cdnProvider)
+            assertEquals(false, item?.cfCdnEnabled)
+            cancelAndConsumeRemainingEvents()
+        }
+    }
+
+    @Test
+    fun `legacy cfCdnEnabled maps to cloudflare provider`() = scope.runTest {
+        repository.save(
+            ServerConfig(
+                serverHost = "example.com",
+                serverPort = 443,
+                useTls = true,
+                cfCdnEnabled = true,
+            )
+        )
+
+        repository.observe().test {
+            val item = awaitItem()
+            assertEquals(CdnProvider.CLOUDFLARE, item?.cdnProvider)
+            assertEquals(true, item?.cfCdnEnabled)
+            cancelAndConsumeRemainingEvents()
+        }
+    }
+
+    @Test
     fun `cfCdnEnabled defaults to false`() = scope.runTest {
         repository.save(ServerConfig(serverHost = "example.com"))
 
@@ -117,6 +158,30 @@ class ConfigRepositoryTest {
             assertEquals(false, awaitItem()?.cfCdnEnabled)
             cancelAndConsumeRemainingEvents()
         }
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `aliyun cdn requires tls`() = scope.runTest {
+        repository.save(
+            ServerConfig(
+                serverHost = "example.com",
+                serverPort = 443,
+                useTls = false,
+                cdnProvider = CdnProvider.ALIYUN,
+            )
+        )
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `aliyun cdn rejects unsupported port`() = scope.runTest {
+        repository.save(
+            ServerConfig(
+                serverHost = "example.com",
+                serverPort = 8003,
+                useTls = true,
+                cdnProvider = CdnProvider.ALIYUN,
+            )
+        )
     }
 
     @Test

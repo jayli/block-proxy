@@ -29,7 +29,10 @@ class CfIpRefreshWorker(
             return Result.failure()
         }
 
-        val pool = CfIpPool(applicationContext)
+        val provider = CdnProvider.fromStorage(
+            inputData.getString(KEY_CDN_PROVIDER) ?: CdnProvider.CLOUDFLARE.storageValue
+        )
+        val pool = CfIpPool(applicationContext, provider)
         val serverHost = inputData.getString(KEY_SERVER_HOST)
         val xhttpBasePath = inputData.getString(KEY_XHTTP_BASE_PATH) ?: "/xhttp"
         val allowInsecure = inputData.getBoolean(KEY_ALLOW_INSECURE, true)
@@ -72,6 +75,7 @@ class CfIpRefreshWorker(
         const val KEY_SERVER_PORT = "server_port"
         const val KEY_XHTTP_BASE_PATH = "xhttp_base_path"
         const val KEY_ALLOW_INSECURE = "allow_insecure"
+        const val KEY_CDN_PROVIDER = "cdn_provider"
         const val KEY_TESTED = "tested"
         const val KEY_TOTAL = "total"
         const val KEY_SELECTED_COUNT = "selected_count"
@@ -79,7 +83,12 @@ class CfIpRefreshWorker(
 
         fun createOneTimeRequest(serverPort: Int): OneTimeWorkRequest {
             return OneTimeWorkRequestBuilder<CfIpRefreshWorker>()
-                .setInputData(workDataOf(KEY_SERVER_PORT to serverPort))
+                .setInputData(
+                    workDataOf(
+                        KEY_SERVER_PORT to serverPort,
+                        KEY_CDN_PROVIDER to CdnProvider.CLOUDFLARE.storageValue,
+                    )
+                )
                 .setConstraints(networkConstraints())
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
                 .build()
@@ -98,7 +107,12 @@ class CfIpRefreshWorker(
             initialDelayMs: Long = calculateDelayToNext4Am(),
         ): PeriodicWorkRequest {
             return PeriodicWorkRequestBuilder<CfIpRefreshWorker>(1, TimeUnit.DAYS)
-                .setInputData(workDataOf(KEY_SERVER_PORT to serverPort))
+                .setInputData(
+                    workDataOf(
+                        KEY_SERVER_PORT to serverPort,
+                        KEY_CDN_PROVIDER to CdnProvider.CLOUDFLARE.storageValue,
+                    )
+                )
                 .setInitialDelay(initialDelayMs, TimeUnit.MILLISECONDS)
                 .setConstraints(networkConstraints())
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
@@ -162,6 +176,7 @@ class CfIpRefreshWorker(
             KEY_SERVER_PORT to config.serverPort,
             KEY_XHTTP_BASE_PATH to config.xhttpBasePath,
             KEY_ALLOW_INSECURE to config.allowInsecure,
+            KEY_CDN_PROVIDER to config.cdnProvider.storageValue,
         )
 
         fun calculateDelayToNext4Am(nowMillis: Long = System.currentTimeMillis()): Long {

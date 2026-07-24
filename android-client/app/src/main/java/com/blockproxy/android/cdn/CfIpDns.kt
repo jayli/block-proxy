@@ -4,7 +4,7 @@ import android.util.Log
 import okhttp3.Dns
 import java.net.InetAddress
 
-private const val TAG = "CfIpDns"
+private const val TAG = "CdnIpDns"
 
 class CfIpDns(
     private val serverHost: String,
@@ -23,7 +23,7 @@ class CfIpDns(
             selector.selectForLookup()
         }
         if (selectedIp.isNullOrBlank()) {
-            Log.w(TAG, "No CF IP selected for $hostname; falling back to system DNS")
+            Log.w(TAG, "No CDN IP selected for $hostname; falling back to system DNS")
             return delegate.lookup(hostname)
         }
 
@@ -31,7 +31,7 @@ class CfIpDns(
             val ipBytes = InetAddress.getByName(selectedIp).address
             listOf(InetAddress.getByAddress(hostname, ipBytes))
         }.getOrElse {
-            Log.w(TAG, "Invalid CF IP $selectedIp for $hostname; falling back to system DNS")
+            Log.w(TAG, "Invalid CDN IP $selectedIp for $hostname; falling back to system DNS")
             delegate.lookup(hostname)
         }
     }

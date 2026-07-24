@@ -12,6 +12,7 @@ import java.io.File
 private const val ASSET_ALL_IPS = "cf-ips.txt"
 private const val ASSET_GOOD_IPS = "cf-good-ips.txt"
 private const val GOOD_IPS_FILENAME = "cf-good-ips.txt"
+private const val ALIYUN_GOOD_IPS_FILENAME = "aliyun-good-ips.txt"
 
 private val Context.cfIpPrefs: DataStore<Preferences> by preferencesDataStore(name = "cf_ip_prefs")
 
@@ -62,9 +63,39 @@ private class AndroidCfIpStorage(context: Context) : CfIpStorage {
     }
 }
 
-private class DataStoreCfIpCursorStore(context: Context) : CfIpCursorStore {
+private class AndroidAliyunIpStorage(context: Context) : CfIpStorage {
+    private val appContext = context.applicationContext
+
+    override fun readAssetText(name: String): String? = null
+
+    override fun readInternalGoodIpsText(): String? {
+        val file = File(appContext.filesDir, ALIYUN_GOOD_IPS_FILENAME)
+        if (!file.exists()) return null
+        return runCatching { file.readText() }.getOrNull()
+    }
+
+    override fun writeInternalGoodIpsTextAtomically(text: String) {
+        val file = File(appContext.filesDir, ALIYUN_GOOD_IPS_FILENAME)
+        val tmp = File(appContext.filesDir, "$ALIYUN_GOOD_IPS_FILENAME.tmp")
+        tmp.writeText(text)
+        if (!tmp.renameTo(file)) {
+            file.writeText(text)
+            tmp.delete()
+        }
+    }
+}
+
+private class DataStoreCfIpCursorStore(
+    context: Context,
+    provider: CdnProvider,
+) : CfIpCursorStore {
     private val store = context.applicationContext.cfIpPrefs
-    private val key = intPreferencesKey("cf_ip_cursor")
+    private val key = intPreferencesKey(
+        when (provider) {
+            CdnProvider.ALIYUN -> "aliyun_ip_cursor"
+            else -> "cf_ip_cursor"
+        }
+    )
 
     override suspend fun loadCursor(): Int {
         return store.data.first()[key] ?: 0
@@ -80,19 +111,28 @@ private class DataStoreCfIpCursorStore(context: Context) : CfIpCursorStore {
 class CfIpPool(
     private val storage: CfIpStorage,
     private val cursorStore: CfIpCursorStore,
+    private val provider: CdnProvider = CdnProvider.CLOUDFLARE,
 ) {
-    constructor(context: Context) : this(
-        AndroidCfIpStorage(context),
-        DataStoreCfIpCursorStore(context),
+    constructor(context: Context, provider: CdnProvider = CdnProvider.CLOUDFLARE) : this(
+        if (provider == CdnProvider.ALIYUN) AndroidAliyunIpStorage(context) else AndroidCfIpStorage(context),
+        DataStoreCfIpCursorStore(context, provider),
+        provider,
     )
 
     fun loadAllIps(): List<String> {
+        if (provider == CdnProvider.ALIYUN) return AliyunCdnConfig.FIXED_EDGE_IPS
         return parseIpList(storage.readAssetText(ASSET_ALL_IPS))
     }
 
     fun loadGoodIpsBlocking(): List<String> {
         val internalIps = parseIpList(storage.readInternalGoodIpsText())
         if (internalIps.isNotEmpty()) return internalIps
+
+        if (provider == CdnProvider.ALIYUN) {
+            val seedIps = AliyunCdnConfig.FIXED_EDGE_IPS
+            saveGoodIps(seedIps)
+            return seedIps
+        }
 
         val seedIps = parseIpList(storage.readAssetText(ASSET_GOOD_IPS))
         if (seedIps.isNotEmpty()) {

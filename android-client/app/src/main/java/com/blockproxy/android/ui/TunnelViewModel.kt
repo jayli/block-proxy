@@ -14,6 +14,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.blockproxy.android.cdn.CdnProvider
 import com.blockproxy.android.cdn.CfCdnConfig
 import com.blockproxy.android.cdn.CfIpPool
 import com.blockproxy.android.cdn.CfIpRuntimeRegistry
@@ -65,6 +66,7 @@ data class ConfigUiState(
     val password: String = "",
     val isSaved: Boolean = false,
     val cfCdnEnabled: Boolean = false,
+    val cdnProvider: CdnProvider = if (cfCdnEnabled) CdnProvider.CLOUDFLARE else CdnProvider.NONE,
 )
 
 /**
@@ -129,6 +131,7 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
                         useTls = cfg.useTls,
                         allowInsecure = cfg.allowInsecure,
                         cfCdnEnabled = cfg.cfCdnEnabled,
+                        cdnProvider = cfg.cdnProvider,
                         isSaved = true,
                     )
                 }
@@ -236,7 +239,7 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
         val state = _configUiState.value
         return state.host.isNotBlank() &&
             state.port.toIntOrNull() in 1..65535 &&
-            isCfConfigValid(state) &&
+            isCdnConfigValid(state) &&
             state.username.isNotBlank() &&
             state.password.isNotBlank() &&
             state.isSaved
@@ -269,7 +272,15 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun updateCfCdnEnabled(enabled: Boolean) {
-        _configUiState.value = _configUiState.value.copy(cfCdnEnabled = enabled, isSaved = false)
+        updateCdnProvider(if (enabled) CdnProvider.CLOUDFLARE else CdnProvider.NONE)
+    }
+
+    fun updateCdnProvider(provider: CdnProvider) {
+        _configUiState.value = _configUiState.value.copy(
+            cfCdnEnabled = provider == CdnProvider.CLOUDFLARE,
+            cdnProvider = provider,
+            isSaved = false,
+        )
     }
 
     /**
@@ -284,7 +295,8 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
                 serverPort = state.port.toIntOrNull() ?: ServerConfig.DEFAULT_PORT,
                 useTls = state.useTls,
                 allowInsecure = state.allowInsecure,
-                cfCdnEnabled = state.cfCdnEnabled,
+                cfCdnEnabled = state.cdnProvider == CdnProvider.CLOUDFLARE,
+                cdnProvider = state.cdnProvider,
             )
             configRepository.save(config)
 
@@ -294,7 +306,7 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
             )
             credentialStore.save(creds)
 
-            if (config.cfCdnEnabled) {
+            if (config.cdnProvider.enabled) {
                 CfIpRefreshWorker.schedule(context, config)
             } else {
                 CfIpRefreshWorker.cancelSchedule(context)
@@ -307,8 +319,8 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
     fun refreshCfIpPool() {
         val state = _configUiState.value
         val port = state.port.toIntOrNull()
-        if (!state.cfCdnEnabled || port == null || !isCfConfigValid(state)) {
-            _cfIpRefreshState.value = CfIpRefreshState.Error("请先启用 CF CDN 并使用支持的 HTTPS 端口")
+        if (!state.cdnProvider.enabled || port == null || !isCdnConfigValid(state)) {
+            _cfIpRefreshState.value = CfIpRefreshState.Error("请先启用 CDN 并使用支持的 HTTPS 端口")
             return
         }
 
@@ -317,7 +329,8 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
             serverPort = port,
             useTls = state.useTls,
             allowInsecure = state.allowInsecure,
-            cfCdnEnabled = state.cfCdnEnabled,
+            cfCdnEnabled = state.cdnProvider == CdnProvider.CLOUDFLARE,
+            cdnProvider = state.cdnProvider,
         )
         val id = CfIpRefreshWorker.refreshNow(context, config)
         viewModelScope.launch {
@@ -354,8 +367,8 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun isCfConfigValid(state: ConfigUiState): Boolean {
-        if (!state.cfCdnEnabled) return true
+    private fun isCdnConfigValid(state: ConfigUiState): Boolean {
+        if (!state.cdnProvider.enabled) return true
         val port = state.port.toIntOrNull() ?: return false
         return state.useTls && port in CfCdnConfig.HTTPS_PORTS
     }
@@ -364,9 +377,9 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
      * 执行 TLS 连接测试 + MITM 检测。
      *
      * 测试参数与实际隧道连接逻辑完全一致：
-     * - CF CDN 开启时：从 CfIpRuntimeRegistry 取当前游标指向的 CF 边缘 IP 直连，
+     * - CDN 开启时：从 CfIpRuntimeRegistry 取当前游标指向的边缘 IP 直连，
      *   绕过公司网关 DNS 劫持，SNI 仍设为原始 hostname
-     * - CF CDN 关闭时：走正常 DNS 解析
+     * - CDN 关闭时：走正常 DNS 解析
      */
     fun testConnection() {
         val state = _configUiState.value
@@ -380,18 +393,18 @@ class TunnelViewModel(application: Application) : AndroidViewModel(application) 
         _connectionTestState.value = ConnectionTestState.Testing
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // CF CDN 模式下直连 CF IP，避免 DNS 被公司网关劫持到 MITM 代理。
+                // CDN 模式下直连边缘 IP，避免 DNS 被公司网关劫持到 MITM 代理。
                 // VPN 未运行时 runtime registry 为空，因此回退到本地保存的 IP 池。
-                val ipOverride = if (state.cfCdnEnabled) {
+                val ipOverride = if (state.cdnProvider.enabled) {
                     val cfIp = CfIpRuntimeRegistry.currentIp() ?: runCatching {
-                        val snapshot = CfIpPool(context).loadSnapshot()
+                        val snapshot = CfIpPool(context, state.cdnProvider).loadSnapshot()
                         snapshot.goodIps.getOrNull(snapshot.normalizedCursor())
                     }.getOrNull()
                     if (cfIp != null) {
-                        Log.d(TAG, "TLS test: using CF IP $cfIp for host $host")
+                        Log.d(TAG, "TLS test: using CDN IP $cfIp for host $host")
                         cfIp
                     } else {
-                        Log.w(TAG, "TLS test: CF CDN enabled but no IP available, falling back to DNS")
+                        Log.w(TAG, "TLS test: CDN enabled but no IP available, falling back to DNS")
                         null
                     }
                 } else {

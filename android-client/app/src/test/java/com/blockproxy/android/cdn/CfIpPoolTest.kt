@@ -109,4 +109,22 @@ class CfIpPoolTest {
         assertTrue(pool.loadAllIps().isEmpty())
         assertTrue(pool.loadGoodIpsBlocking().isEmpty())
     }
+
+    @Test
+    fun `aliyun pool loads fixed edge ips without asset lookup`() {
+        val pool = CfIpPool(FakeCfIpStorage(), FakeCursorStore(), CdnProvider.ALIYUN)
+
+        assertEquals("117.177.134.1", pool.loadAllIps().first())
+        assertEquals("42.63.63.100", pool.loadAllIps().last())
+        assertEquals(114, pool.loadAllIps().size)
+    }
+
+    @Test
+    fun `aliyun good ips fall back to fixed edge ips before speed test result exists`() {
+        val storage = FakeCfIpStorage()
+        val pool = CfIpPool(storage, FakeCursorStore(), CdnProvider.ALIYUN)
+
+        assertEquals(AliyunCdnConfig.FIXED_EDGE_IPS, pool.loadGoodIpsBlocking())
+        assertEquals(listOf(AliyunCdnConfig.FIXED_EDGE_IPS.joinToString("\n")), storage.writes)
+    }
 }

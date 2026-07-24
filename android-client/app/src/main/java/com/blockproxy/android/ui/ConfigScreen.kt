@@ -38,7 +38,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -59,6 +58,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.blockproxy.android.cdn.CdnProvider
 import com.blockproxy.android.cdn.CfCdnConfig
 import com.blockproxy.android.util.TlsTestResult
 import kotlinx.coroutines.delay
@@ -88,7 +88,7 @@ fun ConfigScreen(
     onUpdatePort: (String) -> Unit,
     onUpdateUsername: (String) -> Unit,
     onUpdatePassword: (String) -> Unit,
-    onUpdateCfCdnEnabled: (Boolean) -> Unit,
+    onUpdateCdnProvider: (CdnProvider) -> Unit,
     onRefreshCfIpPool: () -> Unit,
     cfIpRefreshState: CfIpRefreshState,
     connectionTestState: ConnectionTestState,
@@ -104,7 +104,7 @@ fun ConfigScreen(
     var passwordVisible by remember { mutableStateOf(false) }
     var saveCount by remember { mutableIntStateOf(0) }
     var showSaved by remember { mutableStateOf(false) }
-    val cfPortSupported = !config.cfCdnEnabled ||
+    val cdnPortSupported = !config.cdnProvider.enabled ||
         config.port.toIntOrNull() in CfCdnConfig.HTTPS_PORTS
 
     LaunchedEffect(saveCount) {
@@ -206,37 +206,64 @@ fun ConfigScreen(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "使用 Cloudflare CDN",
-                                style = MaterialTheme.typography.titleSmall,
-                            )
-                            Text(
-                                text = "NAT 轮换时同步轮换 CF 边缘 IP",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = config.cfCdnEnabled,
-                            onCheckedChange = onUpdateCfCdnEnabled,
+                        Text(
+                            text = "CDN 模式",
+                            style = MaterialTheme.typography.titleSmall,
                         )
+                        Text(
+                            text = "NAT 轮换时同步轮换 CDN 边缘 IP",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            CdnProvider.entries.forEach { provider ->
+                                val selected = config.cdnProvider == provider
+                                val label = when (provider) {
+                                    CdnProvider.NONE -> "关闭"
+                                    CdnProvider.CLOUDFLARE -> "Cloudflare"
+                                    CdnProvider.ALIYUN -> "阿里云"
+                                }
+                                val buttonModifier = when (provider) {
+                                    CdnProvider.NONE -> Modifier.width(88.dp)
+                                    CdnProvider.ALIYUN -> Modifier.width(88.dp)
+                                    CdnProvider.CLOUDFLARE -> Modifier.weight(1f)
+                                }
+                                if (selected) {
+                                    Button(
+                                        onClick = { onUpdateCdnProvider(provider) },
+                                        modifier = buttonModifier,
+                                    ) {
+                                        Text(label, maxLines = 1, softWrap = false)
+                                    }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { onUpdateCdnProvider(provider) },
+                                        modifier = buttonModifier,
+                                    ) {
+                                        Text(label, maxLines = 1, softWrap = false)
+                                    }
+                                }
+                            }
+                        }
                     }
 
-                    if (config.cfCdnEnabled && !cfPortSupported) {
+                    if (config.cdnProvider.enabled && !cdnPortSupported) {
                         Text(
-                            text = "CF CDN 模式仅支持 HTTPS 代理端口：443、2053、2083、2087、2096、8443",
+                            text = "CDN 模式仅支持 HTTPS 代理端口：443、2053、2083、2087、2096、8443",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
 
-                    AnimatedVisibility(visible = config.cfCdnEnabled) {
+                    AnimatedVisibility(visible = config.cdnProvider.enabled) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -245,7 +272,7 @@ fun ConfigScreen(
                             OutlinedButton(
                                 onClick = onRefreshCfIpPool,
                                 enabled = cfIpRefreshState !is CfIpRefreshState.Refreshing &&
-                                    cfPortSupported,
+                                    cdnPortSupported,
                             ) {
                                 if (cfIpRefreshState is CfIpRefreshState.Refreshing) {
                                     CircularProgressIndicator(
@@ -254,7 +281,12 @@ fun ConfigScreen(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                 }
-                                Text("刷新 CF IP 池")
+                                Text(
+                                    when (config.cdnProvider) {
+                                        CdnProvider.ALIYUN -> "刷新 Aliyun IP 池"
+                                        else -> "刷新 CF IP 池"
+                                    }
+                                )
                             }
 
                             when (val state = cfIpRefreshState) {
@@ -272,9 +304,9 @@ fun ConfigScreen(
                                 is CfIpRefreshState.Done -> {
                                     Text(
                                         text = if (state.appliedToRunningTunnel) {
-                                            "已刷新 ${state.count} 个，已应用"
+                                            "已刷新 ${state.count} 个，下一次建连生效"
                                         } else {
-                                            "已刷新 ${state.count} 个，下次启动生效"
+                                            "已刷新 ${state.count} 个，已保存"
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.primary,
@@ -455,7 +487,7 @@ fun ConfigScreen(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = config.host.isNotBlank() &&
                     config.port.toIntOrNull() in 1..65535 &&
-                    cfPortSupported &&
+                    cdnPortSupported &&
                     config.username.isNotBlank() &&
                     config.password.isNotBlank(),
             ) {

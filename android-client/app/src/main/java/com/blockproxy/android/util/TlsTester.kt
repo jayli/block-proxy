@@ -72,10 +72,10 @@ data class XhttpRouteTestResult(
  * 因为 TrustManager 回调发生在 TLS 层，早于 HTTP 解析层。
  * 即使后续 HTTP 响应解析失败（隧道服务器不是 HTTP 服务器），证书已捕获。
  *
- * CF CDN 模式下，通过自定义 Dns 将 hostname 解析为 CF 边缘 IP。
+ * CDN 模式下，通过自定义 Dns 将 hostname 解析为边缘 IP。
  * 关键：InetAddress.getByAddress(hostname, ipBytes) 携带原始 hostname，
  * 让 OkHttp 内部 isNumeric(hostName) 为 false，从而正确设置 SNI。
- * 否则 OkHttp 检测到纯 IP 会跳过 SNI，导致 CF 拒绝连接。
+ * 否则 OkHttp 检测到纯 IP 会跳过 SNI，导致 CDN 拒绝连接。
  *
  * VPN 不需要 protect()，因为 BlockProxyVpnService 已通过
  * addDisallowedApplication(packageName) 排除本应用的所有流量。
@@ -91,7 +91,7 @@ object TlsTester {
      *
      * @param host 服务器域名（用于 SNI 和 URL）
      * @param port 服务器端口
-     * @param ipOverride 直连 IP（跳过 DNS 解析）。CF CDN 模式下传入当前游标指向的 CF 边缘 IP，
+     * @param ipOverride 直连 IP（跳过 DNS 解析）。CDN 模式下传入当前游标指向的边缘 IP，
      *                   避免公司网关 DNS 劫持导致 MITM。为 null 时走正常 DNS 解析。
      * @param timeoutMs 连接超时（默认 5000ms）
      * @param mitmKeywords MITM 关键字列表

@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.blockproxy.android.cdn.CdnProvider
 import com.blockproxy.android.status.TunnelStatus
 import com.blockproxy.android.util.NetworkInfo
 
@@ -55,6 +56,7 @@ fun MainScreen(
     host: String = "",
     port: String = "",
     cfCdnEnabled: Boolean = false,
+    cdnProvider: CdnProvider = if (cfCdnEnabled) CdnProvider.CLOUDFLARE else CdnProvider.NONE,
     currentCfIp: String? = null,
     isSlideActive: Boolean = false,
     sliderTrackTone: SliderTrackTone = SliderTrackTone.Neutral,
@@ -98,7 +100,7 @@ fun MainScreen(
                     status = status,
                     host = host,
                     port = port,
-                    cfCdnEnabled = cfCdnEnabled,
+                    cdnProvider = cdnProvider,
                     currentCfIp = currentCfIp,
                 )
 
@@ -136,6 +138,7 @@ private fun StatusCard(
     host: String = "",
     port: String = "",
     cfCdnEnabled: Boolean = false,
+    cdnProvider: CdnProvider = if (cfCdnEnabled) CdnProvider.CLOUDFLARE else CdnProvider.NONE,
     currentCfIp: String? = null,
 ) {
     Card(
@@ -159,8 +162,13 @@ private fun StatusCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 val display = if (status == TunnelStatus.Connected) {
-                    if (cfCdnEnabled && currentCfIp != null) {
-                        "已连接 · $currentCfIp:$port (CF)"
+                    if (cdnProvider.enabled && currentCfIp != null) {
+                        val providerLabel = when (cdnProvider) {
+                            CdnProvider.CLOUDFLARE -> "CF"
+                            CdnProvider.ALIYUN -> "Aliyun"
+                            CdnProvider.NONE -> "CDN"
+                        }
+                        "已连接 · $currentCfIp:$port ($providerLabel)"
                     } else {
                         "已连接 · $host:$port"
                     }
