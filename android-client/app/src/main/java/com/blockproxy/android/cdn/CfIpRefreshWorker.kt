@@ -50,6 +50,8 @@ class CfIpRefreshWorker(
             protect = CfIpRuntimeRegistry.currentProtect(),
             routeProbe = routeProbeConfig?.let { RealCfIpRouteProbe() },
             routeProbeConfig = routeProbeConfig,
+            sniChecker = if (provider == CdnProvider.ALIYUN && serverHost != null) RealTlsSniChecker() else null,
+            sniHost = if (provider == CdnProvider.ALIYUN) serverHost else null,
         )
         val selected = tester.runTest { tested, total ->
             setProgressAsync(workDataOf(KEY_TESTED to tested, KEY_TOTAL to total))
