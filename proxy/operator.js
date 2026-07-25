@@ -9,19 +9,6 @@ async function getResponseByPathname(pathname, isDocker, proxyPort) {
         body: Buffer.alloc(0)
       }
     };
-  } else if (pathname == "/restart_docker") {
-    if (isDocker) {
-      var msg = "请手动重启 Docker 容器。";
-    } else {
-      var msg = "当前程序不在 Docker 容器内，请在终端终止程序后再 npm run start 启动。";
-    }
-    return {
-      response: {
-        statusCode: 200,
-        header: { 'Content-Type': 'text/plain; charset=utf-8' },
-        body: msg
-      }
-    };
   } else if (pathname == "/enable_express") {
     var configData = await _fs.readConfig();
     _fs.writeConfig({
@@ -72,32 +59,6 @@ async function getResponseByPathname(pathname, isDocker, proxyPort) {
         statusCode: 200,
         header: { 'Content-Type': 'text/plain; charset=utf-8' },
         body: "关闭 socks5 成功，请重启 Docker。"
-      }
-    };
-  } else if (pathname == "/disable_webinterface") {
-    var configData = await _fs.readConfig();
-    _fs.writeConfig({
-      ...configData,
-      enable_webinterface: "0"
-    });
-    return {
-      response: {
-        statusCode: 200,
-        header: { 'Content-Type': 'text/plain; charset=utf-8' },
-        body: "关闭 webinterface 成功，请重启 Docker。"
-      }
-    };
-  } else if (pathname == "/enable_webinterface") {
-    var configData = await _fs.readConfig();
-    _fs.writeConfig({
-      ...configData,
-      enable_webinterface: "1"
-    });
-    return {
-      response: {
-        statusCode: 200,
-        header: { 'Content-Type': 'text/plain; charset=utf-8' },
-        body: "启用 webinterface 成功，请重启 Docker。"
       }
     };
   } else {
