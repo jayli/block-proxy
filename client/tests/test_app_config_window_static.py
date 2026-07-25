@@ -48,6 +48,37 @@ def _calls_self_method(node, method_name):
     return False
 
 
+def _assigns_self_attr(node, attr_name):
+    for child in ast.walk(node):
+        if (
+            isinstance(child, ast.Assign)
+            and any(
+                isinstance(target, ast.Attribute)
+                and target.attr == attr_name
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "self"
+                for target in child.targets
+            )
+        ):
+            return True
+    return False
+
+
+def _calls_attr_on_self_attr(node, object_attr, method_name):
+    for child in ast.walk(node):
+        if (
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr == method_name
+            and isinstance(child.func.value, ast.Attribute)
+            and child.func.value.attr == object_attr
+            and isinstance(child.func.value.value, ast.Name)
+            and child.func.value.value.id == "self"
+        ):
+            return True
+    return False
+
+
 def _calls_threading_thread(node):
     for child in ast.walk(node):
         if (
@@ -102,6 +133,49 @@ def test_show_config_window_reloads_disk_config_before_saving():
     assert load_index is not None
     assert save_index is not None
     assert load_index < save_index
+
+
+def test_app_registers_proxy_pin_callback_and_pending_state():
+    source = Path(__file__).parents[1].joinpath("app.py").read_text()
+    tree = ast.parse(source)
+    app_controller = _class_node(tree, "AppController")
+    init_body = _method_body(app_controller, "init")
+
+    assert any(_assigns_self_attr(node, "_pin_mismatch_pending") for node in init_body)
+    assert any(_assigns_self_attr(node, "_last_pin_mismatch") for node in init_body)
+    assert any(
+        _calls_attr_on_self_attr(node, "proxy", "set_pin_callback")
+        for node in init_body
+    )
+
+
+def test_app_has_pin_state_merge_save_helper():
+    source_path = Path(__file__).parents[1].joinpath("app.py")
+    source = source_path.read_text()
+    tree = ast.parse(source)
+    app_controller = _class_node(tree, "AppController")
+    body = _method_body(app_controller, "_save_server_pin_state")
+
+    assert "certPinMismatch" in source
+    assert "certBindEnabled" in source
+    assert any(_calls_name(node, "Config") for node in body)
+    assert any(_calls_self_method(node, "config") is False for node in body)
+
+
+def test_app_pin_mismatch_alert_updates_pin_or_persists_error_state():
+    source_path = Path(__file__).parents[1].joinpath("app.py")
+    source = source_path.read_text()
+    tree = ast.parse(source)
+    app_controller = _class_node(tree, "AppController")
+    callback_body = _method_body(app_controller, "_on_pin_callback")
+    alert_body = _method_body(app_controller, "_show_pin_mismatch_alert")
+
+    assert "更新绑定指纹" in source
+    assert "证书指纹不匹配" in source
+    assert "SHA256:" in source
+    assert any(_calls_self_method(node, "_show_pin_mismatch_alert") for node in callback_body)
+    assert any(_calls_self_method(node, "_save_server_pin_state") for node in alert_body)
+    assert any(_calls_self_method(node, "_reconnect") for node in alert_body)
 
 
 def test_wake_handler_checks_local_proxy_without_full_disconnect():

@@ -132,3 +132,17 @@ class TestConfig:
         assert data["routing"]["direct_rules"] == []  # filled
         assert data["routing"]["proxy_rules"] == []
         assert data["routing"]["default"] == "proxy"
+
+    def test_fill_defaults_adds_cert_pin_fields(self):
+        old = {
+            "server": {"address": "x"},
+            "local": {},
+            "routing": {},
+        }
+        with open(self.config_path, "w") as f:
+            json.dump(old, f)
+
+        data = self.config.load()
+
+        assert data["server"]["certBindEnabled"] is False
+        assert data["server"]["certPin"] == ""

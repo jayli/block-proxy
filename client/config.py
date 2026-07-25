@@ -11,6 +11,8 @@ DEFAULT_CONFIG = {
         "password": "",
         "tls": True,
         "allowInsecure": True,
+        "certBindEnabled": False,
+        "certPin": "",
     },
     "local": {
         "socks_port": 1080,

@@ -1,5 +1,6 @@
 import asyncio
 import functools
+import hashlib
 import ipaddress
 import logging
 import ssl
@@ -20,6 +21,17 @@ class AuthFailedError(Exception):
 
 class NodeUnreachableError(Exception):
     """节点不可达"""
+    pass
+
+
+class CertPinMismatchError(Exception):
+    def __init__(self, saved_pin, new_pin):
+        super().__init__("certificate pin mismatch")
+        self.saved_pin = saved_pin
+        self.new_pin = new_pin
+
+
+class CertPinUnavailableError(Exception):
     pass
 
 
@@ -100,7 +112,9 @@ HANDSHAKE_TIMEOUT = 10
 LOCAL_HANDSHAKE_TIMEOUT = 30
 
 
-async def connect_upstream_socks5(server_config, dest_addr, dest_port, ssl_ctx=None):
+async def connect_upstream_socks5(
+    server_config, dest_addr, dest_port, ssl_ctx=None, verify_cert_pin=None
+):
     host = server_config["address"]
     port = server_config["port"]
     username = server_config["username"]
@@ -117,6 +131,8 @@ async def connect_upstream_socks5(server_config, dest_addr, dest_port, ssl_ctx=N
         ),
         timeout=CONNECT_TIMEOUT,
     )
+    if verify_cert_pin and use_tls:
+        verify_cert_pin(writer.get_extra_info("ssl_object"))
 
     async def _handshake():
         if username and password:
@@ -362,15 +378,68 @@ class ProxyCore:
         self._configured_socks_port = None
         self._configured_http_port = None
         self._server_sockets = []
+        self._cert_bind_enabled = False
+        self._cert_pin = ""
+        self._on_pin_callback = None
+        self._cert_pin_lock = threading.Lock()
+        self._cert_pin_mismatch_reported = False
 
     def set_tunnel_client(self, tc):
         self._tunnel_client = tc
 
+    def set_pin_callback(self, callback):
+        self._on_pin_callback = callback
+
+    def _emit_pin_event(self, event_type, data):
+        cb = self._on_pin_callback
+        if cb:
+            cb(event_type, data)
+
+    def _verify_cert_pin(self, ssl_obj):
+        if not self._cert_bind_enabled:
+            return
+        cert_der = ssl_obj.getpeercert(binary_form=True) if ssl_obj else None
+        if not cert_der:
+            raise CertPinUnavailableError("peer certificate unavailable")
+
+        new_pin = hashlib.sha256(cert_der).hexdigest()
+        with self._cert_pin_lock:
+            if not self._cert_pin:
+                self._cert_pin = new_pin
+                self._cert_pin_mismatch_reported = False
+                crash_logger.warning("Cert pin TOFU: %s", new_pin)
+                self._emit_pin_event("tofu", new_pin)
+                return
+
+            if self._cert_pin != new_pin:
+                saved_pin = self._cert_pin
+                if not self._cert_pin_mismatch_reported:
+                    self._cert_pin_mismatch_reported = True
+                    crash_logger.warning(
+                        "Cert pin MISMATCH! saved=%s... new=%s...",
+                        saved_pin[:16],
+                        new_pin[:16],
+                    )
+                    self._emit_pin_event("mismatch", (saved_pin, new_pin))
+                else:
+                    crash_logger.debug("Cert pin mismatch suppressed; already reported")
+                raise CertPinMismatchError(saved_pin, new_pin)
+
+            if self._cert_pin_mismatch_reported:
+                self._cert_pin_mismatch_reported = False
+                self._emit_pin_event("match", new_pin)
+
     def _build_ssl_context(self):
         server = self._server_config
         if not server["tls"]:
+            self._cert_bind_enabled = False
+            self._cert_pin = ""
+            self._cert_pin_mismatch_reported = False
             self._ssl_ctx = None
             return
+        self._cert_bind_enabled = bool(server.get("certBindEnabled", False))
+        self._cert_pin = server.get("certPin", "") or ""
+        self._cert_pin_mismatch_reported = bool(server.get("certPinMismatch", False))
         ctx = ssl.create_default_context()
         if server["allowInsecure"]:
             ctx.check_hostname = False
@@ -494,6 +563,9 @@ class ProxyCore:
                 timeout=5,
             )
 
+            if protocol == "socks5" and self._server_config["tls"]:
+                self._verify_cert_pin(writer.get_extra_info("ssl_object"))
+
             if protocol == "http":
                 await self._measure_latency_http(reader, writer, username, password)
             else:
@@ -503,6 +575,8 @@ class ProxyCore:
             return (int(elapsed * 1000), None)
         except AuthFailedError:
             return (None, "auth_failed")
+        except CertPinMismatchError:
+            return (None, "pin_mismatch")
         except (NodeUnreachableError, ConnectionRefusedError, ConnectionResetError,
                 OSError, asyncio.TimeoutError, TimeoutError):
             return (None, "unreachable")
@@ -694,7 +768,11 @@ class ProxyCore:
                 self._server_config, dest_addr, dest_port, ssl_ctx=self._ssl_ctx
             )
         return await connect_upstream_socks5(
-            self._server_config, dest_addr, dest_port, ssl_ctx=self._ssl_ctx
+            self._server_config,
+            dest_addr,
+            dest_port,
+            ssl_ctx=self._ssl_ctx,
+            verify_cert_pin=self._verify_cert_pin,
         )
 
     async def _handle_socks(self, client_reader, client_writer):

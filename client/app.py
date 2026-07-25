@@ -93,6 +93,9 @@ class AppController(NSObject):
         self.config = Config()
         self.config.load()
         self.proxy = ProxyCore()
+        self._pin_mismatch_pending = False
+        self._last_pin_mismatch = None
+        self.proxy.set_pin_callback(self._on_pin_callback)
         self.tunnel_client = None
         self.sys_proxy = SystemProxy()
         self.connected = False
@@ -482,6 +485,61 @@ class AppController(NSObject):
                     self._run_on_main(self._reconnect)
 
         threading.Thread(target=_reload_after, daemon=True).start()
+
+    def _save_server_pin_state(self, *, cert_pin=None, cert_bind_enabled=None, pin_error=None):
+        latest = Config(self.config.config_path)
+        latest.load()
+        server = latest.data.setdefault("server", {})
+        if cert_pin is not None:
+            server["certPin"] = cert_pin
+        if cert_bind_enabled is not None:
+            server["certBindEnabled"] = cert_bind_enabled
+        if pin_error is not None:
+            server["certPinMismatch"] = pin_error
+        latest.save()
+        self.config.load()
+
+    def _on_pin_callback(self, event_type, data):
+        if event_type == "tofu":
+            self._save_server_pin_state(cert_pin=data, pin_error=False)
+            return
+        if event_type == "match":
+            self._save_server_pin_state(pin_error=False)
+            return
+        if event_type == "mismatch":
+            saved_pin, new_pin = data
+            self._last_pin_mismatch = (saved_pin, new_pin)
+            if self._pin_mismatch_pending:
+                return
+            self._pin_mismatch_pending = True
+            self._run_on_main(lambda: self._show_pin_mismatch_alert(saved_pin, new_pin))
+
+    def _show_pin_mismatch_alert(self, saved_pin, new_pin):
+        try:
+            NSApp.activateIgnoringOtherApps_(True)
+            alert = NSAlert.alloc().init()
+            alert.setMessageText_("证书指纹不匹配")
+            alert.setInformativeText_(
+                f"代理服务器证书指纹已变更。\n\n"
+                f"可能是中间人攻击，也可能是服务器证书已更新。\n\n"
+                f"原指纹：SHA256:{saved_pin}\n"
+                f"新指纹：SHA256:{new_pin}"
+            )
+            alert.addButtonWithTitle_("更新绑定指纹")
+            alert.addButtonWithTitle_("取消")
+            response = alert.runModal()
+            if response == 1000:
+                self._save_server_pin_state(
+                    cert_pin=new_pin,
+                    cert_bind_enabled=True,
+                    pin_error=False,
+                )
+                if self.connected:
+                    self._reconnect()
+            else:
+                self._save_server_pin_state(pin_error=True)
+        finally:
+            self._pin_mismatch_pending = False
 
     def _show_routing_window(self):
         self.config.save()
