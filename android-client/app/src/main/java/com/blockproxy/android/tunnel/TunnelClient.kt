@@ -35,6 +35,7 @@ private const val TAG = "TunnelClient"
 class TunnelClient(
     private val config: ServerConfig,
     private val credentials: TunnelCredentials,
+    private val clientId: String,
     private val targetSocketFactory: TargetSocketFactory,
     private val clientScope: CoroutineScope,
     private val protect: ((java.net.Socket) -> Boolean)? = null,
@@ -150,6 +151,7 @@ class TunnelClient(
         readJob = null
 
         for (transport in listOfNotNull(activeTransport, candidateTransport, drainingTransport)) {
+            transport.closeSessionOnServer()
             closeTransport(transport)
         }
         activeTransport = null
@@ -317,6 +319,7 @@ class TunnelClient(
         val transportFactory = TunnelTransportFactory(
             config = config,
             credentials = credentials,
+            clientId = clientId,
             sseHttpClient = sseConnectionClient(preferHttp2),
             uploadClient = uploadClient(preferHttp2),
             protect = protect,

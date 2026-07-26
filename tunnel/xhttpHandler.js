@@ -26,7 +26,7 @@ const UploadQueue = require('./uploadQueue');
 const { handleDisguiseRequest } = require('./disguiseResponse');
 
 const DEFAULT_BASE_PATH = '/xhttp';
-const DEFAULT_SESSION_TIMEOUT_MS = 30_000;
+const DEFAULT_SESSION_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_BUFFERED_POSTS = 64;
 const DEFAULT_KEEPALIVE_MIN_MS = 20_000;
 const DEFAULT_KEEPALIVE_MAX_MS = 25_000;
@@ -102,6 +102,17 @@ class XhttpHandler {
       return true;
     }
 
+    // POST /xhttp/close/:sessionId?token=<token>
+    if (subPath.startsWith('/close/') && req.method === 'POST') {
+      const sessionId = subPath.slice('/close/'.length);
+      if (sessionId) {
+        this._handleClose(res, url, sessionId);
+        return true;
+      }
+      this._sendJson(res, 404, { error: 'not found' });
+      return true;
+    }
+
     // POST /xhttp/upload/:sessionId/:seq
     if (subPath.startsWith('/upload/') && req.method === 'POST') {
       const parts = subPath.slice('/upload/'.length).split('/');
@@ -173,8 +184,18 @@ class XhttpHandler {
       const sessionId = crypto.randomUUID();
       const token = this._computeToken();
       const clientCapabilities = new Set(frame.capabilities || []);
+      const clientId = typeof frame.clientId === 'string' ? frame.clientId.trim() : '';
 
-      if (this.hasActiveSse(token)) {
+      if (!clientId) {
+        console.warn('[xhttp] Create: missing client id');
+        this._sendJson(res, 400, { error: 'client id required' });
+        return;
+      }
+
+      const existingSessions = this._tokenSessions.get(token);
+      if (existingSessions && existingSessions.size > 0) {
+        // 只要同 token 仍有 session，就保留给原 sessionId 重连。
+        // SSE 被动断开后 cleanupTimer 到期才会释放占用。
         console.warn('[xhttp] Create: tunnel occupied for token');
         this._sendJson(res, 409, {
           error: 'tunnel occupied',
@@ -199,6 +220,7 @@ class XhttpHandler {
       const session = {
         sessionId,
         token,
+        clientId,
         authenticated: true,
         uploadQueue: new UploadQueue(this._maxBufferedPosts),
         sseRes: null,
@@ -218,7 +240,7 @@ class XhttpHandler {
       }
       this._tokenSessions.get(token).add(sessionId);
 
-      // 30 秒内若无 SSE stream 连接则自动清理
+      // 15 秒内若无 SSE stream 连接则自动清理
       session.cleanupTimer = setTimeout(() => {
         if (!session.sseRes) {
           console.log(`[xhttp] Session ${sessionId} timed out without SSE stream`);
@@ -233,6 +255,7 @@ class XhttpHandler {
       // 通知 manager
       this._onSessionCreated(sessionId, token, {
         capabilities: [...serverCapabilities],
+        clientId,
       });
 
       console.log(`[xhttp] Session created: ${sessionId}`);
@@ -241,6 +264,33 @@ class XhttpHandler {
         capabilities: [...serverCapabilities],
       }, this._buildPaddingHeaders());
     });
+  }
+
+  // ── POST /xhttp/close/:sessionId ────────────────────────────────────
+
+  _handleClose(res, url, sessionId) {
+    const token = url.searchParams.get('token');
+
+    if (!token || !this._verifyToken(token)) {
+      console.warn('[xhttp] Close: invalid token');
+      this._sendJson(res, 401, { error: 'invalid token' });
+      return;
+    }
+
+    const session = this._sessions.get(sessionId);
+    if (!session) {
+      this._sendJson(res, 404, { error: 'session not found' });
+      return;
+    }
+
+    if (session.token !== token) {
+      this._sendJson(res, 403, { error: 'forbidden' });
+      return;
+    }
+
+    console.log(`[xhttp] Session explicitly closed: ${sessionId}`);
+    this._closeSession(sessionId);
+    this._sendJson(res, 200, { ok: true });
   }
 
   // ── POST /xhttp/upload/:sessionId/:seq ──────────────────────────────
@@ -295,6 +345,7 @@ class XhttpHandler {
   _handleStream(req, res, url) {
     const token = url.searchParams.get('token');
     const sessionId = url.searchParams.get('sessionId');
+    const clientId = url.searchParams.get('clientId');
 
     if (!token || !sessionId) {
       this._sendJson(res, 400, { error: 'missing token or sessionId' });
@@ -311,6 +362,12 @@ class XhttpHandler {
     const session = this._sessions.get(sessionId);
     if (!session) {
       this._sendJson(res, 404, { error: 'session not found' });
+      return;
+    }
+
+    if (session.clientId && clientId !== session.clientId) {
+      console.warn('[xhttp] Stream: client id does not own session');
+      this._sendJson(res, 403, { error: 'forbidden' });
       return;
     }
 
@@ -362,6 +419,7 @@ class XhttpHandler {
 
     // 处理 SSE 断开。GET request 本身可能很快 close，SSE 生命周期由 response 决定。
     const handleSseClose = () => {
+      if (session.closed) return;
       if (session.sseRes === res) {
         console.log(`[xhttp] SSE stream closed: ${sessionId}`);
         session.sseRes = null;
@@ -537,6 +595,7 @@ class XhttpHandler {
     const session = this._sessions.get(sessionId);
     if (!session) return;
 
+    session.closed = true;
     this._sessions.delete(sessionId);
 
     // 从 token 映射中移除

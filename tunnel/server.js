@@ -40,7 +40,7 @@ class TunnelServer {
       basePath: this.xhttpBasePath,
       credentials: this.credentials,
       maxBufferedPosts: options.maxBufferedPosts || 64,
-      sessionTimeoutMs: options.sessionTimeoutMs || 30_000,
+      sessionTimeoutMs: options.sessionTimeoutMs || 15_000,
       keepaliveMinMs: options.sseKeepaliveMinMs || options.tunnel_sse_keepalive_min_ms || 20_000,
       keepaliveMaxMs: options.sseKeepaliveMaxMs || options.tunnel_sse_keepalive_max_ms || 25_000,
       paddingEnabled: this.paddingEnabled,

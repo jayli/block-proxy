@@ -62,12 +62,13 @@ function createHandler(overrides = {}) {
   return { handler, events };
 }
 
-async function createSession(handler, capabilities = []) {
+async function createSession(handler, capabilities = [], clientId = 'client-a') {
   const req = mockRequest('POST', '/xhttp/create', encodeFrame({
     type: FRAME_TYPES.AUTH,
     username: 'admin',
     password: 'secret',
     capabilities,
+    clientId,
   }));
   const res = mockResponse();
   assert.equal(handler.handleRequest(req, res), true);
@@ -77,6 +78,13 @@ async function createSession(handler, capabilities = []) {
 }
 
 describe('XhttpHandler session model', () => {
+  it('uses a 15 second default session reconnect window', () => {
+    const { handler } = createHandler({ sessionTimeoutMs: undefined });
+
+    assert.equal(handler._sessionTimeoutMs, 15_000);
+    handler.closeAll();
+  });
+
   it('does not negotiate silent_mode from AUTH capabilities', async () => {
     const { handler, events } = createHandler();
 
@@ -190,31 +198,139 @@ describe('XhttpHandler session model', () => {
     handler.closeAll();
   });
 
-  it('keeps older sessions alive when a new session is created for the same token', async () => {
-    const { handler, events } = createHandler();
+  it('rejects a duplicate session create while an existing session is waiting for SSE', async () => {
+    const { handler } = createHandler();
     const oldSessionId = await createSession(handler);
-    const newSessionId = await createSession(handler);
 
-    assert.notEqual(oldSessionId, newSessionId);
-    assert.equal(handler._sessions.has(oldSessionId), true);
-    assert.equal(handler._sessions.has(newSessionId), true);
-
-    const oldUploadReq = mockRequest('POST', `/xhttp/upload/${oldSessionId}/0`, encodeFrame({
-      type: FRAME_TYPES.PING,
-      payload: Buffer.from('old'),
+    const createReq = mockRequest('POST', '/xhttp/create', encodeFrame({
+      type: FRAME_TYPES.AUTH,
+      username: 'admin',
+      password: 'secret',
+      capabilities: [],
+      clientId: 'client-b',
     }));
-    const oldUploadRes = mockResponse();
-    assert.equal(handler.handleRequest(oldUploadReq, oldUploadRes), true);
-    oldUploadReq.emitBody();
-    assert.equal(oldUploadRes.statusCode, 200);
+    const createRes = mockResponse();
+    assert.equal(handler.handleRequest(createReq, createRes), true);
+    createReq.emitBody();
 
-    await new Promise(resolve => setImmediate(resolve));
-    assert.ok(events.some(event =>
-      event.type === 'frame' &&
-      event.sessionId === oldSessionId &&
-      event.frame.payload.toString('utf8') === 'old'
-    ));
-    assert.equal(events.some(event => event.type === 'closed' && event.sessionId === oldSessionId), false);
+    assert.equal(createRes.statusCode, 409);
+    assert.deepEqual(JSON.parse(createRes.writes.join('')), {
+      error: 'tunnel occupied',
+      message: '隧道已占用',
+    });
+    assert.equal(handler._sessions.has(oldSessionId), true);
+    assert.equal(handler._sessions.size, 1);
+    handler.closeAll();
+  });
+
+  it('rejects session create when client id is missing', () => {
+    const { handler } = createHandler();
+    const req = mockRequest('POST', '/xhttp/create', encodeFrame({
+      type: FRAME_TYPES.AUTH,
+      username: 'admin',
+      password: 'secret',
+      capabilities: [],
+    }));
+    const res = mockResponse();
+    assert.equal(handler.handleRequest(req, res), true);
+    req.emitBody();
+
+    assert.equal(res.statusCode, 400);
+    assert.deepEqual(JSON.parse(res.writes.join('')), {
+      error: 'client id required',
+    });
+    assert.equal(handler._sessions.size, 0);
+    handler.closeAll();
+  });
+
+  it('records the client id that owns a created session', async () => {
+    const { handler } = createHandler();
+    const sessionId = await createSession(handler, [], 'client-a');
+
+    assert.equal(handler._sessions.get(sessionId).clientId, 'client-a');
+    handler.closeAll();
+  });
+
+  it('keeps a disconnected SSE session reserved for the original client id and sessionId to reconnect', async () => {
+    const { handler } = createHandler();
+    const sessionId = await createSession(handler, [], 'client-a');
+
+    const streamReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=client-a`);
+    const streamRes = mockResponse();
+    assert.equal(handler.handleRequest(streamReq, streamRes), true);
+    assert.equal(handler.getActiveSessionId(), sessionId);
+
+    streamRes.emit('close');
+    assert.equal(handler.getActiveSessionId(), null);
+
+    const createReq = mockRequest('POST', '/xhttp/create', encodeFrame({
+      type: FRAME_TYPES.AUTH,
+      username: 'admin',
+      password: 'secret',
+      capabilities: [],
+      clientId: 'client-b',
+    }));
+    const createRes = mockResponse();
+    assert.equal(handler.handleRequest(createReq, createRes), true);
+    createReq.emitBody();
+
+    assert.equal(createRes.statusCode, 409);
+    assert.equal(handler._sessions.has(sessionId), true);
+
+    const wrongClientReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=client-b`);
+    const wrongClientRes = mockResponse();
+    assert.equal(handler.handleRequest(wrongClientReq, wrongClientRes), true);
+    assert.equal(wrongClientRes.statusCode, 403);
+    assert.equal(handler.getActiveSessionId(), null);
+
+    const reconnectReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=client-a`);
+    const reconnectRes = mockResponse();
+    assert.equal(handler.handleRequest(reconnectReq, reconnectRes), true);
+    assert.equal(reconnectRes.statusCode, 200);
+    assert.equal(handler.getActiveSessionId(), sessionId);
+    handler.closeAll();
+  });
+
+  it('releases the tunnel slot immediately when the session is explicitly closed', async () => {
+    const { handler, events } = createHandler();
+    const sessionId = await createSession(handler);
+
+    const closeReq = mockRequest('POST', `/xhttp/close/${sessionId}?token=${tokenFor()}`);
+    const closeRes = mockResponse();
+    assert.equal(handler.handleRequest(closeReq, closeRes), true);
+
+    assert.equal(closeRes.statusCode, 200);
+    assert.deepEqual(JSON.parse(closeRes.writes.join('')), { ok: true });
+    assert.equal(handler._sessions.has(sessionId), false);
+    assert.ok(events.some(event => event.type === 'closed' && event.sessionId === sessionId));
+
+    const newSessionId = await createSession(handler);
+    assert.ok(newSessionId);
+    handler.closeAll();
+  });
+
+  it('does not close a session when the explicit close token is invalid', async () => {
+    const { handler } = createHandler();
+    const sessionId = await createSession(handler);
+
+    const closeReq = mockRequest('POST', `/xhttp/close/${sessionId}?token=bad-token`);
+    const closeRes = mockResponse();
+    assert.equal(handler.handleRequest(closeReq, closeRes), true);
+
+    assert.equal(closeRes.statusCode, 401);
+    assert.equal(handler._sessions.has(sessionId), true);
+
+    const createReq = mockRequest('POST', '/xhttp/create', encodeFrame({
+      type: FRAME_TYPES.AUTH,
+      username: 'admin',
+      password: 'secret',
+      capabilities: [],
+      clientId: 'client-b',
+    }));
+    const createRes = mockResponse();
+    assert.equal(handler.handleRequest(createReq, createRes), true);
+    createReq.emitBody();
+    assert.equal(createRes.statusCode, 409);
     handler.closeAll();
   });
 
@@ -222,7 +338,7 @@ describe('XhttpHandler session model', () => {
     const { handler } = createHandler();
     const sessionId = await createSession(handler);
 
-    const streamReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}`);
+    const streamReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=client-a`);
     const streamRes = mockResponse();
     assert.equal(handler.handleRequest(streamReq, streamRes), true);
     assert.equal(streamRes.statusCode, 200);
@@ -232,6 +348,7 @@ describe('XhttpHandler session model', () => {
       username: 'admin',
       password: 'secret',
       capabilities: [],
+      clientId: 'client-b',
     }));
     const createRes = mockResponse();
     assert.equal(handler.handleRequest(createReq, createRes), true);
@@ -250,7 +367,7 @@ describe('XhttpHandler session model', () => {
     const { handler } = createHandler();
     const sessionId = await createSession(handler);
 
-    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}`);
+    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=client-a`);
     const res = mockResponse();
     assert.equal(handler.handleRequest(req, res), true);
     assert.equal(res.statusCode, 200);
@@ -270,7 +387,7 @@ describe('XhttpHandler session model', () => {
     const { handler } = createHandler();
     const sessionId = await createSession(handler);
 
-    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}`);
+    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=client-a`);
     const res = mockResponse();
     assert.equal(handler.handleRequest(req, res), true);
     assert.equal(handler.getActiveSessionId(), sessionId);
@@ -284,10 +401,10 @@ describe('XhttpHandler session model', () => {
   });
 
   it('keeps the active SSE selected when a duplicate session create is rejected', async () => {
-    const { handler } = createHandler();
+    const { handler } = createHandler({ sessionTimeoutMs: 20 });
     const oldSessionId = await createSession(handler);
 
-    const oldReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${oldSessionId}`);
+    const oldReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${oldSessionId}&clientId=client-a`);
     const oldRes = mockResponse();
     assert.equal(handler.handleRequest(oldReq, oldRes), true);
     assert.equal(handler.getActiveSessionId(), oldSessionId);
@@ -297,6 +414,7 @@ describe('XhttpHandler session model', () => {
       username: 'admin',
       password: 'secret',
       capabilities: [],
+      clientId: 'client-b',
     }));
     const duplicateCreateRes = mockResponse();
     assert.equal(handler.handleRequest(duplicateCreateReq, duplicateCreateRes), true);
@@ -313,8 +431,24 @@ describe('XhttpHandler session model', () => {
     oldRes.emit('close');
     assert.equal(handler.getActiveSessionId(), null);
 
+    const protectedCreateReq = mockRequest('POST', '/xhttp/create', encodeFrame({
+      type: FRAME_TYPES.AUTH,
+      username: 'admin',
+      password: 'secret',
+      capabilities: [],
+      clientId: 'client-b',
+    }));
+    const protectedCreateRes = mockResponse();
+    assert.equal(handler.handleRequest(protectedCreateReq, protectedCreateRes), true);
+    protectedCreateReq.emitBody();
+    assert.equal(protectedCreateRes.statusCode, 409);
+    assert.equal(handler._sessions.has(oldSessionId), true);
+
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(handler._sessions.has(oldSessionId), false);
+
     const newSessionId = await createSession(handler);
-    const newReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${newSessionId}`);
+    const newReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${newSessionId}&clientId=client-a`);
     const newRes = mockResponse();
     assert.equal(handler.handleRequest(newReq, newRes), true);
 
@@ -323,7 +457,7 @@ describe('XhttpHandler session model', () => {
       active: 1,
       candidate: 0,
       draining: 0,
-      total: 2,
+      total: 1,
     });
     assert.equal(handler._sessions.has(newSessionId), true);
     handler.closeAll();
@@ -336,7 +470,7 @@ describe('XhttpHandler session model', () => {
     });
     const sessionId = await createSession(handler);
 
-    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}`);
+    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=client-a`);
     const res = mockResponse();
     assert.equal(handler.handleRequest(req, res), true);
 

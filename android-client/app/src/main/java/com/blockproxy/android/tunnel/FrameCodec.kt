@@ -62,6 +62,14 @@ object FrameCodec {
                 result.write(passwordBytes.size)
                 result.write(passwordBytes)
                 result.write(encodeCapabilities(frame.capabilities))
+                frame.clientId?.let { clientId ->
+                    val clientIdBytes = clientId.toByteArray(Charsets.UTF_8)
+                    if (clientIdBytes.size > 255) {
+                        throw IllegalArgumentException("Client id too long: ${clientIdBytes.size} > 255")
+                    }
+                    result.write(clientIdBytes.size)
+                    result.write(clientIdBytes)
+                }
                 result.toByteArray()
             }
 
@@ -307,11 +315,24 @@ object FrameCodec {
                 val (capabilities, capabilityEnd) = decodeCapabilities(payload, offset)
                 offset = capabilityEnd
 
+                val clientId = if (offset < payload.size) {
+                    val clientIdLen = payload[offset].toInt() and 0xFF
+                    offset++
+                    if (offset + clientIdLen > payload.size) {
+                        throw IllegalArgumentException("Auth frame client id extends beyond payload")
+                    }
+                    String(payload, offset, clientIdLen, Charsets.UTF_8).also {
+                        offset += clientIdLen
+                    }
+                } else {
+                    null
+                }
+
                 if (offset != payload.size) {
                     throw IllegalArgumentException("Auth frame has trailing bytes")
                 }
 
-                Frame.Auth(username, password, capabilities)
+                Frame.Auth(username, password, capabilities, clientId)
             }
 
             FrameType.CONNECT.code -> {

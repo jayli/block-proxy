@@ -24,6 +24,7 @@ private const val OCTET_STREAM = "application/octet-stream"
 class XhttpSession(
     private val config: ServerConfig,
     private val credentials: TunnelCredentials,
+    private val clientId: String,
     private val sseHttpClient: OkHttpClient,
     private val uploadClient: XhttpUploadClient,
     private val protect: ((java.net.Socket) -> Boolean)? = null,
@@ -35,6 +36,22 @@ class XhttpSession(
     )
 
     companion object {
+        internal fun buildAuthFrame(
+            config: ServerConfig,
+            credentials: TunnelCredentials,
+            uploadH2Enabled: Boolean,
+            clientId: String,
+        ): ByteArray {
+            val authCapabilities = buildList {
+                if (config.paddingEnabled) add(FrameCodec.CAP_PADDING)
+                add(FrameCodec.CAP_UPLOAD_BATCH)
+                if (uploadH2Enabled) add(FrameCodec.CAP_UPLOAD_H2)
+            }
+            return FrameCodec.encode(
+                Frame.Auth(credentials.username, credentials.password, authCapabilities, clientId)
+            )
+        }
+
         internal fun parseCreateSessionResponse(body: String): CreatedSession {
             val sessionId = Regex(""""sessionId"\s*:\s*"([^"]+)"""")
                 .find(body)
@@ -71,14 +88,7 @@ class XhttpSession(
         val token = computeToken()
 
         // 1. 编码 AUTH 帧
-        val authCapabilities = buildList {
-            if (config.paddingEnabled) add(FrameCodec.CAP_PADDING)
-            add(FrameCodec.CAP_UPLOAD_BATCH)
-            if (uploadH2Enabled) add(FrameCodec.CAP_UPLOAD_H2)
-        }
-        val authFrame = FrameCodec.encode(
-            Frame.Auth(credentials.username, credentials.password, authCapabilities)
-        )
+        val authFrame = buildAuthFrame(config, credentials, uploadH2Enabled, clientId)
 
         // 2. POST /xhttp/create
         Log.i(TAG, "Creating xhttp session at $baseUrl/create")
@@ -98,6 +108,7 @@ class XhttpSession(
             baseUrl = baseUrl,
             sessionId = created.sessionId,
             token = token,
+            clientId = clientId,
             sseHttpClient = sseHttpClient,
             uploadClient = uploadClient,
             protect = protect,

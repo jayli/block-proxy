@@ -105,6 +105,23 @@ describe('Protocol encodeFrame/decodeFrame', () => {
     assert.deepEqual(decoded.capabilities, ['padding']);
   });
 
+  it('should roundtrip AUTH frame with client id', () => {
+    const frame = {
+      type: FRAME_TYPES.AUTH,
+      username: 'admin',
+      password: 's3cret',
+      capabilities: ['padding'],
+      clientId: 'client-a'
+    };
+    const buf = encodeFrame(frame);
+    const decoded = decodeFrame(buf);
+    assert.equal(decoded.type, FRAME_TYPES.AUTH);
+    assert.equal(decoded.username, 'admin');
+    assert.equal(decoded.password, 's3cret');
+    assert.deepEqual(decoded.capabilities, ['padding']);
+    assert.equal(decoded.clientId, 'client-a');
+  });
+
   it('should roundtrip CAPABILITIES frame', () => {
     assert.equal(FRAME_TYPES.CAPABILITIES, 0x24);
     const buf = encodeFrame({ type: FRAME_TYPES.CAPABILITIES, capabilities: ['padding'] });

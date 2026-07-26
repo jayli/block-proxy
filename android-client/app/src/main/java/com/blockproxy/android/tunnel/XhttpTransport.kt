@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStreamReader
@@ -29,8 +30,13 @@ import kotlin.random.Random
 
 private const val TAG = "XhttpTransport"
 private const val DEFAULT_SSE_IDLE_TIMEOUT_MS = 90_000L
+private const val SSE_RECONNECT_WINDOW_MS = 15_000L
+private const val SSE_RECONNECT_INITIAL_DELAY_MS = 250L
+private const val SSE_RECONNECT_MAX_DELAY_MS = 1_000L
 internal const val XHTTP_CONNECTION_POOL_SIZE = 4
 internal const val XHTTP_CONNECTION_KEEPALIVE_SECONDS = 60L
+
+private class SseSessionLostException(message: String) : IOException(message)
 
 /**
  * xhttp 传输层：用按需 HTTP POST + SSE 替代 WebSocket 双向隧道。
@@ -42,6 +48,7 @@ class XhttpTransport(
     private val baseUrl: String,           // https://host:port/xhttp
     private val sessionId: String,
     private val token: String,
+    private val clientId: String,
     private val sseHttpClient: OkHttpClient,
     private val uploadClient: XhttpUploadClient,
     private val protect: ((Socket) -> Boolean)? = null,
@@ -81,6 +88,7 @@ class XhttpTransport(
     )
 
     private val sseDisconnectNotified = AtomicBoolean(false)
+    private val activeCloseRequested = AtomicBoolean(false)
 
     /** SSE disconnected callback (for reconnection) */
     @Volatile var onSseDisconnected: (() -> Unit)? = null
@@ -146,11 +154,12 @@ class XhttpTransport(
      */
     fun start() {
         sseDisconnectNotified.set(false)
+        activeCloseRequested.set(false)
         TunnelDiagnosticsLog.write("transport.start", "session=${shortSessionId()}")
         sseJob = scope.launch {
             var failure: Throwable? = null
             try {
-                connectSse()
+                runSseLoop()
             } catch (e: CancellationException) {
                 failure = e
                 throw e
@@ -176,6 +185,57 @@ class XhttpTransport(
         }
     }
 
+    private suspend fun runSseLoop() {
+        var reconnectDeadlineAt: Long? = null
+        var retryDelayMs = SSE_RECONNECT_INITIAL_DELAY_MS
+
+        while (!activeCloseRequested.get()) {
+            try {
+                connectSse()
+                if (activeCloseRequested.get()) return
+                markSseOffline()
+                reconnectDeadlineAt = System.currentTimeMillis() + SSE_RECONNECT_WINDOW_MS
+                retryDelayMs = SSE_RECONNECT_INITIAL_DELAY_MS
+                TunnelDiagnosticsLog.write(
+                    "sse.passive_disconnected",
+                    "session=${shortSessionId()} reconnectWindowMs=$SSE_RECONNECT_WINDOW_MS"
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: SseSessionLostException) {
+                throw e
+            } catch (e: Exception) {
+                if (activeCloseRequested.get()) return
+                val deadline = reconnectDeadlineAt ?: throw e
+                val now = System.currentTimeMillis()
+                if (now >= deadline) throw e
+                val delayMs = minOf(retryDelayMs, deadline - now)
+                TunnelDiagnosticsLog.write(
+                    "sse.reconnect_failed",
+                    "session=${shortSessionId()} type=${e::class.java.simpleName} nextDelayMs=$delayMs"
+                )
+                delay(delayMs)
+                retryDelayMs = minOf(retryDelayMs * 2, SSE_RECONNECT_MAX_DELAY_MS)
+                continue
+            }
+
+            val deadline = reconnectDeadlineAt ?: continue
+            val now = System.currentTimeMillis()
+            if (now >= deadline) {
+                throw IOException("SSE reconnect window expired")
+            }
+            val delayMs = minOf(retryDelayMs, deadline - now)
+            delay(delayMs)
+            retryDelayMs = minOf(retryDelayMs * 2, SSE_RECONNECT_MAX_DELAY_MS)
+        }
+    }
+
+    private fun markSseOffline() {
+        sseIdleWatchdog.stop()
+        sseConnected = false
+        _isOpen.value = false
+    }
+
     suspend fun awaitOpen(timeoutMs: Long): Boolean {
         return withTimeoutOrNull(timeoutMs) {
             isOpenFlow.first { it }
@@ -184,7 +244,7 @@ class XhttpTransport(
     }
 
     private suspend fun connectSse() {
-        val url = "$baseUrl/stream?token=$token&sessionId=$sessionId"
+        val url = "$baseUrl/stream?token=$token&sessionId=$sessionId&clientId=$clientId"
 
         val request = Request.Builder()
             .url(url)
@@ -208,7 +268,10 @@ class XhttpTransport(
                     "sse.http_failed",
                     "session=${shortSessionId()} code=${response.code}"
                 )
-                return
+                if (response.code == 404) {
+                    throw SseSessionLostException("SSE session not found")
+                }
+                throw IOException("SSE failed: HTTP ${response.code}")
             }
 
             val contentType = response.header("Content-Type") ?: ""
@@ -218,10 +281,10 @@ class XhttpTransport(
                     "sse.wrong_content_type",
                     "session=${shortSessionId()} contentType=$contentType"
                 )
-                return
+                throw IOException("SSE wrong content type: $contentType")
             }
 
-            val stream = response.body?.byteStream() ?: return
+            val stream = response.body?.byteStream() ?: throw IOException("SSE response body is empty")
 
             sseReader = BufferedReader(InputStreamReader(stream))
             sseConnected = true
@@ -301,8 +364,35 @@ class XhttpTransport(
         }
     }
 
+    suspend fun closeSessionOnServer() = withContext(Dispatchers.IO) {
+        val url = "$baseUrl/close/$sessionId?token=$token"
+        val request = Request.Builder()
+            .url(url)
+            .post(ByteArray(0).toRequestBody(null))
+            .header("Cache-Control", "no-store")
+            .build()
+        val closeClient = sseHttpClient.newBuilder()
+            .callTimeout(2, TimeUnit.SECONDS)
+            .build()
+
+        try {
+            closeClient.newCall(request).execute().use { response ->
+                TunnelDiagnosticsLog.write(
+                    "xhttp.close_session",
+                    "session=${shortSessionId()} code=${response.code}"
+                )
+            }
+        } catch (e: Exception) {
+            TunnelDiagnosticsLog.write(
+                "xhttp.close_session_failed",
+                "session=${shortSessionId()} type=${e::class.java.simpleName} message=${e.message ?: ""}"
+            )
+        }
+    }
+
     override fun close(code: Int, reason: String) {
         Log.i(TAG, "Closing transport: code=$code reason=$reason")
+        activeCloseRequested.set(true)
         TunnelDiagnosticsLog.write(
             "transport.close",
             "session=${shortSessionId()} code=$code reason=$reason"

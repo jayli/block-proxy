@@ -72,12 +72,12 @@ function h2Request(client, method, requestPath, body = null, headers = {}) {
   });
 }
 
-function openSse(port, sessionId) {
+function openSse(port, sessionId, clientId = 'client-a') {
   return new Promise((resolve, reject) => {
     const req = https.get({
       hostname: 'localhost',
       port,
-      path: `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}`,
+      path: `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=${clientId}`,
       rejectUnauthorized: false,
       headers: { accept: 'text/event-stream' },
     }, (res) => {
@@ -119,6 +119,7 @@ async function createSession(port) {
     username: 'admin',
     password: 'secret',
     capabilities: [],
+    clientId: 'client-a',
   });
   const res = await request(port, 'POST', '/xhttp/create', authFrame, {
     'content-type': 'application/octet-stream',
@@ -214,6 +215,7 @@ describe('TunnelServer xhttp', () => {
         username: 'admin',
         password: 'secret',
         capabilities: ['upload-h2-v1', 'upload-batch-v1'],
+        clientId: 'client-h2',
       });
       const createRes = await h2Request(client, 'POST', '/xhttp/create', authFrame, {
         'content-type': 'application/octet-stream',
@@ -235,6 +237,7 @@ describe('TunnelServer xhttp', () => {
       assert.equal(received.length, 1);
       assert.equal(received[0].sessionId, body.sessionId);
       assert.equal(received[0].frame.payload.toString('utf8'), 'h2');
+      server.getXhttpHandler().closeAll();
     } finally {
       client.close();
     }

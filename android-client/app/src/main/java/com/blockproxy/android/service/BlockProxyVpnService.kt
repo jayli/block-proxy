@@ -20,7 +20,9 @@ import com.blockproxy.android.cdn.CfIpRuntimeRegistry
 import com.blockproxy.android.cdn.CfIpSelector
 import com.blockproxy.android.doh.DohDns
 import com.blockproxy.android.config.ConfigRepository
+import com.blockproxy.android.config.ClientIdentityStore
 import com.blockproxy.android.config.DataStoreConfigDataSource
+import com.blockproxy.android.config.DataStoreClientIdentityDataSource
 import com.blockproxy.android.config.DataStoreCredentialDataSource
 import com.blockproxy.android.config.CredentialStore
 import com.blockproxy.android.config.RoutingConfig
@@ -470,11 +472,23 @@ class BlockProxyVpnService : VpnService() {
         } else null
         val uploadDohDns: DohDns? = sseDohDns
 
+        val clientId = try {
+            ClientIdentityStore(DataStoreClientIdentityDataSource(applicationContext)).getOrCreate()
+        } catch (e: Exception) {
+            TunnelDiagnosticsLog.write(
+                "service.client_id_failed",
+                "type=${e::class.java.simpleName} message=${e.message ?: ""}"
+            )
+            enterErrorAndStop("客户端身份初始化失败")
+            return
+        }
+
         // Create TunnelClient (needed by TunnelForwardConnector for LocalSocksServer)
         val scope = serviceScope ?: return
         val client = TunnelClient(
             config = config,
             credentials = credentials,
+            clientId = clientId,
             targetSocketFactory = targetSocketFactory,
             clientScope = scope,
             protect = protectCallback,

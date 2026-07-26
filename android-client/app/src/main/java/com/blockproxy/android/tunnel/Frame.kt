@@ -33,6 +33,7 @@ sealed class Frame {
         val username: String,
         val password: String,
         val capabilities: List<String> = emptyList(),
+        val clientId: String? = null,
     ) : Frame()
     data object AuthOk : Frame()
     data object AuthFail : Frame()

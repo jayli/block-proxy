@@ -143,13 +143,21 @@ function encodeFrame(frame) {
     case FRAME_TYPES.AUTH: {
       const uBuf = Buffer.from(frame.username, 'utf8');
       const pBuf = Buffer.from(frame.password, 'utf8');
-      payload = Buffer.concat([
+      const parts = [
         Buffer.from([frame.type, uBuf.length]),
         uBuf,
         Buffer.from([pBuf.length]),
         pBuf,
         encodeCapabilities(frame.capabilities)
-      ]);
+      ];
+      if (frame.clientId) {
+        const clientIdBuf = Buffer.from(String(frame.clientId), 'utf8');
+        if (clientIdBuf.length > 255) {
+          throw new Error(`Client id too long: ${frame.clientId}`);
+        }
+        parts.push(Buffer.from([clientIdBuf.length]), clientIdBuf);
+      }
+      payload = Buffer.concat(parts);
       break;
     }
 
@@ -237,8 +245,17 @@ function decodeFrame(buffer) {
       const pLen = payload[offset++];
       const password = payload.slice(offset, offset + pLen).toString('utf8');
       offset += pLen;
-      const { capabilities } = decodeCapabilities(payload, offset);
-      return { type, username, password, capabilities, bytesRead: 2 + length };
+      const { capabilities, bytesRead } = decodeCapabilities(payload, offset);
+      offset = bytesRead;
+      let clientId;
+      if (offset < payload.length) {
+        const clientIdLen = payload[offset++];
+        if (offset + clientIdLen > payload.length) throw new Error('Client id extends beyond payload');
+        clientId = payload.slice(offset, offset + clientIdLen).toString('utf8');
+        offset += clientIdLen;
+      }
+      if (offset !== payload.length) throw new Error('Auth frame has trailing bytes');
+      return { type, username, password, capabilities, clientId, bytesRead: 2 + length };
     }
 
     case FRAME_TYPES.CAPABILITIES: {

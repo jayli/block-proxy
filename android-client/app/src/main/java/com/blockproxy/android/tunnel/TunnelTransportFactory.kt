@@ -13,6 +13,7 @@ import okhttp3.OkHttpClient
 class TunnelTransportFactory(
     private val config: ServerConfig,
     private val credentials: TunnelCredentials,
+    private val clientId: String,
     private val sseHttpClient: OkHttpClient,
     private val uploadClient: XhttpUploadClient,
     private val protect: ((java.net.Socket) -> Boolean)? = null,
@@ -27,6 +28,7 @@ class TunnelTransportFactory(
         val session = XhttpSession(
             config = config,
             credentials = credentials,
+            clientId = clientId,
             sseHttpClient = sseHttpClient,
             uploadClient = uploadClient,
             protect = protect,

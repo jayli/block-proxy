@@ -44,6 +44,19 @@ class FrameCodecTest {
     }
 
     @Test
+    fun `encode and decode Auth with client id`() {
+        val encoded = FrameCodec.encode(Frame.Auth("admin", "pass", listOf("padding"), "client-a"))
+        val decoded = FrameCodec.decode(encoded)
+
+        assertTrue(decoded is Frame.Auth)
+        val auth = decoded as Frame.Auth
+        assertEquals("admin", auth.username)
+        assertEquals("pass", auth.password)
+        assertEquals(listOf("padding"), auth.capabilities)
+        assertEquals("client-a", auth.clientId)
+    }
+
+    @Test
     fun `encode and decode Capabilities`() {
         val original = Frame.Capabilities(listOf("padding"))
         val encoded = FrameCodec.encode(original)
