@@ -172,6 +172,24 @@ describe('TunnelManager.forward', () => {
     stream.destroy();
   });
 
+  it('clears idle timer when active request is cleared', () => {
+    const server = createMockServer();
+    const manager = new TunnelManager(server, { tunnel_domains: [] });
+
+    const idleTimer = setTimeout(() => {}, 300000);
+    manager._activeRequests.set(123, {
+      reqid: 123,
+      timeout: null,
+      idleTimer,
+      sessionId: server._sessionA,
+    });
+
+    manager._clearActiveRequest(123);
+
+    assert.equal(manager._activeRequests.has(123), false);
+    assert.equal(idleTimer._destroyed, true);
+  });
+
   it('disconnect of one session clears only entries bound to that session', () => {
     const server = createMockServer();
     const manager = new TunnelManager(server, { tunnel_domains: [] });

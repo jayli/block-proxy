@@ -386,7 +386,7 @@ class ConfigWindowController(NSObject):
             self._cert_bind_label.setStringValue_("证书指纹不匹配（中间人攻击 or 服务端证书已更新）")
         elif has_pin:
             self._cert_bind_label.setStringValue_(
-                f"证书指纹：SHA256:{self._cert_pin[:24]}..."
+                f"证书指纹：{self._cert_pin[:24]}..."
             )
         else:
             self._cert_bind_label.setStringValue_("首次连接时将自动绑定证书指纹")

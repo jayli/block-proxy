@@ -331,6 +331,7 @@ class TunnelManager {
     const entry = this._activeRequests.get(reqid);
     if (!entry) return;
     if (entry.timeout) clearTimeout(entry.timeout);
+    if (entry.idleTimer) clearTimeout(entry.idleTimer);
     this._activeRequests.delete(reqid);
   }
 

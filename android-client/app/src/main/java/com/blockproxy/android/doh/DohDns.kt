@@ -95,36 +95,37 @@ class DohDns(
         val url = "${DohConfig.DOH_URL}?name=$domain&type=$recordType"
         val request = Request.Builder().url(url).header("Accept", "application/dns-json").build()
 
-        val response = dohClient.newCall(request).execute()
-        val body = response.body?.string() ?: return emptyList()
+        return dohClient.newCall(request).execute().use { response ->
+            val body = response.body?.string() ?: return emptyList()
 
-        if (!response.isSuccessful) {
-            Log.w(TAG, "DoH HTTP error: ${response.code} for $domain $recordType")
-            return emptyList()
-        }
-
-        val expectedType = if (recordType == "A") 1 else 28
-        val ips = mutableListOf<String>()
-        val json = JSONObject(body)
-        val answers = json.optJSONArray("Answer") ?: return emptyList()
-
-        for (i in 0 until answers.length()) {
-            val answer = answers.getJSONObject(i)
-            if (answer.optInt("type") != expectedType) continue
-            val data = answer.optString("data", "")
-            if (data.isEmpty()) continue
-            try {
-                val addr = InetAddress.getByName(data)
-                if ((recordType == "A" && addr.address.size == 4) ||
-                    (recordType == "AAAA" && addr.address.size == 16)
-                ) {
-                    ips.add(data)
-                }
-            } catch (_: Exception) {
-                // Skip invalid IP
+            if (!response.isSuccessful) {
+                Log.w(TAG, "DoH HTTP error: ${response.code} for $domain $recordType")
+                return emptyList()
             }
+
+            val expectedType = if (recordType == "A") 1 else 28
+            val ips = mutableListOf<String>()
+            val json = JSONObject(body)
+            val answers = json.optJSONArray("Answer") ?: return emptyList()
+
+            for (i in 0 until answers.length()) {
+                val answer = answers.getJSONObject(i)
+                if (answer.optInt("type") != expectedType) continue
+                val data = answer.optString("data", "")
+                if (data.isEmpty()) continue
+                try {
+                    val addr = InetAddress.getByName(data)
+                    if ((recordType == "A" && addr.address.size == 4) ||
+                        (recordType == "AAAA" && addr.address.size == 16)
+                    ) {
+                        ips.add(data)
+                    }
+                } catch (_: Exception) {
+                    // Skip invalid IP
+                }
+            }
+            ips
         }
-        return ips
     }
 
     /**
@@ -132,6 +133,10 @@ class DohDns(
      * Uses bootstrap IPs to resolve the DoH server, bypasses VPN via protect().
      */
     private val dohClient: OkHttpClient by lazy {
+        buildDohClient()
+    }
+
+    private fun buildDohClient(): OkHttpClient {
         val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
             override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
             override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
@@ -165,6 +170,6 @@ class DohDns(
             builder.socketFactory(ProtectedSocketFactory(protect))
         }
 
-        builder.build()
+        return builder.build()
     }
 }
