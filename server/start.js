@@ -1,6 +1,7 @@
 // express/start.js
 // 总入口，根据 config.enable_express 参数判断是启动后台+代理，还是只启动代理
 // 如果后台没启动，直接访问 http://代理IP:8001，打开开关后重启服务即可
+require('./timestampConsole').installConsoleTimestamp();
 const _fs = require('../proxy/fs.js');
 
 (async function() {
@@ -20,5 +21,4 @@ const _fs = require('../proxy/fs.js');
     await LocalProxy.init();
   }
 })();
-
 

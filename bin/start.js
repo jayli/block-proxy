@@ -5,6 +5,7 @@ const path = require('path');
 const { Command } = require('commander');
 const program = new Command();
 const _fs = require('../proxy/fs.js');
+const { createTimestampingWriter } = require('../server/timestampConsole');
 
 const pkgDir = path.join(__dirname, '..');
 const startScript = path.resolve(pkgDir, 'server/start.js');
@@ -23,12 +24,15 @@ function startApp() {
     stdio: 'pipe'
   });
 
+  const writeStdout = createTimestampingWriter((line) => process.stdout.write(line));
+  const writeStderr = createTimestampingWriter((line) => process.stderr.write(line));
+
   currentChild.stdout.on('data', (data) => {
-    process.stdout.write(data);
+    writeStdout(data);
   });
 
   currentChild.stderr.on('data', (data) => {
-    process.stderr.write(data);
+    writeStderr(data);
   });
 
   currentChild.on('close', async (code, signal) => {
