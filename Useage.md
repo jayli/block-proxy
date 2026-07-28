@@ -505,6 +505,12 @@ A: 如果 block-proxy 部署在路由器上且配置了用户名和密码认证�
 
 通过客户端开启证书绑定的开关来避免 MITM，如果发现证书伪造时，直接 TLS 握手失败，并给与提示。
 
+### Q：脚本启动block-proxy-client 
+
+Macos Client 客户端如果被阻断，可以用命令行替代
+
+`pm2 start main.py --name blockproxy-client --cwd /PATH_TO_block-proxy/client --interpreter /Library/Frameworks/Python.framework/Versions/3.13/bin/python3`
+
 ### Q: 客户端通过隧道链接家宽
 
 用 Android 端客户端，无需隐匿性的话不用开启 CDN，直接连家宽 openwrt 对应的端口（默认8003）即可。
