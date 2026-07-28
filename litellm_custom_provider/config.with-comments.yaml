@@ -1,0 +1,100 @@
+# config.yaml
+general_settings:
+  master_key: litellm
+  disable_spend_logs: true
+
+model_list:
+  ######################### GOOGLE ###########################
+  - model_name: gemini-3-flash-preview
+    litellm_params:
+      model: gemini/gemini-3-flash-preview
+      api_key: xxxxAIzaSyA1EevklgKtYLqIqW7ZxI4Nme3fW93jME8
+      gemini_context_caching: true
+  - model_name: gemini-3-pro-preview
+    litellm_params:
+      model: gemini/gemini-3-pro-preview
+      api_key: xxxAIzaSyA1EevklgKtYLqIqW7ZxI4Nme3fW93jME8
+      gemini_context_caching: true
+
+  ######################### ALIYUN ###########################
+  - model_name: qwen3.5-plus
+    litellm_params:
+      model: anthropic/qwen3.5-plus
+      api_key: sk-sp-dcb6fcc79bea4d69852cf735e53865da
+      api_base: https://coding.dashscope.aliyuncs.com/apps/anthropic
+  - model_name: qwen3.6-plus
+    litellm_params:
+      model: anthropic/qwen3.6-plus
+      api_key: sk-sp-dcb6fcc79bea4d69852cf735e53865da
+      api_base: https://coding.dashscope.aliyuncs.com/apps/anthropic
+  - model_name: qwen3.6-plus[1m]
+    litellm_params:
+      model: anthropic/qwen3.6-plus
+      api_key: sk-sp-dcb6fcc79bea4d69852cf735e53865da
+      api_base: https://coding.dashscope.aliyuncs.com/apps/anthropic
+
+  ######################### KIMI   ###########################
+  - model_name: kimi-k2.6
+    litellm_params:
+      model: anthropic/kimi-k2.6
+      api_key: sk-kimi-c0HnCHyP4CEERXc3d27oawi4bbFdbeGppTgjbvRUQ5WcpCClJkd62IsmUFayPD1U
+      api_base: https://api.kimi.com/coding
+
+  ######################### DEEPSEEK   ###########################
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: anthropic/deepseek-v4-pro
+      api_key: sk-367e2e12ff254e5b86c42eb503cd9e03
+      api_base: https://api.deepseek.com/anthropic
+      extra_body:
+        thinking:
+          type: enabled
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/deepseek-v4-flash
+      api_key: sk-367e2e12ff254e5b86c42eb503cd9e03
+      api_base: https://api.deepseek.com/anthropic
+  - model_name: deepseek-v4-pro
+    litellm_params:
+      model: anthropic/deepseek-v4-pro
+      api_key: sk-367e2e12ff254e5b86c42eb503cd9e03
+      api_base: https://api.deepseek.com/anthropic
+  - model_name: deepseek-v4-flash
+    litellm_params:
+      model: anthropic/deepseek-v4-flash
+      api_key: sk-367e2e12ff254e5b86c42eb503cd9e03
+      api_base: https://api.deepseek.com/anthropic
+
+  ######################### ALIBABA ##########################
+  - model_name: Peach-07-17-DogFooding
+    litellm_params:
+      model: anthropic/Peach-07-17-DogFooding
+      api_key: ffb5f902627a5c49de94da5025003c00
+      api_base: https://idealab.alibaba-inc.com/api/code
+  - model_name: peach
+    litellm_params:
+      model: idealab-openai/Peach-07-17-DogFooding
+      api_key: ffb5f902627a5c49de94da5025003c00
+      api_base: https://idealab.alibaba-inc.com/api/openai/v1
+      custom_llm_provider: idealab-openai
+
+  ######################### OPENAI ###########################
+  - model_name: gpt-5.3-codex
+    litellm_params:
+      model: anthropic/claude-opus-4-5
+      api_base: https://c.consolelog.work/codex_proxy_claude
+      api_key: dummy
+  - model_name: gpt-5.2-codex
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5
+      api_base: https://c.consolelog.work/codex_proxy_claude
+      api_key: dummy
+
+litellm_settings:
+  drop_params: true
+  use_chat_completions_url_for_anthropic_messages: true
+  turn_off_message_logging: true
+  log_raw_request_response: false
+  custom_provider_map:
+    - provider: idealab-openai
+      custom_handler: idealab_openai_provider.idealab_openai_handler
