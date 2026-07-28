@@ -189,16 +189,20 @@ class TunnelClient:
     """Bidirectional tunnel client. Connects to Server, receives CONNECT requests
     (reverse direction) and can initiate CONNECT through tunnel (forward direction)."""
 
-    def __init__(self, config, on_status_change):
+    def __init__(self, config, on_status_change, on_edr_blocked=None):
         """
         config: full config dict with 'server' and 'tunnel' sections.
         on_status_change: callback(status: str, detail: str) -> None.
             status values: 'connecting', 'connected', 'reconnecting',
                           'occupied', 'auth_failed', 'disconnected'
+        on_edr_blocked: optional callback(dest_addr, dest_port) when EDR blocking suspected.
         """
         self._tunnel_cfg = config['tunnel']
         self._server_cfg = config['server']
         self._user_on_status_change = on_status_change
+        self._on_edr_blocked = on_edr_blocked
+        self._consecutive_resets = 0
+        self._edr_notified = False
         self._last_status = 'disconnected'
         self._running = False
         self._thread = None
@@ -427,7 +431,24 @@ class TunnelClient:
                 self._on_status_change('auth_failed', str(e))
                 logger.error(f'Tunnel authentication failed: {e}')
                 break  # Don't retry: bad credentials will not heal by reconnecting
+            except ConnectionResetError as e:
+                self._consecutive_resets += 1
+                logger.error(f'Tunnel connection reset ({self._consecutive_resets}): {e}')
+                if self._consecutive_resets >= 3 and not self._edr_notified:
+                    self._edr_notified = True
+                    addr = self._tunnel_cfg.get('server_address') or self._server_cfg.get('address', '?')
+                    port = self._tunnel_cfg.get('server_port', 8003)
+                    logger.warning("EDR blocking suspected on tunnel connection to %s:%s", addr, port)
+                    if self._on_edr_blocked:
+                        self._on_edr_blocked(addr, port)
+                self._on_status_change('reconnecting', f'{backoff}s')
+                try:
+                    await asyncio.sleep(backoff)
+                except asyncio.CancelledError:
+                    break
+                backoff = min(backoff * 2, 60)
             except Exception as e:
+                self._consecutive_resets = 0
                 logger.error(f'Tunnel connection failed: {e}')
                 self._on_status_change('reconnecting', f'{backoff}s')
                 try:
@@ -456,6 +477,8 @@ class TunnelClient:
 
         self._connected = True
         self._connected_event.set()
+        self._consecutive_resets = 0
+        self._edr_notified = False
         self._on_status_change('connected', '')
 
         try:

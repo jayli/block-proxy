@@ -112,6 +112,57 @@ HANDSHAKE_TIMEOUT = 10
 LOCAL_HANDSHAKE_TIMEOUT = 30
 
 
+class EdrBlockDetector:
+    """Detects EDR/security software blocking outbound connections.
+    
+    EDR tools (e.g. AliEntSafe/oneagent) inject RST during TCP handshake
+    for processes with untrusted code signatures. This manifests as
+    ConnectionResetError on open_connection().
+    
+    Detection: N consecutive ConnectionResetError on outbound connects
+    within a time window → likely EDR blocking.
+    """
+
+    THRESHOLD = 3          # consecutive resets to trigger
+    WINDOW = 30            # seconds window for counting
+    NOTIFY_COOLDOWN = 300  # seconds between notifications
+
+    def __init__(self, on_blocked=None):
+        self._on_blocked = on_blocked  # callback(dest_addr, dest_port)
+        self._reset_times = []         # timestamps of recent resets
+        self._last_notify = 0
+        self._notified = False
+
+    def record_reset(self, dest_addr, dest_port):
+        """Record a ConnectionResetError on outbound connect."""
+        import time
+        now = time.monotonic()
+        self._reset_times.append(now)
+        # Keep only resets within the window
+        cutoff = now - self.WINDOW
+        self._reset_times = [t for t in self._reset_times if t > cutoff]
+
+        if len(self._reset_times) >= self.THRESHOLD and not self._notified:
+            if now - self._last_notify > self.NOTIFY_COOLDOWN:
+                self._notified = True
+                self._last_notify = now
+                logger.warning(
+                    "EDR blocking suspected: %d consecutive ConnectionResetError "
+                    "on outbound connects (last: %s:%s)",
+                    len(self._reset_times), dest_addr, dest_port,
+                )
+                if self._on_blocked:
+                    self._on_blocked(dest_addr, dest_port)
+
+    def record_success(self):
+        """Record a successful outbound connect — resets the detector."""
+        self._reset_times.clear()
+        if self._notified:
+            self._notified = False
+            logger.info("EDR blocking no longer detected (connection succeeded)")
+
+
+
 async def connect_upstream_socks5(
     server_config, dest_addr, dest_port, ssl_ctx=None, verify_cert_pin=None
 ):
@@ -335,6 +386,11 @@ async def connect_direct(dest_addr, dest_port):
     return await asyncio.open_connection(dest_addr, dest_port)
 
 
+def _is_edr_reset(exc):
+    """Check if an exception looks like EDR RST injection during TCP handshake."""
+    return isinstance(exc, ConnectionResetError)
+
+
 MAX_CONCURRENT = 256
 
 
@@ -383,12 +439,18 @@ class ProxyCore:
         self._on_pin_callback = None
         self._cert_pin_lock = threading.Lock()
         self._cert_pin_mismatch_reported = False
+        self._edr_detector = None
+        self._on_edr_blocked = None
 
     def set_tunnel_client(self, tc):
         self._tunnel_client = tc
 
     def set_pin_callback(self, callback):
         self._on_pin_callback = callback
+
+    def set_edr_callback(self, callback):
+        """Set callback for EDR blocking detection: callback(dest_addr, dest_port)."""
+        self._on_edr_blocked = callback
 
     def _emit_pin_event(self, event_type, data):
         cb = self._on_pin_callback
@@ -461,6 +523,7 @@ class ProxyCore:
         self._proxy_private = local.get("proxy_private", False)
         self._udp_enabled = local.get("udp", True)
         self._build_ssl_context()
+        self._edr_detector = EdrBlockDetector(on_blocked=self._on_edr_blocked)
 
         # Initialize routing engine (geodata loaded selectively in RoutingEngine.__init__)
         from routing import RoutingEngine, _geodata_dir
@@ -744,14 +807,23 @@ class ProxyCore:
     async def _connect_target(self, dest_addr, dest_port, is_domain=None, route=None):
         if route is None:
             route = self._select_route(dest_addr, is_domain=is_domain)
-        if route == "tunnel":
-            reader, writer = await self._connect_via_tunnel(dest_addr, dest_port)
-            return reader, writer, "tunnel"
-        if route == "direct":
-            reader, writer = await connect_direct(dest_addr, dest_port)
-            return reader, writer, "direct"
-        reader, writer = await self._connect_upstream(dest_addr, dest_port)
-        return reader, writer, "proxy"
+        try:
+            if route == "tunnel":
+                reader, writer = await self._connect_via_tunnel(dest_addr, dest_port)
+                return reader, writer, "tunnel"
+            if route == "direct":
+                reader, writer = await connect_direct(dest_addr, dest_port)
+                if self._edr_detector:
+                    self._edr_detector.record_success()
+                return reader, writer, "direct"
+            reader, writer = await self._connect_upstream(dest_addr, dest_port)
+            if self._edr_detector:
+                self._edr_detector.record_success()
+            return reader, writer, "proxy"
+        except ConnectionResetError:
+            if self._edr_detector:
+                self._edr_detector.record_reset(dest_addr, dest_port)
+            raise
 
     async def _connect_via_tunnel(self, dest_addr, dest_port):
         loop = asyncio.get_event_loop()

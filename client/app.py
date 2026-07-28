@@ -96,6 +96,7 @@ class AppController(NSObject):
         self._pin_mismatch_pending = False
         self._last_pin_mismatch = None
         self.proxy.set_pin_callback(self._on_pin_callback)
+        self.proxy.set_edr_callback(self._on_edr_blocked)
         self.tunnel_client = None
         self.sys_proxy = SystemProxy()
         self.connected = False
@@ -104,6 +105,7 @@ class AppController(NSObject):
         self._super_dns_proc = None
         self._log_proc = None
         self._measuring = False
+        self._edr_blocked = False
         self._connecting = False
         self._reconnecting = False
         self._disconnecting = False
@@ -326,7 +328,8 @@ class AppController(NSObject):
         try:
             tc = TunnelClient(
                 self.config.data,
-                on_status_change=lambda status, detail="": None
+                on_status_change=lambda status, detail="": None,
+                on_edr_blocked=self._on_edr_blocked,
             )
             tc.start()
             self.tunnel_client = tc
@@ -393,6 +396,7 @@ class AppController(NSObject):
     def _on_disconnected(self):
         self._finish_connecting()
         self.connected = False
+        self._edr_blocked = False
         self.toggle_item.setTitle_("启动代理")
         self._update_icon()
 
@@ -827,7 +831,8 @@ class AppController(NSObject):
                                 tc.stop()
                                 new_tc = TunnelClient(
                                     self.config.data,
-                                    on_status_change=lambda status, detail="": None
+                                    on_status_change=lambda status, detail="": None,
+                                    on_edr_blocked=self._on_edr_blocked,
                                 )
                                 new_tc.start()
                                 self.tunnel_client = new_tc
@@ -937,7 +942,7 @@ class AppController(NSObject):
                     else:
                         reason_map = {
                             "auth_failed": "鉴权失败",
-                            "unreachable": "节点不通",
+                            "unreachable": "请求被安全软件拦截" if self._edr_blocked else "节点不通",
                             "reconnecting": "重试中...",
                         }
                         suffix = reason_map.get(failure_reason)
@@ -1022,6 +1027,14 @@ class AppController(NSObject):
 
     def _executeCallback_(self, fn):
         fn()
+
+    def _on_edr_blocked(self, dest_addr, dest_port):
+        """Called from proxy_core when EDR blocking is suspected."""
+        self._edr_blocked = True
+        def _update():
+            if self.connected:
+                self.toggle_item.setTitle_("请求被安全软件拦截，请加白名单")
+        self._run_on_main(_update)
 
     def _show_notification(self, title, subtitle, message):
         try:
