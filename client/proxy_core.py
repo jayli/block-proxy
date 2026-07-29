@@ -3,6 +3,7 @@ import functools
 import hashlib
 import ipaddress
 import logging
+import socket
 import ssl
 import struct
 import threading
@@ -65,6 +66,15 @@ def is_private_ip(host):
 
 RELAY_IDLE_TIMEOUT = 300
 UDP_IDLE_TIMEOUT = 120
+
+
+def _set_nodelay(writer):
+    try:
+        sock = writer.transport.get_extra_info("socket")
+        if sock:
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except (OSError, AttributeError):
+        pass
 
 
 async def write_udp_frame(writer, data):
@@ -163,13 +173,104 @@ class EdrBlockDetector:
 
 
 
+async def _socks5_handshake(reader, writer, server_config, dest_addr, dest_port):
+    username = server_config["username"]
+    password = server_config["password"]
+
+    if username and password:
+        writer.write(b"\x05\x01\x02")
+    else:
+        writer.write(b"\x05\x01\x00")
+    await writer.drain()
+
+    resp = await reader.readexactly(2)
+    if resp[0] != 0x05:
+        raise Exception("SOCKS5 version mismatch")
+
+    if resp[1] == 0x02:
+        uname = username.encode("utf-8")
+        passwd = password.encode("utf-8")
+        writer.write(
+            b"\x01"
+            + struct.pack("B", len(uname))
+            + uname
+            + struct.pack("B", len(passwd))
+            + passwd
+        )
+        await writer.drain()
+        auth_resp = await reader.readexactly(2)
+        if auth_resp[1] != 0x00:
+            raise Exception("SOCKS5 auth failed")
+    elif resp[1] == 0xFF:
+        raise Exception("SOCKS5 no acceptable auth method")
+
+    try:
+        addr = ipaddress.ip_address(dest_addr)
+        if isinstance(addr, ipaddress.IPv4Address):
+            addr_data = b"\x01" + addr.packed
+        else:
+            addr_data = b"\x04" + addr.packed
+    except ValueError:
+        encoded = dest_addr.encode("utf-8")
+        addr_data = b"\x03" + struct.pack("B", len(encoded)) + encoded
+
+    writer.write(
+        b"\x05\x01\x00" + addr_data + struct.pack("!H", dest_port)
+    )
+    await writer.drain()
+
+    reply = await reader.readexactly(4)
+    if reply[1] != 0x00:
+        raise Exception(f"SOCKS5 CONNECT failed: {reply[1]:#x}")
+
+    if reply[3] == 0x01:
+        await reader.readexactly(4 + 2)
+    elif reply[3] == 0x03:
+        length = (await reader.readexactly(1))[0]
+        await reader.readexactly(length + 2)
+    elif reply[3] == 0x04:
+        await reader.readexactly(16 + 2)
+
+
+async def _http_connect_handshake(reader, writer, server_config, dest_addr, dest_port):
+    username = server_config["username"]
+    password = server_config["password"]
+    target = f"{dest_addr}:{dest_port}"
+    lines = [f"CONNECT {target} HTTP/1.1", f"Host: {target}"]
+    if username and password:
+        import base64
+        cred = base64.b64encode(f"{username}:{password}".encode()).decode()
+        lines.append(f"Proxy-Authorization: Basic {cred}")
+    lines.append("")
+    lines.append("")
+    writer.write("\r\n".join(lines).encode())
+    await writer.drain()
+
+    status_line = await reader.readline()
+    if not status_line:
+        raise Exception("HTTP proxy closed connection")
+    parts = status_line.decode().split(" ", 2)
+    if len(parts) < 2 or not parts[1].startswith("2"):
+        raise Exception(f"HTTP proxy CONNECT failed: {status_line.decode().strip()}")
+    while True:
+        line = await reader.readline()
+        if line in (b"\r\n", b"\n", b""):
+            break
+
+
+async def _close_writer(writer):
+    writer.close()
+    try:
+        await writer.wait_closed()
+    except OSError:
+        pass
+
+
 async def connect_upstream_socks5(
     server_config, dest_addr, dest_port, ssl_ctx=None, verify_cert_pin=None
 ):
     host = server_config["address"]
     port = server_config["port"]
-    username = server_config["username"]
-    password = server_config["password"]
     use_tls = server_config["tls"]
     resolved = await resolve_node_address(host)
     connect_host = resolved.connect_host
@@ -184,70 +285,15 @@ async def connect_upstream_socks5(
     )
     if verify_cert_pin and use_tls:
         verify_cert_pin(writer.get_extra_info("ssl_object"))
-
-    async def _handshake():
-        if username and password:
-            writer.write(b"\x05\x01\x02")
-        else:
-            writer.write(b"\x05\x01\x00")
-        await writer.drain()
-
-        resp = await reader.readexactly(2)
-        if resp[0] != 0x05:
-            raise Exception("SOCKS5 version mismatch")
-
-        if resp[1] == 0x02:
-            uname = username.encode("utf-8")
-            passwd = password.encode("utf-8")
-            writer.write(
-                b"\x01"
-                + struct.pack("B", len(uname))
-                + uname
-                + struct.pack("B", len(passwd))
-                + passwd
-            )
-            await writer.drain()
-            auth_resp = await reader.readexactly(2)
-            if auth_resp[1] != 0x00:
-                raise Exception("SOCKS5 auth failed")
-        elif resp[1] == 0xFF:
-            raise Exception("SOCKS5 no acceptable auth method")
-
-        try:
-            addr = ipaddress.ip_address(dest_addr)
-            if isinstance(addr, ipaddress.IPv4Address):
-                addr_data = b"\x01" + addr.packed
-            else:
-                addr_data = b"\x04" + addr.packed
-        except ValueError:
-            encoded = dest_addr.encode("utf-8")
-            addr_data = b"\x03" + struct.pack("B", len(encoded)) + encoded
-
-        writer.write(
-            b"\x05\x01\x00" + addr_data + struct.pack("!H", dest_port)
-        )
-        await writer.drain()
-
-        reply = await reader.readexactly(4)
-        if reply[1] != 0x00:
-            raise Exception(f"SOCKS5 CONNECT failed: {reply[1]:#x}")
-
-        if reply[3] == 0x01:
-            await reader.readexactly(4 + 2)
-        elif reply[3] == 0x03:
-            length = (await reader.readexactly(1))[0]
-            await reader.readexactly(length + 2)
-        elif reply[3] == 0x04:
-            await reader.readexactly(16 + 2)
+    _set_nodelay(writer)
 
     try:
-        await asyncio.wait_for(_handshake(), timeout=HANDSHAKE_TIMEOUT)
+        await asyncio.wait_for(
+            _socks5_handshake(reader, writer, server_config, dest_addr, dest_port),
+            timeout=HANDSHAKE_TIMEOUT,
+        )
     except Exception:
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except OSError:
-            pass
+        await _close_writer(writer)
         raise
 
     return reader, writer
@@ -256,9 +302,7 @@ async def connect_upstream_socks5(
 async def connect_upstream_http(server_config, dest_addr, dest_port, ssl_ctx=None):
     host = server_config["address"]
     port = server_config["port"]
-    username = server_config["username"]
-    password = server_config["password"]
-    use_tls = server_config["tls"]
+    use_tls = False
     resolved = await resolve_node_address(host)
     connect_host = resolved.connect_host
     server_hostname = resolved.server_hostname or host
@@ -270,38 +314,15 @@ async def connect_upstream_http(server_config, dest_addr, dest_port, ssl_ctx=Non
         ),
         timeout=CONNECT_TIMEOUT,
     )
-
-    async def _handshake():
-        target = f"{dest_addr}:{dest_port}"
-        lines = [f"CONNECT {target} HTTP/1.1", f"Host: {target}"]
-        if username and password:
-            import base64
-            cred = base64.b64encode(f"{username}:{password}".encode()).decode()
-            lines.append(f"Proxy-Authorization: Basic {cred}")
-        lines.append("")
-        lines.append("")
-        writer.write("\r\n".join(lines).encode())
-        await writer.drain()
-
-        status_line = await reader.readline()
-        if not status_line:
-            raise Exception("HTTP proxy closed connection")
-        parts = status_line.decode().split(" ", 2)
-        if len(parts) < 2 or not parts[1].startswith("2"):
-            raise Exception(f"HTTP proxy CONNECT failed: {status_line.decode().strip()}")
-        while True:
-            line = await reader.readline()
-            if line in (b"\r\n", b"\n", b""):
-                break
+    _set_nodelay(writer)
 
     try:
-        await asyncio.wait_for(_handshake(), timeout=HANDSHAKE_TIMEOUT)
+        await asyncio.wait_for(
+            _http_connect_handshake(reader, writer, server_config, dest_addr, dest_port),
+            timeout=HANDSHAKE_TIMEOUT,
+        )
     except Exception:
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except OSError:
-            pass
+        await _close_writer(writer)
         raise
 
     return reader, writer
@@ -324,6 +345,7 @@ async def connect_upstream_udp_associate(server_config, ssl_ctx=None):
         ),
         timeout=CONNECT_TIMEOUT,
     )
+    _set_nodelay(writer)
 
     async def _handshake():
         if username and password:
@@ -372,18 +394,16 @@ async def connect_upstream_udp_associate(server_config, ssl_ctx=None):
     try:
         await asyncio.wait_for(_handshake(), timeout=HANDSHAKE_TIMEOUT)
     except Exception:
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except OSError:
-            pass
+        await _close_writer(writer)
         raise
 
     return reader, writer
 
 
 async def connect_direct(dest_addr, dest_port):
-    return await asyncio.open_connection(dest_addr, dest_port)
+    reader, writer = await asyncio.open_connection(dest_addr, dest_port)
+    _set_nodelay(writer)
+    return reader, writer
 
 
 def _is_edr_reset(exc):
@@ -392,6 +412,86 @@ def _is_edr_reset(exc):
 
 
 MAX_CONCURRENT = 256
+
+POOL_SIZE = 3
+POOL_CHECK_INTERVAL = 1.0
+POOL_CONNECT_TIMEOUT = 8
+
+
+class UpstreamPool:
+    def __init__(self, server_config, ssl_ctx, verify_cert_pin=None):
+        self._server_config = server_config
+        self._ssl_ctx = ssl_ctx
+        self._verify_cert_pin = verify_cert_pin
+        self._pool = asyncio.Queue(maxsize=POOL_SIZE)
+        self._running = False
+        self._task = None
+
+    async def start(self):
+        self._running = True
+        self._task = asyncio.ensure_future(self._maintain())
+
+    async def stop(self):
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+        while not self._pool.empty():
+            try:
+                _, writer = self._pool.get_nowait()
+                await _close_writer(writer)
+            except asyncio.QueueEmpty:
+                break
+
+    async def _maintain(self):
+        while self._running:
+            if self._pool.qsize() < POOL_SIZE:
+                try:
+                    reader, writer = await self.create_connection()
+                    await self._pool.put((reader, writer))
+                except Exception as exc:
+                    logger.debug("upstream preconnect failed: %s", exc)
+            await asyncio.sleep(POOL_CHECK_INTERVAL)
+
+    async def create_connection(self):
+        host = self._server_config["address"]
+        port = self._server_config["port"]
+        protocol = self._server_config.get("protocol", "socks5")
+        use_tls = self._server_config["tls"] if protocol == "socks5" else False
+        resolved = await resolve_node_address(host)
+        connect_host = resolved.connect_host
+        server_hostname = resolved.server_hostname or host
+
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(
+                connect_host, port,
+                ssl=self._ssl_ctx if use_tls else None,
+                server_hostname=server_hostname if use_tls else None,
+            ),
+            timeout=POOL_CONNECT_TIMEOUT,
+        )
+        if self._verify_cert_pin and use_tls:
+            self._verify_cert_pin(writer.get_extra_info("ssl_object"))
+        _set_nodelay(writer)
+        return reader, writer
+
+    async def acquire(self):
+        while not self._pool.empty():
+            try:
+                reader, writer = self._pool.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if writer.is_closing():
+                continue
+            if reader.at_eof():
+                await _close_writer(writer)
+                continue
+            return reader, writer
+        return await self.create_connection()
 
 
 class _UdpRelayProtocol(asyncio.DatagramProtocol):
@@ -441,6 +541,7 @@ class ProxyCore:
         self._cert_pin_mismatch_reported = False
         self._edr_detector = None
         self._on_edr_blocked = None
+        self._upstream_pool = None
 
     def set_tunnel_client(self, tc):
         self._tunnel_client = tc
@@ -728,6 +829,8 @@ class ProxyCore:
         init_writer()
         asyncio.ensure_future(self._flush_stats_loop())
         self._server_sockets = []
+        protocol = self._server_config.get("protocol", "socks5")
+        self._upstream_pool = None
         max_attempts = 100
         for attempt in range(max_attempts):
             try:
@@ -741,6 +844,12 @@ class ProxyCore:
                 for server in (self._socks_server, self._http_server):
                     for sock in server.sockets or []:
                         self._server_sockets.append(sock)
+                if protocol in ("socks5", "http"):
+                    self._upstream_pool = UpstreamPool(
+                        self._server_config, self._ssl_ctx,
+                        verify_cert_pin=self._verify_cert_pin if self._cert_bind_enabled else None,
+                    )
+                    await self._upstream_pool.start()
                 return
             except OSError as e:
                 if e.errno == 48 and attempt < max_attempts - 1:
@@ -760,6 +869,9 @@ class ProxyCore:
                     raise
 
     async def _stop_servers(self):
+        if self._upstream_pool:
+            await self._upstream_pool.stop()
+            self._upstream_pool = None
         if self._socks_server:
             self._socks_server.close()
             await self._socks_server.wait_closed()
@@ -836,8 +948,16 @@ class ProxyCore:
     async def _connect_upstream(self, dest_addr, dest_port):
         protocol = self._server_config.get("protocol", "socks5")
         if protocol == "http":
+            if self._upstream_pool:
+                return await self._connect_with_pool(
+                    dest_addr, dest_port, _http_connect_handshake
+                )
             return await connect_upstream_http(
                 self._server_config, dest_addr, dest_port, ssl_ctx=self._ssl_ctx
+            )
+        if self._upstream_pool:
+            return await self._connect_with_pool(
+                dest_addr, dest_port, _socks5_handshake
             )
         return await connect_upstream_socks5(
             self._server_config,
@@ -847,11 +967,34 @@ class ProxyCore:
             verify_cert_pin=self._verify_cert_pin,
         )
 
+    async def _connect_with_pool(self, dest_addr, dest_port, handshake):
+        reader, writer = await self._upstream_pool.acquire()
+        try:
+            await asyncio.wait_for(
+                handshake(reader, writer, self._server_config, dest_addr, dest_port),
+                timeout=HANDSHAKE_TIMEOUT,
+            )
+            return reader, writer
+        except Exception:
+            await _close_writer(writer)
+
+        reader, writer = await self._upstream_pool.create_connection()
+        try:
+            await asyncio.wait_for(
+                handshake(reader, writer, self._server_config, dest_addr, dest_port),
+                timeout=HANDSHAKE_TIMEOUT,
+            )
+            return reader, writer
+        except Exception:
+            await _close_writer(writer)
+            raise
+
     async def _handle_socks(self, client_reader, client_writer):
         async with self._semaphore:
             await self._do_handle_socks(client_reader, client_writer)
 
     async def _do_handle_socks(self, client_reader, client_writer):
+        _set_nodelay(client_writer)
         try:
             header = await asyncio.wait_for(client_reader.readexactly(2), timeout=LOCAL_HANDSHAKE_TIMEOUT)
             ver, nmethods = header
@@ -1032,6 +1175,7 @@ class ProxyCore:
             await self._do_handle_http(client_reader, client_writer)
 
     async def _do_handle_http(self, client_reader, client_writer):
+        _set_nodelay(client_writer)
         try:
             raw_line = await asyncio.wait_for(client_reader.readline(), timeout=LOCAL_HANDSHAKE_TIMEOUT)
             if not raw_line:

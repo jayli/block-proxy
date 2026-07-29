@@ -12,17 +12,22 @@ class FakeReader:
         self._chunks = list(chunks)
 
     async def readexactly(self, n):
+        if not self._chunks:
+            raise asyncio.IncompleteReadError(b"", n)
         data = self._chunks.pop(0)
         assert len(data) == n
         return data
 
     async def readline(self):
+        if not self._chunks:
+            return b""
         return self._chunks.pop(0)
 
 
 class FakeWriter:
     def __init__(self):
         self.writes = []
+        self.closed = False
 
     def write(self, data):
         self.writes.append(data)
@@ -31,10 +36,13 @@ class FakeWriter:
         pass
 
     def close(self):
-        pass
+        self.closed = True
 
     async def wait_closed(self):
         pass
+
+    def is_closing(self):
+        return self.closed
 
 
 def test_connect_upstream_socks5_uses_doh_ip_for_node_connection_but_keeps_sni(monkeypatch):
@@ -76,7 +84,7 @@ def test_connect_upstream_socks5_uses_doh_ip_for_node_connection_but_keeps_sni(m
     assert calls[0][1]["server_hostname"] == "buffer.fun"
 
 
-def test_connect_upstream_http_uses_doh_ip_and_preserves_connect_target(monkeypatch):
+def test_connect_upstream_http_uses_doh_ip_and_plain_tcp(monkeypatch):
     calls = []
     writer = FakeWriter()
     reader = FakeReader([
@@ -110,5 +118,75 @@ def test_connect_upstream_http_uses_doh_ip_and_preserves_connect_target(monkeypa
     asyncio.run(proxy_core.connect_upstream_http(config, "target.example", 443, ssl_ctx=object()))
 
     assert calls[0][0][:2] == ("198.51.100.8", 8002)
-    assert calls[0][1]["server_hostname"] == "buffer.fun"
+    assert calls[0][1]["ssl"] is None
+    assert calls[0][1]["server_hostname"] is None
+    assert writer.writes[0].startswith(b"CONNECT target.example:443 HTTP/1.1\r\n")
+
+
+def test_connect_upstream_retries_fresh_connection_after_stale_pool_entry(monkeypatch):
+    stale_writer = FakeWriter()
+    fresh_writer = FakeWriter()
+    stale_reader = FakeReader([])
+    fresh_reader = FakeReader([
+        b"\x05\x00",
+        b"\x05\x00\x00\x01",
+        b"\x00\x00\x00\x00\x00\x00",
+    ])
+
+    class FakePool:
+        def __init__(self):
+            self.created = 0
+
+        async def acquire(self):
+            return stale_reader, stale_writer
+
+        async def create_connection(self):
+            self.created += 1
+            return fresh_reader, fresh_writer
+
+    pc = proxy_core.ProxyCore()
+    pc._server_config = {
+        "protocol": "socks5",
+        "address": "buffer.fun",
+        "port": 8002,
+        "username": "",
+        "password": "",
+        "tls": False,
+    }
+    pc._ssl_ctx = None
+    pc._upstream_pool = FakePool()
+
+    reader, writer = asyncio.run(pc._connect_upstream("example.com", 443))
+
+    assert (reader, writer) == (fresh_reader, fresh_writer)
+    assert stale_writer.closed is True
+    assert pc._upstream_pool.created == 1
+
+
+def test_http_upstream_can_use_plain_tcp_pool_when_tls_flag_is_dirty(monkeypatch):
+    writer = FakeWriter()
+    reader = FakeReader([
+        b"HTTP/1.1 200 OK\r\n",
+        b"\r\n",
+    ])
+
+    class FakePool:
+        async def acquire(self):
+            return reader, writer
+
+    pc = proxy_core.ProxyCore()
+    pc._server_config = {
+        "protocol": "http",
+        "address": "buffer.fun",
+        "port": 8002,
+        "username": "",
+        "password": "",
+        "tls": True,
+    }
+    pc._ssl_ctx = object()
+    pc._upstream_pool = FakePool()
+
+    result_reader, result_writer = asyncio.run(pc._connect_upstream("target.example", 443))
+
+    assert (result_reader, result_writer) == (reader, writer)
     assert writer.writes[0].startswith(b"CONNECT target.example:443 HTTP/1.1\r\n")
