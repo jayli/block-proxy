@@ -190,3 +190,39 @@ def test_http_upstream_can_use_plain_tcp_pool_when_tls_flag_is_dirty(monkeypatch
 
     assert (result_reader, result_writer) == (reader, writer)
     assert writer.writes[0].startswith(b"CONNECT target.example:443 HTTP/1.1\r\n")
+
+
+def test_local_proxy_recycle_waits_for_twenty_seconds_without_activity():
+    pc = proxy_core.ProxyCore()
+    pc._active_connections = 0
+    pc._last_proxy_activity = 100.0
+
+    assert pc._can_recycle_local_proxy(119.9) is False
+    assert pc._can_recycle_local_proxy(120.0) is True
+
+
+def test_local_proxy_recycle_does_not_run_with_active_connections():
+    pc = proxy_core.ProxyCore()
+    pc._active_connections = 1
+    pc._last_proxy_activity = 100.0
+
+    assert pc._can_recycle_local_proxy(200.0) is False
+
+
+def test_local_proxy_recycle_only_restarts_local_servers(monkeypatch):
+    pc = proxy_core.ProxyCore()
+    calls = []
+
+    async def fake_stop_local_proxy():
+        calls.append("stop_local_proxy")
+
+    async def fake_start_local_proxy(allow_port_retry):
+        assert allow_port_retry is False
+        calls.append("start_local_proxy")
+
+    monkeypatch.setattr(pc, "_stop_local_proxy", fake_stop_local_proxy)
+    monkeypatch.setattr(pc, "_start_local_proxy", fake_start_local_proxy)
+
+    asyncio.run(pc._recycle_local_proxy_once())
+
+    assert calls == ["stop_local_proxy", "start_local_proxy"]

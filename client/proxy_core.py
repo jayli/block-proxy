@@ -7,6 +7,7 @@ import socket
 import ssl
 import struct
 import threading
+import time
 
 logger = logging.getLogger("proxy_core")
 
@@ -66,6 +67,9 @@ def is_private_ip(host):
 
 RELAY_IDLE_TIMEOUT = 300
 UDP_IDLE_TIMEOUT = 120
+LOCAL_PROXY_RECYCLE_INTERVAL = 7200
+LOCAL_PROXY_RECYCLE_IDLE_SECONDS = 20
+LOCAL_PROXY_RECYCLE_DEFER_SECONDS = 300
 
 
 def _set_nodelay(writer):
@@ -91,13 +95,15 @@ async def read_udp_frame(reader):
     return await reader.readexactly(length)
 
 
-async def relay(reader, writer, route=None, direction=None):
+async def relay(reader, writer, route=None, direction=None, on_activity=None):
     try:
         while True:
             data = await asyncio.wait_for(reader.read(65536), timeout=RELAY_IDLE_TIMEOUT)
             if not data:
                 break
             writer.write(data)
+            if on_activity:
+                on_activity()
             if route and direction:
                 add_bytes(len(data), route, direction)
             if writer.transport.get_write_buffer_size() > 65536:
@@ -495,9 +501,10 @@ class UpstreamPool:
 
 
 class _UdpRelayProtocol(asyncio.DatagramProtocol):
-    def __init__(self, tcp_writer, loop):
+    def __init__(self, tcp_writer, loop, on_activity=None):
         self._tcp_writer = tcp_writer
         self._loop = loop
+        self._on_activity = on_activity
         self.client_addr = None
         self.transport = None
 
@@ -510,6 +517,8 @@ class _UdpRelayProtocol(asyncio.DatagramProtocol):
             return
         frame = struct.pack("!H", len(data)) + data
         self._tcp_writer.write(frame)
+        if self._on_activity:
+            self._on_activity()
         add_bytes(len(data), "proxy", "outbound")
 
 
@@ -542,6 +551,9 @@ class ProxyCore:
         self._edr_detector = None
         self._on_edr_blocked = None
         self._upstream_pool = None
+        self._active_connections = 0
+        self._last_proxy_activity = time.monotonic()
+        self._recycle_task = None
 
     def set_tunnel_client(self, tc):
         self._tunnel_client = tc
@@ -828,6 +840,12 @@ class ProxyCore:
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT)
         init_writer()
         asyncio.ensure_future(self._flush_stats_loop())
+        self._active_connections = 0
+        self._mark_proxy_activity()
+        await self._start_local_proxy(allow_port_retry=True)
+        self._recycle_task = asyncio.ensure_future(self._local_proxy_recycle_loop())
+
+    async def _start_local_proxy(self, allow_port_retry):
         self._server_sockets = []
         protocol = self._server_config.get("protocol", "socks5")
         self._upstream_pool = None
@@ -852,7 +870,7 @@ class ProxyCore:
                     await self._upstream_pool.start()
                 return
             except OSError as e:
-                if e.errno == 48 and attempt < max_attempts - 1:
+                if allow_port_retry and e.errno == 48 and attempt < max_attempts - 1:
                     # 关闭本轮已创建的 server，避免 socket 泄漏
                     if self._socks_server:
                         self._socks_server.close()
@@ -869,15 +887,75 @@ class ProxyCore:
                     raise
 
     async def _stop_servers(self):
+        if self._recycle_task and self._recycle_task is not asyncio.current_task():
+            self._recycle_task.cancel()
+            try:
+                await self._recycle_task
+            except asyncio.CancelledError:
+                pass
+        self._recycle_task = None
+        await self._stop_local_proxy()
+
+    async def _stop_local_proxy(self):
         if self._upstream_pool:
             await self._upstream_pool.stop()
             self._upstream_pool = None
         if self._socks_server:
             self._socks_server.close()
             await self._socks_server.wait_closed()
+            self._socks_server = None
         if self._http_server:
             self._http_server.close()
             await self._http_server.wait_closed()
+            self._http_server = None
+        self._server_sockets = []
+
+    def _mark_proxy_activity(self):
+        self._last_proxy_activity = time.monotonic()
+
+    def _connection_started(self):
+        self._active_connections += 1
+        self._mark_proxy_activity()
+
+    def _connection_finished(self):
+        self._active_connections = max(0, self._active_connections - 1)
+        self._mark_proxy_activity()
+
+    def _can_recycle_local_proxy(self, now=None):
+        now = time.monotonic() if now is None else now
+        return (
+            self._active_connections == 0
+            and now - self._last_proxy_activity >= LOCAL_PROXY_RECYCLE_IDLE_SECONDS
+        )
+
+    async def _local_proxy_recycle_loop(self):
+        await asyncio.sleep(LOCAL_PROXY_RECYCLE_INTERVAL)
+        while True:
+            if self._can_recycle_local_proxy():
+                try:
+                    await self._recycle_local_proxy_once()
+                except Exception:
+                    crash_logger.warning("local proxy recycle failed", exc_info=True)
+                await asyncio.sleep(LOCAL_PROXY_RECYCLE_INTERVAL)
+            else:
+                idle_for = time.monotonic() - self._last_proxy_activity
+                logger.info(
+                    "local proxy recycle deferred: active=%d idle=%.1fs",
+                    self._active_connections,
+                    idle_for,
+                )
+                await asyncio.sleep(LOCAL_PROXY_RECYCLE_DEFER_SECONDS)
+
+    async def _recycle_local_proxy_once(self):
+        logger.info("local proxy recycle starting")
+        await self._stop_local_proxy()
+        await self._start_local_proxy(allow_port_retry=False)
+        self._mark_proxy_activity()
+        logger.info(
+            "local proxy recycle completed: socks=%s http=%s",
+            self._socks_port,
+            self._http_port,
+        )
 
     async def _flush_stats_loop(self):
         while True:
@@ -991,7 +1069,11 @@ class ProxyCore:
 
     async def _handle_socks(self, client_reader, client_writer):
         async with self._semaphore:
-            await self._do_handle_socks(client_reader, client_writer)
+            self._connection_started()
+            try:
+                await self._do_handle_socks(client_reader, client_writer)
+            finally:
+                self._connection_finished()
 
     async def _do_handle_socks(self, client_reader, client_writer):
         _set_nodelay(client_writer)
@@ -1068,8 +1150,8 @@ class ProxyCore:
             await client_writer.drain()
 
             await asyncio.gather(
-                relay(client_reader, remote_writer, route, "outbound"),
-                relay(remote_reader, client_writer, route, "inbound"),
+                relay(client_reader, remote_writer, route, "outbound", self._mark_proxy_activity),
+                relay(remote_reader, client_writer, route, "inbound", self._mark_proxy_activity),
             )
         except Exception as e:
             if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
@@ -1119,7 +1201,7 @@ class ProxyCore:
 
         loop = asyncio.get_event_loop()
         transport, udp_relay = await loop.create_datagram_endpoint(
-            lambda: _UdpRelayProtocol(remote_writer, loop),
+            lambda: _UdpRelayProtocol(remote_writer, loop, self._mark_proxy_activity),
             local_addr=("127.0.0.1", 0),
         )
         relay_addr = transport.get_extra_info("sockname")
@@ -1136,6 +1218,7 @@ class ProxyCore:
                     frame_data = await asyncio.wait_for(
                         read_udp_frame(remote_reader), timeout=UDP_IDLE_TIMEOUT
                     )
+                    self._mark_proxy_activity()
                     add_bytes(len(frame_data), "proxy", "inbound")
                     if udp_relay.client_addr:
                         transport.sendto(frame_data, udp_relay.client_addr)
@@ -1172,7 +1255,11 @@ class ProxyCore:
 
     async def _handle_http(self, client_reader, client_writer):
         async with self._semaphore:
-            await self._do_handle_http(client_reader, client_writer)
+            self._connection_started()
+            try:
+                await self._do_handle_http(client_reader, client_writer)
+            finally:
+                self._connection_finished()
 
     async def _do_handle_http(self, client_reader, client_writer):
         _set_nodelay(client_writer)
@@ -1232,8 +1319,8 @@ class ProxyCore:
                 await client_writer.drain()
 
                 await asyncio.gather(
-                    relay(client_reader, remote_writer, route, "outbound"),
-                    relay(remote_reader, client_writer, route, "inbound"),
+                    relay(client_reader, remote_writer, route, "outbound", self._mark_proxy_activity),
+                    relay(remote_reader, client_writer, route, "inbound", self._mark_proxy_activity),
                 )
             else:
                 url = parts[1]
@@ -1294,8 +1381,8 @@ class ProxyCore:
                     await remote_writer.drain()
 
                     await asyncio.gather(
-                        relay(remote_reader, client_writer, route, "inbound"),
-                        relay(client_reader, remote_writer, route, "outbound"),
+                        relay(remote_reader, client_writer, route, "inbound", self._mark_proxy_activity),
+                        relay(client_reader, remote_writer, route, "outbound", self._mark_proxy_activity),
                     )
                 else:
                     client_writer.close()
