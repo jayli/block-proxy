@@ -226,3 +226,30 @@ def test_local_proxy_recycle_only_restarts_local_servers(monkeypatch):
     asyncio.run(pc._recycle_local_proxy_once())
 
     assert calls == ["stop_local_proxy", "start_local_proxy"]
+
+
+def test_forced_local_proxy_recycle_is_serialized(monkeypatch):
+    pc = proxy_core.ProxyCore()
+    calls = []
+
+    async def fake_stop_local_proxy():
+        calls.append("stop")
+        await asyncio.sleep(0)
+
+    async def fake_start_local_proxy(allow_port_retry):
+        assert allow_port_retry is False
+        calls.append("start")
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr(pc, "_stop_local_proxy", fake_stop_local_proxy)
+    monkeypatch.setattr(pc, "_start_local_proxy", fake_start_local_proxy)
+
+    async def run_two_recycles():
+        await asyncio.gather(
+            pc._recycle_local_proxy_forced_once(),
+            pc._recycle_local_proxy_forced_once(),
+        )
+
+    asyncio.run(run_two_recycles())
+
+    assert calls == ["stop", "start", "stop", "start"]

@@ -37,7 +37,7 @@ from AppKit import (
 )
 
 from config import Config
-from proxy_core import ProxyCore
+from proxy_core import LOCAL_PROXY_FD_RECYCLE_THRESHOLD, ProxyCore
 from super_dns_control import is_super_dns_running
 from system_proxy import SystemProxy
 from tunnel_client import TunnelClient
@@ -219,6 +219,14 @@ class AppController(NSObject):
             self, "onSystemDidWake:",
             "NSWorkspaceDidWakeNotification", None
         )
+        # 屏幕点亮（关屏→开屏，系统可能未真正休眠）。EDR 会在此窗口
+        # 内审查代理进程的连接（每连接 12-16s），主动断开重连清空
+        # 旧连接会话即可恢复，用户无感知。macOS 12+ 支持。
+        self._screen_wake_obs = nc.addObserver_selector_name_object_(
+            self, "onScreensDidWake:",
+            "NSWorkspaceScreensDidWakeNotification", None
+        )
+        self._last_proxy_reconnect_time = 0
 
     def _add_menu_item(self, menu, title, action):
         item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, action, "")
@@ -634,6 +642,25 @@ class AppController(NSObject):
                 self._sync_system_proxy_if_needed()
             except Exception as e:
                 logger.warning(f"Failed to re-sync system proxy after wake: {e}")
+            # 端口健康不代表连接健康：休眠期间探测连接（如 DoH 探测）大量
+            # 残留 CLOSED fd / FIN_WAIT_2，占用系统连接表，唤醒后浏览器
+            # 突发并发容易触发网关 SYN 限流（表现为 30s 黑洞）。fd 堆积
+            # 超过阈值时主动重启本地代理，等价于用户手动"关闭再启动"。
+            if self.proxy.fd_count() > LOCAL_PROXY_FD_RECYCLE_THRESHOLD:
+                import time
+                if time.monotonic() - self._last_proxy_reconnect_time < 30:
+                    logger.info(
+                        "Local proxy already recycled after screens wake, skipping fd recycle"
+                    )
+                    return
+                logger.warning(
+                    "Local proxy fd count %d exceeds threshold after wake, recycling",
+                    self.proxy.fd_count(),
+                )
+                try:
+                    self._restart_local_proxy_only()
+                except Exception as e:
+                    logger.warning(f"Failed to recycle local proxy after wake: {e}", exc_info=True)
             return
         logger.warning("Local proxy is not healthy after wake, restarting local proxy")
         import time
@@ -754,6 +781,8 @@ class AppController(NSObject):
             nc.removeObserver_(self._sleep_obs)
         if self._wake_obs:
             nc.removeObserver_(self._wake_obs)
+        if self._screen_wake_obs:
+            nc.removeObserver_(self._screen_wake_obs)
 
         # If quitApp_ didn't run (SIGTERM / force-quit), do cleanup inline
         if not getattr(self, '_quitting', False):
@@ -1015,6 +1044,34 @@ class AppController(NSObject):
 
         # Run reconnection in background thread
         threading.Thread(target=_do_reconnect, daemon=True).start()
+
+    def onScreensDidWake_(self, notification):
+        """屏幕从睡眠点亮（关屏→开屏）。
+
+        系统可能未真正休眠（如仅关屏，无 Sleep 事件），但公司 EDR
+        （AliEntSafe networkFilter）会在唤醒窗口内审查代理进程的出站
+        连接（每连接延迟 12-16s）。静默重启本地 SOCKS/HTTP listener
+        清空旧连接会话即可恢复访问速度，用户无感知。
+        """
+        import time as _time
+        now = _time.monotonic()
+        if now - self._last_proxy_reconnect_time < 30:
+            return  # 与系统唤醒事件去重，避免短时间内重复重启
+        self._last_proxy_reconnect_time = now
+        if not self.connected:
+            return
+        logger.info("Screens did wake, recycling local proxy to clear EDR review")
+
+        def _recycle():
+            try:
+                # recycle 只重建本地 listener 与连接池（纯本地操作，
+                # 不依赖网络），立即执行即可，避免点亮后窗口内的
+                # 请求打到即将被重建的旧 listener 上
+                self.proxy.recycle_local_proxy()
+            except Exception as e:
+                logger.warning(f"Screens wake recycle failed: {e}", exc_info=True)
+
+        threading.Thread(target=_recycle, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Helpers

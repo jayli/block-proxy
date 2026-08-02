@@ -191,6 +191,102 @@ def test_wake_handler_checks_local_proxy_without_full_disconnect():
     assert not any(_calls_self_method(node, "_disconnect") for node in body)
 
 
+def test_system_wake_starts_reconnect_worker_thread():
+    source = Path(__file__).parents[1].joinpath("app.py").read_text()
+    tree = ast.parse(source)
+    app_controller = _class_node(tree, "AppController")
+    body = _method_body(app_controller, "onSystemDidWake_")
+
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "Thread"
+        and any(
+            kw.arg == "target"
+            and isinstance(kw.value, ast.Name)
+            and kw.value.id == "_do_reconnect"
+            for kw in node.keywords
+        )
+        for node in ast.walk(ast.Module(body=body, type_ignores=[]))
+    )
+
+
+def test_screens_did_wake_registers_observer_and_recycles():
+    """屏幕点亮事件：注册 NSWorkspaceScreensDidWakeNotification 观察者，
+    回调中静默重启本地 SOCKS/HTTP listener（类似 recycle 机制，
+    清空 EDR 审查的旧连接会话），不触碰 tunnel 与完整代理状态。"""
+    source = Path(__file__).parents[1].joinpath("app.py").read_text()
+    tree = ast.parse(source)
+    app_controller = _class_node(tree, "AppController")
+
+    # 观察者注册（_observe_system_events 或 init 区域）
+    assert "NSWorkspaceScreensDidWakeNotification" in source
+    assert '"onScreensDidWake:"' in source
+
+    def _calls_proxy_recycle(body_nodes):
+        """匹配 self.proxy.recycle_local_proxy() 调用（全树遍历，含嵌套函数）。"""
+        for node in ast.walk(ast.Module(body=body_nodes, type_ignores=[])):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "recycle_local_proxy"
+                and isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == "proxy"
+                and isinstance(node.func.value.value, ast.Name)
+                and node.func.value.value.id == "self"
+            ):
+                return True
+        return False
+
+    body = _method_body(app_controller, "onScreensDidWake_")
+    assert _calls_proxy_recycle(body)
+    assert any(_calls_threading_thread(node) for node in body)
+    # 轻量 recycle，不应触发完整重启或 tunnel 处理
+    assert not any(_calls_self_method(node, "_restart_local_proxy_only") for node in body)
+    assert not any(_calls_self_method(node, "_ensure_tunnel_after_wake") for node in body)
+
+
+def test_screens_did_wake_does_not_reference_system_wake_local_worker():
+    """屏幕点亮回调不应引用 onSystemDidWake_ 的局部 _do_reconnect。"""
+    source = Path(__file__).parents[1].joinpath("app.py").read_text()
+    tree = ast.parse(source)
+    app_controller = _class_node(tree, "AppController")
+    body = _method_body(app_controller, "onScreensDidWake_")
+
+    for node in ast.walk(ast.Module(body=body, type_ignores=[])):
+        assert not (
+            isinstance(node, ast.Name)
+            and node.id == "_do_reconnect"
+        )
+
+
+def test_wake_fd_recycle_branch_deduplicates_screen_wake_recycle():
+    source = Path(__file__).parents[1].joinpath("app.py").read_text()
+    tree = ast.parse(source)
+    app_controller = _class_node(tree, "AppController")
+    body = _method_body(app_controller, "_ensure_local_proxy_after_wake")
+
+    assert "already recycled after screens wake" in source
+    assert any(
+        isinstance(node, ast.Attribute)
+        and node.attr == "_last_proxy_reconnect_time"
+        for node in ast.walk(ast.Module(body=body, type_ignores=[]))
+    )
+
+
+def test_application_terminate_removes_screen_wake_observer():
+    source = Path(__file__).parents[1].joinpath("app.py").read_text()
+    tree = ast.parse(source)
+    app_controller = _class_node(tree, "AppController")
+    body = _method_body(app_controller, "applicationWillTerminate_")
+
+    assert any(
+        isinstance(node, ast.Attribute)
+        and node.attr == "_screen_wake_obs"
+        for node in ast.walk(ast.Module(body=body, type_ignores=[]))
+    )
+
+
 def test_toggle_proxy_disconnect_uses_background_shutdown():
     source = Path(__file__).parents[1].joinpath("app.py").read_text()
     tree = ast.parse(source)
