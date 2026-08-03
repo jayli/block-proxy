@@ -75,6 +75,16 @@ LOCAL_PROXY_RECYCLE_DEFER_SECONDS = 300
 # FIN_WAIT_2 等），唤醒后或定时回收时主动重启本地代理清空。
 # 正常运行时 fd 约 50~150；DoH 探测风暴下可堆积到 300+。
 LOCAL_PROXY_FD_RECYCLE_THRESHOLD = 250
+# server 关闭后 wait_closed() 的最长等待：EDR 探测连接会持续注入新
+# 连接，wait_closed() 要等所有活跃 handler 完成，探测风暴下永不返回，
+# 使 recycle/stop 卡死在"已关闭未重建"的中间态（Connection refused）。
+# 端口释放只依赖 close()（同步关闭 listen socket），超时后直接丢弃
+# server 对象，连接由各自 handler 自行收尾。
+LOCAL_PROXY_STOP_WAIT_TIMEOUT = 3.0
+# recycle 整体（断开活跃连接 + 重建 listener）的最长时限，超时则协程
+# 自毁（内部 wait_for），杜绝僵尸协程在旧事件循环上继续操作 server
+# 引用（跨 loop RuntimeError / EADDRINUSE 端口漂移）。
+LOCAL_PROXY_RECYCLE_TIMEOUT = 15
 
 
 def _set_nodelay(writer):
@@ -635,6 +645,9 @@ class ProxyCore:
         # 场景主动断开旧连接，避免 server.wait_closed() 等待自然结束）
         self._active_transports = set()
         self._local_proxy_lock = None
+        # recycle 进行中标志（跨线程安全）：app 层 health check 借此
+        # 跳过本轮检查，避免在 listener 重建窗口内触发并发 stop/start
+        self._recycling = threading.Event()
 
     def set_tunnel_client(self, tc):
         self._tunnel_client = tc
@@ -743,11 +756,28 @@ class ProxyCore:
             thread = self._thread
 
             if loop and loop.is_running():
-                # 先关闭 server sockets 释放端口，再停 loop
+                # 先关闭 server sockets 释放端口，再停 loop。
+                # 必须等待 _shutdown 完成（内部 wait_closed 与锁等待均
+                # 已限时），否则残留协程（如超时未退出的 recycle）会在
+                # 新事件循环上继续操作 server 引用，导致跨循环
+                # RuntimeError 与 EADDRINUSE 端口漂移。
                 async def _shutdown():
                     await self._stop_servers()
                     loop.stop()
-                asyncio.run_coroutine_threadsafe(_shutdown(), loop)
+                try:
+                    asyncio.run_coroutine_threadsafe(_shutdown(), loop).result(
+                        timeout=LOCAL_PROXY_STOP_WAIT_TIMEOUT * 2 + 2
+                    )
+                    # 正常路径：端口已释放，清空引用防止新 loop 误操作
+                    self._socks_server = None
+                    self._http_server = None
+                    self._server_sockets = []
+                except Exception:
+                    logger.warning("proxy shutdown timed out, forcing close", exc_info=True)
+                    # 超时路径：保留 _server_sockets 供下方强制关闭兜底，
+                    # 只丢弃 server 对象（跨 loop 操作会抛 RuntimeError）
+                    self._socks_server = None
+                    self._http_server = None
 
             if thread:
                 # Wait for thread to exit with short timeout
@@ -785,21 +815,47 @@ class ProxyCore:
         recycle 机制）：**主动断开所有活跃连接**、关闭旧 listener 与
         连接池，重建新的，清空旧连接会话（如 EDR 审查产生的慢连接）。
         不触碰事件循环、tunnel 与应用其他状态。供 app 层在屏幕点亮
-        等事件后调用。"""
+        等事件后调用。
+
+        协程内部自带超时兜底（_recycle_local_proxy_forced_once 用
+        wait_for 包裹），最坏在 LOCAL_PROXY_RECYCLE_TIMEOUT 内必然
+        退出，不会留下僵尸协程在新事件循环上继续操作 server 引用。"""
         loop = self._loop
         if not loop or not loop.is_running():
             return
-        future = asyncio.run_coroutine_threadsafe(
-            self._recycle_local_proxy_forced_once(), loop
-        )
+        self._recycling.set()
         try:
-            future.result(timeout=15)
+            future = asyncio.run_coroutine_threadsafe(
+                self._recycle_local_proxy_forced_once(), loop
+            )
+            # 内部 wait_for 保证协程在 LOCAL_PROXY_RECYCLE_TIMEOUT 内
+            # 完成，此处 +5s 缓冲只兜底调度延迟，不会真的等待 20s
+            future.result(timeout=LOCAL_PROXY_RECYCLE_TIMEOUT + 5)
         except Exception:
             crash_logger.warning("local proxy recycle (screen wake) failed", exc_info=True)
+        finally:
+            self._recycling.clear()
+
+    def is_recycling(self):
+        """recycle 是否进行中。app 层 health check 借此跳过本轮检查，
+        避免在 listener 重建窗口（~3s）内触发并发 stop/start。"""
+        return self._recycling.is_set()
 
     async def _recycle_local_proxy_forced_once(self):
         """强制回收：先主动断开所有活跃连接（不等自然结束），
-        再执行常规 recycle，让 server.wait_closed() 快速返回。"""
+        再执行常规 recycle，让 server.wait_closed() 快速返回。
+        整体限时自毁，防止探测风暴下卡成僵尸协程。"""
+        try:
+            await asyncio.wait_for(
+                self._do_recycle_forced(), timeout=LOCAL_PROXY_RECYCLE_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            crash_logger.warning(
+                "local proxy recycle exceeded %.1fs, aborted",
+                LOCAL_PROXY_RECYCLE_TIMEOUT,
+            )
+
+    async def _do_recycle_forced(self):
         async with self._get_local_proxy_lock():
             for transport in list(self._active_transports):
                 try:
@@ -964,6 +1020,11 @@ class ProxyCore:
 
     async def _start_local_proxy(self, allow_port_retry):
         self._server_sockets = []
+        # 防御：丢弃上一轮（可能属于已关闭事件循环）的 server 引用。
+        # 跨 loop 的 server 对象在 close/wait_closed 时抛 "Future
+        # attached to a different loop"，且占用端口导致 EADDRINUSE 漂移。
+        self._socks_server = None
+        self._http_server = None
         protocol = self._server_config.get("protocol", "socks5")
         self._upstream_pool = None
         max_attempts = 100
@@ -991,12 +1052,16 @@ class ProxyCore:
                     # 关闭本轮已创建的 server，避免 socket 泄漏
                     if self._socks_server:
                         self._socks_server.close()
-                        await self._socks_server.wait_closed()
+                        await self._close_server_limited(self._socks_server)
                         self._socks_server = None
                     if self._http_server:
                         self._http_server.close()
-                        await self._http_server.wait_closed()
+                        await self._close_server_limited(self._http_server)
                         self._http_server = None
+                    logger.warning(
+                        "local proxy port %s/%s in use, retrying with +%d offset",
+                        self._socks_port, self._http_port, attempt + 1,
+                    )
                     # 每次重试从配置的原始端口开始偏移，防止漂移累积
                     self._socks_port = self._configured_socks_port + attempt + 1
                     self._http_port = self._configured_http_port + attempt + 1
@@ -1011,6 +1076,25 @@ class ProxyCore:
             except asyncio.CancelledError:
                 pass
         self._recycle_task = None
+        try:
+            # 整体限时：等待锁被僵尸协程释放 + 关闭 server 收尾，
+            # 超时强制关 socket 释放端口，保证 stop() 必然快速完成
+            await asyncio.wait_for(
+                self._stop_local_proxy_locked(),
+                timeout=LOCAL_PROXY_STOP_WAIT_TIMEOUT + 2,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("stop local proxy timed out, forcing socket close")
+            for sock in self._server_sockets:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+            self._server_sockets = []
+            self._socks_server = None
+            self._http_server = None
+
+    async def _stop_local_proxy_locked(self):
         async with self._get_local_proxy_lock():
             await self._stop_local_proxy()
 
@@ -1019,17 +1103,33 @@ class ProxyCore:
             self._local_proxy_lock = asyncio.Lock()
         return self._local_proxy_lock
 
+    async def _close_server_limited(self, server):
+        """关闭 server 后限时等待连接收尾。端口释放只依赖 close()
+        （同步关闭 listen socket）；对端（如 EDR 探测连接）会持续注入
+        新连接，wait_closed() 无限等待会让 recycle 停在"已关未建"
+        中间态（Connection refused），超时后丢弃 server 对象即可，
+        连接由各自 handler 自行收尾。"""
+        try:
+            await asyncio.wait_for(
+                server.wait_closed(), timeout=LOCAL_PROXY_STOP_WAIT_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "server wait_closed timed out after %.1fs, dropping server",
+                LOCAL_PROXY_STOP_WAIT_TIMEOUT,
+            )
+
     async def _stop_local_proxy(self):
         if self._upstream_pool:
             await self._upstream_pool.stop()
             self._upstream_pool = None
         if self._socks_server:
             self._socks_server.close()
-            await self._socks_server.wait_closed()
+            await self._close_server_limited(self._socks_server)
             self._socks_server = None
         if self._http_server:
             self._http_server.close()
-            await self._http_server.wait_closed()
+            await self._close_server_limited(self._http_server)
             self._http_server = None
         self._server_sockets = []
 

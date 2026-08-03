@@ -834,6 +834,12 @@ class AppController(NSObject):
                 if self._disconnecting:
                     restart_count = 0
                     continue
+                # 屏幕点亮 recycle 进行中：listener 重建窗口（~3s）内
+                # 端口短暂不可用，跳过本轮，避免触发并发 stop/start
+                # 跨事件循环踩踏（RuntimeError / 端口漂移）
+                if self.proxy.is_recycling():
+                    restart_count = 0
+                    continue
 
                 if self.proxy.is_running():
                     # 线程存活 — 检查端口是否仍在监听
