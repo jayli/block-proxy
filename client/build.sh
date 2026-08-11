@@ -59,6 +59,7 @@ echo "==> Building with Nuitka..."
 cd "$SCRIPT_DIR"
 $PYTHON -m nuitka \
     --standalone \
+    --assume-yes-for-downloads \
     --macos-create-app-bundle \
     --macos-app-name="$APP_NAME" \
     --macos-app-icon=icons/app.icns \

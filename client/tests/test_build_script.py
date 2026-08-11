@@ -32,3 +32,9 @@ def test_build_reuses_existing_icns_unless_missing():
 
     assert 'if [ ! -f "$SCRIPT_DIR/icons/app.icns" ]; then' in build_script
     assert "app.icns exists, reusing" in build_script
+
+
+def test_build_allows_nuitka_dependency_downloads_noninteractively():
+    build_script = Path(__file__).parents[1].joinpath("build.sh").read_text()
+
+    assert "--assume-yes-for-downloads" in build_script
