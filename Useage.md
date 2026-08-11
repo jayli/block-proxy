@@ -517,7 +517,33 @@ Macos Client 客户端如果被阻断，可以用命令行替代
 
 ### Q：客户端通过 CDN 连接隧道
 
-需要更强的隧道隐匿性时，通过 CDN 中转链接隧道的方法：[参照这里](https://github.com/jayli/block-proxy/issues/41)
+需要更强的隧道隐匿性时，通过 CDN 中转链接隧道的方法。
+
+两个方法，通过 cloudflared CDN 和 Aliyun CDN 都可以。
+
+1）cloudflare CDN
+
+必须通过隧道来回源，即运行 cloudflared ，参数配置：
+
+`~/.cloudflared/config.yml`
+
+```
+tunnel: my-tunnel
+credentials-file: <这里填写你的 uuid>.json
+
+ingress:
+  - hostname: 8003.abc.com
+    service: https://localhost:8003
+    originRequest:
+      noTLSVerify: true
+  - service: http_status:404
+```
+
+然后运行`cloudflared` 命令就建好隧道了，然后在客户端填 8003.abc.com，开启 CF CDN 开关。端口 443。就可以了。回源规则要写完全灵活。
+
+2）Aliyun CDN
+
+不用隧道，直接填规则转发回源到你的vps即可。所有 `/xhttp/` 的路径请求都转发到你的 vps 8003 端口即可。vps 要确保 8003 端口是通畅的。然后客户端填 aliyun cdn 域名，开启 Aliyun CDN 开关，端口 443。回源规则写完全灵活。
 
 ### Q：还能做哪些用途？
 
@@ -525,6 +551,10 @@ MITM 作为 服务中心，外围连接节点起点，远程办公/代理回家�
 
 ### Q：隧道和代理安全性如何
 
-https://github.com/jayli/block-proxy/issues/46
-
-
+- 应用层隧道
+- xhttp 协议
+- NAT 表轮换
+- 过 CDN
+- 443 端口
+- DPI 伪装
+- 合法 TLS 证书
