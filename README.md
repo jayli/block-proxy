@@ -1,8 +1,6 @@
-<img width="170" alt="logo" src="https://github.com/user-attachments/assets/ff49fe09-08aa-4a98-93bf-94bc593aad4a" />
+<img width="170" alt="logo" src="client/icons/app_icon_origin.png" />
 
 ----------
-
-<a href="https://nodei.co/npm/block-proxy/"><img width="240" alt="npm" src="https://github.com/user-attachments/assets/8c0c66ad-d997-4f30-b0ab-7bf0ad49a86a" /></a>
 
 > Socks5/HTTP 代理 + 反向隧道工具，支持 MITM 和二次开发。用于家庭网关限制小朋友上网，域名/地址/设备拦截，以及内网穿透场景。
 

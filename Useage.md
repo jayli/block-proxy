@@ -523,11 +523,8 @@ Macos Client 客户端如果被阻断，可以用命令行替代
 
 MITM 作为 服务中心，外围连接节点起点，远程办公/代理回家，双向访问...
 
-<img width="720" alt="image" src="https://github.com/user-attachments/assets/9a4c32cc-9c90-4443-8380-fcaf69120ad8" />
-
 ### Q：隧道和代理安全性如何
 
 https://github.com/jayli/block-proxy/issues/46
-
 
 
