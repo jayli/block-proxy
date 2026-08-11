@@ -1,0 +1,546 @@
+import os
+import sys
+import ipaddress
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from routing import parse_rules, RoutingEngine
+
+
+class TestParseRules:
+    def test_geosite_rule(self):
+        rules = parse_rules(["geosite:cn"])
+        assert len(rules) == 1
+        assert rules[0] == ("geosite", "cn", False)
+
+    def test_geosite_negated(self):
+        rules = parse_rules(["geosite:!cn"])
+        assert len(rules) == 1
+        assert rules[0] == ("geosite", "cn", True)
+
+    def test_geoip_rule(self):
+        rules = parse_rules(["geoip:cn"])
+        assert len(rules) == 1
+        assert rules[0] == ("geoip", "cn", False)
+
+    def test_geoip_negated(self):
+        rules = parse_rules(["geoip:!cn"])
+        assert len(rules) == 1
+        assert rules[0] == ("geoip", "cn", True)
+
+    def test_mixed_rules(self):
+        rules = parse_rules(["geosite:cn", "geoip:cn", "geosite:!google"])
+        assert len(rules) == 3
+        assert rules[0] == ("geosite", "cn", False)
+        assert rules[1] == ("geoip", "cn", False)
+        assert rules[2] == ("geosite", "google", True)
+
+    def test_empty_and_comment_lines_skipped(self):
+        rules = parse_rules(["", "# comment", "geosite:cn", "  ", "# another"])
+        assert len(rules) == 1
+        assert rules[0] == ("geosite", "cn", False)
+
+    def test_invalid_format_skipped(self):
+        rules = parse_rules(["geosite:", "geoip:", "invalid", "geosite:cn"])
+        assert len(rules) == 1
+        assert rules[0] == ("geosite", "cn", False)
+
+    def test_case_insensitive_prefix(self):
+        rules = parse_rules(["GEOSITE:cn", "GeoIP:us"])
+        assert len(rules) == 2
+        assert rules[0] == ("geosite", "cn", False)
+        assert rules[1] == ("geoip", "us", False)
+
+
+class TestMatchGeosite:
+    def _make_engine(self, geosite_data=None):
+        """Create a RoutingEngine with mock geosite data."""
+        from unittest.mock import MagicMock
+        engine = RoutingEngine.__new__(RoutingEngine)
+        engine._enabled = True
+        engine._default_action = "proxy"
+        engine._direct_rules = []
+        engine._proxy_rules = []
+        mock_loader = MagicMock()
+        mock_loader.geosite_available = True
+        mock_loader.geoip_available = False
+        mock_loader.get_geosite = lambda tag: (geosite_data or {}).get(tag, [])
+        mock_loader.has_geosite = lambda tag: tag in (geosite_data or {})
+        engine._loader = mock_loader
+        return engine
+
+    def test_domain_suffix_match(self):
+        engine = self._make_engine({"cn": [("domain", "baidu.com")]})
+        assert engine._match_geosite("baidu.com", "cn") is True
+        assert engine._match_geosite("www.baidu.com", "cn") is True
+        assert engine._match_geosite("a.b.baidu.com", "cn") is True
+        assert engine._match_geosite("notbaidu.com", "cn") is False
+
+    def test_domain_full_match(self):
+        engine = self._make_engine({"cn": [("full", "qq.com")]})
+        assert engine._match_geosite("qq.com", "cn") is True
+        assert engine._match_geosite("www.qq.com", "cn") is False
+        assert engine._match_geosite("notqq.com", "cn") is False
+
+    def test_domain_plain_match(self):
+        engine = self._make_engine({"cn": [("plain", "baidu")]})
+        assert engine._match_geosite("baidu.com", "cn") is True
+        assert engine._match_geosite("mybaidusite.com", "cn") is True
+        assert engine._match_geosite("google.com", "cn") is False
+
+    def test_domain_regex_match(self):
+        engine = self._make_engine({"cn": [("regex", r"^test\d+\.com$")]})
+        assert engine._match_geosite("test123.com", "cn") is True
+        assert engine._match_geosite("test.com", "cn") is False
+        assert engine._match_geosite("atest123.com", "cn") is False
+
+    def test_unknown_tag_returns_false(self):
+        engine = self._make_engine({"cn": [("domain", "baidu.com")]})
+        assert engine._match_geosite("baidu.com", "us") is False
+
+    def test_empty_rules_returns_false(self):
+        engine = self._make_engine({"cn": []})
+        assert engine._match_geosite("baidu.com", "cn") is False
+
+
+class TestMatchGeoip:
+    def _make_engine(self, geoip_data=None):
+        from unittest.mock import MagicMock
+        engine = RoutingEngine.__new__(RoutingEngine)
+        engine._enabled = True
+        engine._default_action = "proxy"
+        engine._direct_rules = []
+        engine._proxy_rules = []
+        mock_loader = MagicMock()
+        mock_loader.geosite_available = False
+        mock_loader.geoip_available = True
+        mock_loader.get_geoip = lambda code: (geoip_data or {}).get(code, [])
+        mock_loader.has_geoip = lambda code: code in (geoip_data or {})
+        engine._loader = mock_loader
+        return engine
+
+    def test_ipv4_in_cidr(self):
+        engine = self._make_engine({"cn": [ipaddress.ip_network("1.2.3.0/24")]})
+        assert engine._match_geoip("1.2.3.100", "cn") is True
+        assert engine._match_geoip("1.2.3.0", "cn") is True
+        assert engine._match_geoip("1.2.3.255", "cn") is True
+        assert engine._match_geoip("1.2.4.0", "cn") is False
+
+    def test_ipv6_in_cidr(self):
+        engine = self._make_engine({"test": [ipaddress.ip_network("2001:db8::/32")]})
+        assert engine._match_geoip("2001:db8::1", "test") is True
+        assert engine._match_geoip("2001:db9::1", "test") is False
+
+    def test_multiple_cidrs(self):
+        engine = self._make_engine({"cn": [ipaddress.ip_network("1.2.3.0/24"), ipaddress.ip_network("10.0.0.0/8")]})
+        assert engine._match_geoip("1.2.3.50", "cn") is True
+        assert engine._match_geoip("10.1.2.3", "cn") is True
+        assert engine._match_geoip("8.8.8.8", "cn") is False
+
+    def test_unknown_code_returns_false(self):
+        engine = self._make_engine({"cn": [ipaddress.ip_network("1.2.3.0/24")]})
+        assert engine._match_geoip("1.2.3.50", "us") is False
+
+    def test_invalid_ip_returns_false(self):
+        engine = self._make_engine({"cn": [ipaddress.ip_network("1.2.3.0/24")]})
+        assert engine._match_geoip("not-an-ip", "cn") is False
+
+
+class TestResolve:
+    def _make_engine(self, direct_rules=None, proxy_rules=None,
+                     default="proxy", geosite_data=None, geoip_data=None):
+        from unittest.mock import MagicMock
+        engine = RoutingEngine.__new__(RoutingEngine)
+        engine._enabled = True
+        engine._default_action = default
+        engine._direct_rules = direct_rules or []
+        engine._proxy_rules = proxy_rules or []
+        mock_loader = MagicMock()
+        mock_loader.geosite_available = bool(geosite_data)
+        mock_loader.geoip_available = bool(geoip_data)
+        mock_loader.get_geosite = lambda tag: (geosite_data or {}).get(tag, [])
+        mock_loader.get_geoip = lambda code: (geoip_data or {}).get(code, [])
+        mock_loader.has_geosite = lambda tag: tag in (geosite_data or {})
+        mock_loader.has_geoip = lambda code: code in (geoip_data or {})
+        engine._loader = mock_loader
+        return engine
+
+    def test_default_proxy_makes_proxy_rules_priority(self):
+        engine = self._make_engine(
+            direct_rules=[("geosite", "cn", False)],
+            proxy_rules=[("geosite", "cn", False)],
+            default="proxy",
+            geosite_data={"cn": [("domain", "baidu.com")]},
+        )
+        assert engine.resolve("baidu.com", is_domain=True) == "proxy"
+
+    def test_default_direct_makes_direct_rules_priority(self):
+        engine = self._make_engine(
+            direct_rules=[("geosite", "cn", False)],
+            proxy_rules=[("geosite", "cn", False)],
+            default="direct",
+            geosite_data={"cn": [("domain", "baidu.com")]},
+        )
+        assert engine.resolve("baidu.com", is_domain=True) == "direct"
+
+    def test_proxy_geosite_when_no_direct_match(self):
+        engine = self._make_engine(
+            direct_rules=[("geosite", "cn", False)],
+            proxy_rules=[("geosite", "google", False)],
+            geosite_data={"cn": [("domain", "baidu.com")], "google": [("domain", "google.com")]},
+        )
+        assert engine.resolve("google.com", is_domain=True) == "proxy"
+
+    def test_default_when_no_match(self):
+        engine = self._make_engine(
+            direct_rules=[("geosite", "cn", False)],
+            default="proxy",
+            geosite_data={"cn": [("domain", "baidu.com")]},
+        )
+        assert engine.resolve("unknown.com", is_domain=True) == "proxy"
+
+    def test_default_direct(self):
+        engine = self._make_engine(
+            proxy_rules=[("geosite", "google", False)],
+            default="direct",
+            geosite_data={"google": [("domain", "google.com")]},
+        )
+        assert engine.resolve("unknown.com", is_domain=True) == "direct"
+        assert engine.resolve("google.com", is_domain=True) == "proxy"
+
+    def test_negated_geosite(self):
+        engine = self._make_engine(
+            direct_rules=[("geosite", "cn", True)],
+            geosite_data={"cn": [("domain", "baidu.com")]},
+        )
+        assert engine.resolve("baidu.com", is_domain=True) == "proxy"  # in cn → negated → not matched
+        assert engine.resolve("google.com", is_domain=True) == "direct"  # not in cn → negated → matched
+
+    def test_geoip_for_ip_target(self):
+        engine = self._make_engine(
+            direct_rules=[("geoip", "cn", False)],
+            geoip_data={"cn": [ipaddress.ip_network("1.2.3.0/24")]},
+        )
+        assert engine.resolve("1.2.3.50", is_domain=False) == "direct"
+        assert engine.resolve("8.8.8.8", is_domain=False) == "proxy"
+
+    def test_negated_geoip(self):
+        engine = self._make_engine(
+            proxy_rules=[("geoip", "cn", True)],
+            geoip_data={"cn": [ipaddress.ip_network("1.2.3.0/24")]},
+        )
+        assert engine.resolve("1.2.3.50", is_domain=False) == "proxy"  # in cn → negated → not matched → default(proxy)
+        assert engine.resolve("8.8.8.8", is_domain=False) == "proxy"  # not in cn → negated → matched → proxy
+
+    def test_domain_target_skips_geoip(self):
+        engine = self._make_engine(
+            direct_rules=[("geoip", "cn", False)],
+            geoip_data={"cn": [ipaddress.ip_network("1.2.3.0/24")]},
+        )
+        assert engine.resolve("test.com", is_domain=True) == "proxy"  # is_domain=True → geoip skipped
+
+    def test_ip_target_skips_geosite(self):
+        engine = self._make_engine(
+            direct_rules=[("geosite", "cn", False)],
+            geosite_data={"cn": [("domain", "test.com")]},
+        )
+        assert engine.resolve("1.2.3.4", is_domain=False) == "proxy"  # is_domain=False → geosite skipped
+
+    def test_disabled_returns_none(self):
+        engine = RoutingEngine.__new__(RoutingEngine)
+        engine._enabled = False
+        assert engine.resolve("baidu.com", is_domain=True) is None
+        assert engine.resolve("1.2.3.4", is_domain=False) is None
+
+    def test_mixed_geosite_and_geoip_rules(self):
+        engine = self._make_engine(
+            direct_rules=[("geosite", "cn", False), ("geoip", "cn", False)],
+            default="proxy",
+            geosite_data={"cn": [("domain", "baidu.com")]},
+            geoip_data={"cn": [ipaddress.ip_network("1.2.3.0/24")]},
+        )
+        assert engine.resolve("baidu.com", is_domain=True) == "direct"
+        assert engine.resolve("1.2.3.50", is_domain=False) == "direct"
+        assert engine.resolve("google.com", is_domain=True) == "proxy"
+        assert engine.resolve("8.8.8.8", is_domain=False) == "proxy"
+
+    def test_negated_rule_safe_when_data_unavailable(self):
+        from unittest.mock import MagicMock
+        engine = RoutingEngine.__new__(RoutingEngine)
+        engine._enabled = True
+        engine._default_action = "proxy"
+        engine._direct_rules = [("geosite", "cn", True)]
+        engine._proxy_rules = []
+        mock_loader = MagicMock()
+        mock_loader.geosite_available = False
+        mock_loader.geoip_available = False
+        engine._loader = mock_loader
+        assert engine.resolve("google.com", is_domain=True) == "proxy"  # negated rule must NOT match
+
+    def test_negated_rule_safe_when_tag_unknown(self):
+        engine = self._make_engine(
+            direct_rules=[("geosite", "typo", True)],
+            geosite_data={"cn": [("domain", "baidu.com")]},
+        )
+        assert engine.resolve("google.com", is_domain=True) == "proxy"  # unknown tag → negated must NOT match
+
+
+import asyncio
+
+
+class TestProxyCoreRouting:
+    """Test that ProxyCore integrates routing correctly."""
+
+    def test_routing_none_when_disabled(self):
+        config = {"enabled": False, "direct_rules": [], "proxy_rules": [], "default": "proxy"}
+        engine = RoutingEngine(config, "/nonexistent")
+        assert engine.resolve("baidu.com", is_domain=True) is None
+
+    def test_routing_with_config(self):
+        config = {
+            "enabled": True,
+            "direct_rules": ["geosite:cn"],
+            "proxy_rules": [],
+            "default": "proxy",
+        }
+        engine = RoutingEngine(config, "/nonexistent")
+        assert engine._enabled is True
+        assert len(engine._direct_rules) == 1
+        assert engine._direct_rules[0] == ("geosite", "cn", False)
+
+
+class TestConnectTargetRouting:
+    """Test _connect_target routing integration with mocks."""
+
+    @staticmethod
+    def _run(coro):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
+    def test_routing_direct_calls_connect_direct(self):
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from proxy_core import ProxyCore
+        pc = ProxyCore()
+        pc._server_config = {"protocol": "socks5", "address": "upstream", "port": 8002,
+                             "username": "", "password": "", "tls": False, "allowInsecure": True}
+        pc._ssl_ctx = None
+        pc._proxy_private = False
+        mock_routing = MagicMock()
+        mock_routing.resolve.return_value = "direct"
+        pc._routing = mock_routing
+        with patch("proxy_core.connect_direct", new_callable=AsyncMock) as mock_direct, \
+             patch("proxy_core.connect_upstream_socks5", new_callable=AsyncMock) as mock_upstream:
+            mock_direct.return_value = (AsyncMock(), AsyncMock())
+            _, _, route = self._run(pc._connect_target("example.com", 80, is_domain=True))
+            assert route == "direct"
+            mock_direct.assert_called_once_with("example.com", 80)
+            mock_upstream.assert_not_called()
+
+    def test_routing_proxy_calls_connect_upstream(self):
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from proxy_core import ProxyCore
+        pc = ProxyCore()
+        pc._server_config = {"protocol": "socks5", "address": "upstream", "port": 8002,
+                             "username": "", "password": "", "tls": False, "allowInsecure": True}
+        pc._ssl_ctx = None
+        pc._proxy_private = False
+        mock_routing = MagicMock()
+        mock_routing.resolve.return_value = "proxy"
+        pc._routing = mock_routing
+        with patch("proxy_core.connect_direct", new_callable=AsyncMock) as mock_direct, \
+             patch("proxy_core.connect_upstream_socks5", new_callable=AsyncMock) as mock_upstream:
+            mock_upstream.return_value = (AsyncMock(), AsyncMock())
+            _, _, route = self._run(pc._connect_target("example.com", 443, is_domain=True))
+            assert route == "proxy"
+            mock_upstream.assert_called_once()
+            mock_direct.assert_not_called()
+
+    def test_private_ip_bypasses_routing(self):
+        from unittest.mock import AsyncMock, patch, MagicMock
+        from proxy_core import ProxyCore
+        pc = ProxyCore()
+        pc._server_config = {"protocol": "socks5", "address": "upstream", "port": 8002,
+                             "username": "", "password": "", "tls": False, "allowInsecure": True}
+        pc._ssl_ctx = None
+        pc._proxy_private = False
+        mock_routing = MagicMock()
+        mock_routing.resolve.return_value = "proxy"  # routing would say proxy, but private IP overrides
+        pc._routing = mock_routing
+        with patch("proxy_core.connect_direct", new_callable=AsyncMock) as mock_direct, \
+             patch("proxy_core.connect_upstream_socks5", new_callable=AsyncMock) as mock_upstream:
+            mock_direct.return_value = (AsyncMock(), AsyncMock())
+            _, _, route = self._run(pc._connect_target("192.168.1.1", 80, is_domain=False))
+            assert route == "direct"
+            mock_direct.assert_called_once_with("192.168.1.1", 80)
+            mock_upstream.assert_not_called()
+            mock_routing.resolve.assert_not_called()  # private IP check comes first
+
+    def test_routing_disabled_uses_upstream(self):
+        from unittest.mock import AsyncMock, patch
+        from proxy_core import ProxyCore
+        pc = ProxyCore()
+        pc._server_config = {"protocol": "socks5", "address": "upstream", "port": 8002,
+                             "username": "", "password": "", "tls": False, "allowInsecure": True}
+        pc._ssl_ctx = None
+        pc._proxy_private = False
+        pc._routing = None
+        with patch("proxy_core.connect_direct", new_callable=AsyncMock) as mock_direct, \
+             patch("proxy_core.connect_upstream_socks5", new_callable=AsyncMock) as mock_upstream:
+            mock_upstream.return_value = (AsyncMock(), AsyncMock())
+            _, _, route = self._run(pc._connect_target("example.com", 443, is_domain=True))
+            assert route == "proxy"
+            mock_upstream.assert_called_once()
+            mock_direct.assert_not_called()
+
+
+from routing_window import _parse_rules_text, _rules_to_text, validate_rules
+
+
+class TestRoutingWindowUtils:
+    def test_parse_rules_text_basic(self):
+        result = _parse_rules_text("geosite:cn\ngeoip:cn\n")
+        assert result == ["geosite:cn", "geoip:cn"]
+
+    def test_parse_rules_text_skips_empty(self):
+        result = _parse_rules_text("geosite:cn\n\n  \ngeoip:cn\n")
+        assert result == ["geosite:cn", "geoip:cn"]
+
+    def test_parse_rules_text_preserves_comments(self):
+        result = _parse_rules_text("# my comments\ngeosite:cn\n# another")
+        assert result == ["# my comments", "geosite:cn", "# another"]
+
+    def test_rules_to_text(self):
+        rules = ["geosite:cn", "geoip:cn"]
+        assert _rules_to_text(rules) == "geosite:cn\ngeoip:cn"
+
+    def test_round_trip(self):
+        original = ["# 中国域名", "geosite:cn", "geoip:cn"]
+        text = _rules_to_text(original)
+        assert _parse_rules_text(text) == original
+
+
+class TestValidateRules:
+    """Tests for validate_rules — the rule validation function used by routing_window."""
+
+    @staticmethod
+    def _load_tags():
+        """Load pre-generated geodata_tags.json from the geodata/ directory."""
+        import json
+        tag_path = os.path.join(os.path.dirname(__file__), "..", "geodata", "geodata_tags.json")
+        if not os.path.exists(tag_path):
+            # Fallback: parse from .dat files if JSON not yet generated
+            from geodata_loader import GeodataLoader
+            loader = GeodataLoader(os.path.join(os.path.dirname(__file__), "..", "geodata"))
+            return set(loader._geosite_cache.keys()), set(loader._geoip_cache.keys())
+        with open(tag_path, "r") as f:
+            data = json.load(f)
+        return set(data.get("geosite", [])), set(data.get("geoip", []))
+
+    def test_all_valid_no_errors(self):
+        geosite_tags, geoip_codes = self._load_tags()
+        text = "domain:example.com\ngeosite:cn\ngeoip:!cn\n"
+        errors = validate_rules(text, text, geosite_tags=geosite_tags, geoip_codes=geoip_codes)
+        assert errors == []
+
+    def test_empty_and_comments_return_no_errors(self):
+        errors = validate_rules("", "# comment\n\n  ")
+        assert errors == []
+
+    def test_missing_colon(self):
+        errors = validate_rules("invalidline", "")
+        assert len(errors) == 1
+        assert "缺少冒号" in errors[0]
+
+    def test_unknown_type(self):
+        errors = validate_rules("faketype:value", "")
+        assert len(errors) == 1
+        assert "未知规则类型" in errors[0]
+
+    def test_empty_code(self):
+        errors = validate_rules("domain:", "")
+        assert len(errors) == 1
+        assert "值为空" in errors[0]
+
+    def test_empty_code_after_negation(self):
+        errors = validate_rules("geosite:!", "")
+        assert len(errors) == 1
+        assert "取反后值为空" in errors[0]
+
+    def test_invalid_domain_format(self):
+        cases = [
+            "domain:not a domain",
+            "domain:justword",
+            "domain:.nodot",
+            "domain:-startswithdash.com",
+        ]
+        for case in cases:
+            errors = validate_rules(case, "")
+            assert len(errors) == 1, f"expected error for: {case}"
+            assert "域名格式" in errors[0], f"got: {errors[0]}"
+
+    def test_valid_domain_formats(self):
+        cases = [
+            "domain:example.com",
+            "domain:sub.example.com",
+            "domain:deep.sub.example.co.uk",
+            "domain:a.io",
+        ]
+        for case in cases:
+            errors = validate_rules(case, "")
+            assert errors == [], f"unexpected error for {case}: {errors}"
+
+    def test_known_geosite_tag_passes(self):
+        geosite_tags, _ = self._load_tags()
+        errors = validate_rules("geosite:cn", "", geosite_tags=geosite_tags)
+        assert errors == []
+
+    def test_unknown_geosite_tag_reported(self):
+        geosite_tags, _ = self._load_tags()
+        errors = validate_rules("geosite:nonexistent-tag-xyz", "", geosite_tags=geosite_tags)
+        assert len(errors) == 1
+        assert "geosite.dat 中不存在" in errors[0]
+
+    def test_known_geoip_code_passes(self):
+        _, geoip_codes = self._load_tags()
+        errors = validate_rules("geoip:cn", "", geoip_codes=geoip_codes)
+        assert errors == []
+
+    def test_unknown_geoip_code_reported(self):
+        _, geoip_codes = self._load_tags()
+        errors = validate_rules("geoip:nonexistent-code-xyz", "", geoip_codes=geoip_codes)
+        assert len(errors) == 1
+        assert "geoip.dat 中不存在" in errors[0]
+
+    def test_geosite_negated_valid(self):
+        geosite_tags, _ = self._load_tags()
+        errors = validate_rules("geosite:!cn", "", geosite_tags=geosite_tags)
+        assert errors == []
+
+    def test_geoip_negated_valid(self):
+        _, geoip_codes = self._load_tags()
+        errors = validate_rules("geoip:!us", "", geoip_codes=geoip_codes)
+        assert errors == []
+
+    def test_mixed_valid_and_invalid(self):
+        geosite_tags, _ = self._load_tags()
+        text = "domain:good.com\n# comment\ndomain:bad format\ngeosite:cn\nfaketype:x\n"
+        errors = validate_rules(text, "", geosite_tags=geosite_tags)
+        assert len(errors) == 2
+        assert any("域名格式" in e for e in errors)
+        assert any("未知规则类型" in e for e in errors)
+
+    def test_source_label_in_errors(self):
+        errors = validate_rules("badrule", "domain:bad")
+        assert len(errors) == 2
+        assert "直连规则" in errors[0]
+        assert "代理规则" in errors[1]
+
+    def test_no_tags_provided_skips_geosite_geoip_checks(self):
+        # When tags are not provided (None), geosite/geoip checks are silently skipped
+        text = "geosite:cn\ngeoip:cn\ndomain:good.com\n"
+        errors = validate_rules(text, text)
+        # domain checks still work; geosite/geoip checks are skipped silently
+        assert errors == []

@@ -1,0 +1,8 @@
+node_modules
+.git
+docs
+client
+android-client
+*.zip
+*.tar
+.DS_Store

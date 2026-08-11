@@ -1,0 +1,97 @@
+import pytest
+import sys
+import os
+from unittest.mock import patch, call, MagicMock
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from system_proxy import SystemProxy
+
+
+class TestSystemProxy:
+    def setup_method(self):
+        self.proxy = SystemProxy()
+
+    @patch("system_proxy.SystemProxy._get_active_interfaces")
+    @patch("system_proxy.subprocess.run")
+    def test_enable_sets_all_proxy_types(self, mock_run, mock_interfaces):
+        mock_interfaces.return_value = ["Wi-Fi"]
+        mock_run.return_value = MagicMock(returncode=0, stdout="Enabled: Yes\n", stderr="")
+
+        self.proxy.enable(socks_port=1080, http_port=1087)
+
+        expected_calls = [
+            call(["networksetup", "-setsocksfirewallproxy", "Wi-Fi", "127.0.0.1", "1080"], capture_output=True, text=True),
+            call(["networksetup", "-setsocksfirewallproxystate", "Wi-Fi", "on"], capture_output=True, text=True),
+            call(["networksetup", "-setwebproxy", "Wi-Fi", "127.0.0.1", "1087"], capture_output=True, text=True),
+            call(["networksetup", "-setwebproxystate", "Wi-Fi", "on"], capture_output=True, text=True),
+            call(["networksetup", "-setsecurewebproxy", "Wi-Fi", "127.0.0.1", "1087"], capture_output=True, text=True),
+            call(["networksetup", "-setsecurewebproxystate", "Wi-Fi", "on"], capture_output=True, text=True),
+            call(["networksetup", "-setproxybypassdomains", "Wi-Fi", "*.local", "169.254.0.0/16", "127.0.0.1", "localhost", "0.0.0.0", "::1", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"], capture_output=True, text=True),
+        ]
+        mock_run.assert_has_calls(expected_calls, any_order=True)
+
+    @patch("system_proxy.SystemProxy._get_active_interfaces")
+    @patch("system_proxy.subprocess.run")
+    def test_disable_clears_all_proxy_types(self, mock_run, mock_interfaces):
+        mock_interfaces.return_value = ["Wi-Fi"]
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        self.proxy.disable()
+
+        expected_calls = [
+            call(["networksetup", "-setsocksfirewallproxystate", "Wi-Fi", "off"], capture_output=True, text=True),
+            call(["networksetup", "-setwebproxystate", "Wi-Fi", "off"], capture_output=True, text=True),
+            call(["networksetup", "-setsecurewebproxystate", "Wi-Fi", "off"], capture_output=True, text=True),
+            call(["networksetup", "-setproxybypassdomains", "Wi-Fi", "Empty"], capture_output=True, text=True),
+        ]
+        mock_run.assert_has_calls(expected_calls, any_order=True)
+
+    @patch("system_proxy.SystemProxy._get_active_interfaces")
+    @patch("system_proxy.subprocess.run")
+    def test_enable_multiple_interfaces(self, mock_run, mock_interfaces):
+        mock_interfaces.return_value = ["Wi-Fi", "Ethernet"]
+        mock_run.return_value = MagicMock(returncode=0, stdout="Enabled: Yes\n", stderr="")
+
+        self.proxy.enable(socks_port=1080, http_port=1087)
+
+        # 1 default-route probe + 7 set calls per interface x 2 + 3 verify calls per interface x 2 = 21
+        assert mock_run.call_count == 21
+
+    @patch("system_proxy.subprocess.run")
+    def test_enable_targets_default_route_service_when_available(self, mock_run):
+        def fake_run(args, capture_output=True, text=True):
+            if args == ["route", "-n", "get", "default"]:
+                return MagicMock(returncode=0, stdout="interface: en0\n", stderr="")
+            if args == ["networksetup", "-listnetworkserviceorder"]:
+                return MagicMock(
+                    returncode=0,
+                    stdout=(
+                        "(1) Wi-Fi\n"
+                        "(Hardware Port: Wi-Fi, Device: en0)\n"
+                        "(2) Ethernet\n"
+                        "(Hardware Port: Ethernet, Device: en1)\n"
+                    ),
+                    stderr="",
+                )
+            return MagicMock(returncode=0, stdout="Enabled: Yes\n", stderr="")
+
+        mock_run.side_effect = fake_run
+
+        self.proxy.enable(socks_port=1080, http_port=1087)
+
+        commands = [call_args.args[0] for call_args in mock_run.call_args_list]
+        assert ["networksetup", "-setwebproxy", "Wi-Fi", "127.0.0.1", "1087"] in commands
+        assert ["networksetup", "-setwebproxy", "Ethernet", "127.0.0.1", "1087"] not in commands
+
+    @patch("system_proxy.subprocess.run")
+    def test_get_active_interfaces(self, mock_run):
+        mock_run.return_value = MagicMock(
+            stdout="An asterisk (*) denotes that a network service is disabled.\nWi-Fi\n*Bluetooth PAN\nEthernet\n",
+            returncode=0,
+        )
+
+        interfaces = self.proxy._get_active_interfaces()
+
+        assert "Wi-Fi" in interfaces
+        assert "Ethernet" in interfaces
+        assert "Bluetooth PAN" not in interfaces

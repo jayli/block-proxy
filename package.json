@@ -1,0 +1,82 @@
+{
+  "name": "block-proxy",
+  "version": "0.1.40",
+  "description": "Small-scale network mitm proxy filter",
+  "bin": {
+    "block-proxy": "bin/start.js"
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "co": "^4.6.0",
+    "commander": "^14.0.2",
+    "express": "^5.1.0",
+    "http-proxy-agent": "^7.0.2",
+    "https-proxy-agent": "^7.0.6",
+    "node-easy-cert": "^1.0.0",
+    "ping": "^1.0.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-scripts": "5.0.1",
+    "selfsigned": "^5.5.0",
+    "socks-proxy-agent": "^8.0.5",
+    "web-vitals": "^2.1.4",
+    "ws": "^8.16.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jayli/block-proxy.git"
+  },
+  "scripts": {
+    "cp": "echo '----- program start -----'",
+    "rm_bkconfig": "rm -f ./config_backup.json",
+    "craco": "craco start",
+    "dev": "BLOCK_PROXY_DEV=1 npm run express",
+    "start": "npm run express",
+    "socks5": "node ./socks5/start.js",
+    "express": "npm run cp && node ./server/start.js",
+    "proxy": "npm run cp && node ./proxy/start.js",
+    "build": "npm run rm_bkconfig && react-scripts build",
+    "docker:build": "npm run build && docker buildx build --platform linux/amd64 --load -t block-proxy:amd64 .",
+    "docker:build:arm": "npm run build && docker buildx build --platform linux/arm64 --load -t block-proxy:arm64 .",
+    "docker:push": "npm run build && docker buildx build --platform linux/amd64 --push -t crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest-amd64 . && docker buildx build --platform linux/arm64 --push -t crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest-arm64 . && docker manifest create --amend crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest-amd64 crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest-arm64 && docker manifest push crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest",
+    "docker:push:amd64": "npm run build && docker buildx build --platform linux/amd64 --push -t crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest-amd64 .",
+    "docker:push:arm64": "npm run build && docker buildx build --platform linux/arm64 --push -t crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com/lijing00333/block-proxy:latest-arm64 .",
+    "test": "react-scripts test",
+    "gen-icons": "node client/watch-icons.js",
+    "watch:icons": "node client/watch-icons.js --watch",
+    "test:proxy": "node test/run.js",
+    "test:android": "cd android-client && ./gradlew :app:testPhoneDebugUnitTest",
+    "test:android:emulator": "cd android-client && unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy && ./gradlew :app:connectedEmulatorDebugAndroidTest",
+    "android:build": "cd android-client && ./gradlew :app:assemblePhoneDebug :app:assembleEmulatorDebug",
+    "android:build:phone": "cd android-client && ./gradlew :app:assemblePhoneDebug",
+    "android:build:emulator": "cd android-client && ./gradlew :app:assembleEmulatorDebug",
+    "android:install": "bash android-client/install-debug.sh",
+    "android:install:emulator": "~/Library/Android/sdk/platform-tools/adb -s emulator-5554 install -r android-client/app/build/outputs/apk/emulator/debug/BlockProxyClient-android-emulator.apk",
+    "android:release:upload": "bash scripts/upload-android-release.sh",
+    "android:start": "~/Library/Android/sdk/platform-tools/adb shell am start -n com.blockproxy.android/.MainActivity",
+    "android:logcat": "~/Library/Android/sdk/platform-tools/adb logcat | grep -E 'BlockProxy|Tunnel|AndroidRuntime'",
+    "android:devices": "~/Library/Android/sdk/platform-tools/adb devices -l",
+    "android:native:build": "cd android-client && bash build-native.sh",
+    "client:build": "bash client/build.sh",
+    "test:proxy-core": "node test/proxy-core-connect-tests.js",
+    "test:registry": "node test/mitm-registry-tests.js",
+    "test:mitm-runtime": "node test/mitm-runtime-tests.js",
+    "eject": "react-scripts eject"
+  },
+  "devDependencies": {
+    "@craco/craco": "^7.1.0"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}

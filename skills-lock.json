@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "commit": {
+      "source": "jayli/skills",
+      "sourceType": "github",
+      "skillPath": "skills/commit/SKILL.md",
+      "computedHash": "e3225c68b408307a74e5039265193606db6b568bcc21194b3ad3ed24638fc4a5"
+    }
+  }
+}

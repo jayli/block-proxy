@@ -1,0 +1,53 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+/anyproxy
+/socks5/ticket-keys.bin
+
+# testing
+/coverage
+cams-config.json
+cams-config/*
+
+# Runtime config and data (generated at runtime)
+config.json
+config_backup.json
+proxy/mitm/persistentStore.json
+
+# TLS certificates (auto-generated at startup)
+cert/socks5_tls.key
+cert/socks5_tls.crt
+cert/tunnel_tls.key
+cert/tunnel_tls.crt
+
+# yui.cool 证书（私钥绝对不能提交）
+cert/yui_cool/privkey.pem
+
+# MITM certificates cache (runtime generated)
+/certificates/
+
+# misc
+.DS_Store
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# python
+.venv
+
+# local Go/native build caches
+.go-cache/
+.go-mod-cache/
+android-client/app/libs/utlsws.aar
+android-client/app/libs/utlsws-sources.jar
+
+# worktrees
+.worktrees/
