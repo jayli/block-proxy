@@ -521,29 +521,65 @@ Macos Client 客户端如果被阻断，可以用命令行替代
 
 两个方法，通过 cloudflared CDN 和 Aliyun CDN 都可以。
 
-1）cloudflare CDN
+#### 1）cloudflare CDN
 
-必须通过隧道来回源，即运行 cloudflared ，参数配置：
+前提：本地 8003 端口已就绪，cloudflared 已安装，域名（如 `8003.perf.qzz.io`）的 DNS 已托管在 Cloudflare。
 
-`~/.cloudflared/config.yml`
+**1. 登录（生成 `~/.cloudflared/cert.pem`）**
 
+```bash
+cloudflared tunnel login
 ```
+
+无浏览器环境会给一个 URL，复制到任意电脑浏览器里授权，完成后 `cert.pem` 自动落到 `~/.cloudflared/`。
+
+**2. 创建隧道（生成 UUID 和凭据 JSON）**
+
+```bash
+cloudflared tunnel create my-tunnel
+```
+
+产出 `~/.cloudflared/<uuid>.json`，uuid 记下来。
+
+**3. 绑定域名（自动建 CNAME）**
+
+```bash
+cloudflared tunnel route dns my-tunnel 8003.perf.qzz.io
+```
+
+**4. 写配置 `~/.cloudflared/config.yml`**
+
+```yaml
 tunnel: my-tunnel
-credentials-file: <这里填写你的 uuid>.json
+credentials-file: /root/.cloudflared/<uuid>.json
 
 ingress:
-  - hostname: 8003.abc.com
+  - hostname: 8003.perf.qzz.io
     service: https://localhost:8003
     originRequest:
       noTLSVerify: true
   - service: http_status:404
 ```
 
-然后运行`cloudflared` 命令就建好隧道了，然后在客户端填 8003.abc.com，开启 CF CDN 开关。端口 443。就可以了。回源规则要写完全灵活。
+**5. 启动**
 
-2）Aliyun CDN
+```bash
+pm2 start /usr/bin/cloudflared --name cloudflared -- tunnel run --protocol http2 my-tunnel
+pm2 save
+```
 
-不用隧道，直接填规则转发回源到你的vps即可。所有 `/xhttp/` 的路径请求都转发到你的 vps 8003 端口即可。vps 要确保 8003 端口是通畅的。然后客户端填 aliyun cdn 域名，开启 Aliyun CDN 开关，端口 443。回源规则写完全灵活。
+**验证**
+
+```bash
+cloudflared tunnel info my-tunnel        # 状态应为 HEALTHY
+curl -v https://8003.perf.qzz.io/xhttp/  # 能打到本地 8003 即通
+```
+
+之后客户端填 `8003.perf.qzz.io`，开启 CF CDN 开关，端口 443。回源规则要写完全灵活。
+
+#### 2）Aliyun CDN
+
+阿里云不提供隧道，直接用 CDN 回源，在控制台的回源规则里，把所有 `/xhttp/` 的路径请求都转发到你的 vps 8003 端口即可。vps 要确保 8003 端口是通畅的。然后客户端填 aliyun cdn 域名，开启 Aliyun CDN 开关，端口 443。回源规则写完全灵活。
 
 ### Q：还能做哪些用途？
 
