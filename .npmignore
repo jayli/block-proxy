@@ -43,6 +43,7 @@ pnpm-workspace.yaml
 .env.*
 .eslintrc*
 .prettierrc*
+AGENTS.md
 CLAUDE.md
 
 # Test scripts bundled inside socks5/
