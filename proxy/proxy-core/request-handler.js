@@ -716,14 +716,72 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
           let piped = false;
           let fallbackStarted = false;
           let clientSocketClosed = cltSocket.destroyed;
+          let clientEnded = false;
+          let upstreamEnded = false;
+          let relayCleaned = false;
+          let drainIdleTimer = null;
+          let drainMaxTimer = null;
+
+          const clearDrainTimers = () => {
+            if (drainIdleTimer) clearTimeout(drainIdleTimer);
+            if (drainMaxTimer) clearTimeout(drainMaxTimer);
+            drainIdleTimer = null;
+            drainMaxTimer = null;
+          };
+
+          const cleanupRelay = () => {
+            if (relayCleaned) return;
+            relayCleaned = true;
+            clearDrainTimers();
+            if (conn && !conn.destroyed) conn.destroy();
+            if (!cltSocket.destroyed) cltSocket.destroy();
+          };
+
+          const startDrain = () => {
+            if (relayCleaned || (!clientEnded && !upstreamEnded)) return;
+            if (clientEnded && upstreamEnded) {
+              cleanupRelay();
+              return;
+            }
+
+            if (drainIdleTimer) clearTimeout(drainIdleTimer);
+            drainIdleTimer = setTimeout(cleanupRelay, reqHandlerCtx.halfCloseDrainIdleTimeoutMs);
+            drainIdleTimer.unref?.();
+
+            if (!drainMaxTimer) {
+              drainMaxTimer = setTimeout(cleanupRelay, reqHandlerCtx.halfCloseDrainMaxTimeoutMs);
+              drainMaxTimer.unref?.();
+            }
+          };
+
+          const touchDrain = () => {
+            if (!clientEnded && !upstreamEnded) return;
+            startDrain();
+          };
+
+          const endWritable = (socket) => {
+            if (socket && !socket.destroyed && !socket.writableEnded) socket.end();
+          };
+
+          const onClientEnd = () => {
+            if (clientEnded) return;
+            clientEnded = true;
+            endWritable(conn);
+            startDrain();
+          };
+
+          const onUpstreamEnd = () => {
+            if (upstreamEnded) return;
+            upstreamEnded = true;
+            endWritable(cltSocket);
+            startDrain();
+          };
 
           // A destination closing unpipes conn without closing it. Destroy the
           // orphaned upstream socket, but keep normal TCP half-closes intact.
           cltSocket.once('close', () => {
             clientSocketClosed = true;
-            if (conn && !conn.destroyed) {
-              conn.destroy();
-            }
+            cleanupRelay();
           });
 
           const setupPipe = () => {
@@ -733,8 +791,13 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
               if (conn.setTimeout) {
                 conn.setTimeout(0);
               }
-              requestStream.pipe(conn);
-              conn.pipe(cltSocket);
+              requestStream.pipe(conn, { end: false });
+              conn.pipe(cltSocket, { end: false });
+              requestStream.once('end', onClientEnd);
+              requestStream.on('data', touchDrain);
+              conn.once('end', onUpstreamEnd);
+              conn.on('data', touchDrain);
+              if (requestStream.readableEnded) onClientEnd();
               resolve();
             }).catch(reject);
           };
@@ -758,14 +821,10 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
               return true;
             }
 
-            // 目标端先关闭时，client socket 可能仍处于半关闭状态
-            // （FIN_WAIT2/CLOSE_WAIT）。不强制销毁会滞留 fd，
-            // 长时间运行后触发 EMFILE。这里与 client→conn 方向对称地
-            // 做兜底销毁（close 事件代表连接已彻底结束，不影响半关闭语义）。
+            // close/error 是异常或完整关闭，立即清理；仅 FIN 则由 end
+            // 处理器进入有界 drain，保留合法的反向响应排空。
             conn.once('close', () => {
-              if (!cltSocket.destroyed) {
-                cltSocket.destroy();
-              }
+              cleanupRelay();
             });
 
             if (reqHandlerCtx.timeout && conn.setTimeout) {
@@ -778,6 +837,7 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
             }
 
             conn.on('error', (e) => {
+              cleanupRelay();
               reject(e);
             });
 
@@ -957,6 +1017,8 @@ class RequestHandler {
     this.customConnect = null;
     this.isTunnelDomain = null;
     this.timeout = 0;
+    this.halfCloseDrainIdleTimeoutMs = 30_000;
+    this.halfCloseDrainMaxTimeoutMs = 300_000;
 
     if (config.forceProxyHttps) {
       this.forceProxyHttps = true;
@@ -982,6 +1044,14 @@ class RequestHandler {
 
     if (config.timeout) {
       this.timeout = config.timeout;
+    }
+
+    if (Number.isFinite(config.halfCloseDrainIdleTimeoutMs)) {
+      this.halfCloseDrainIdleTimeoutMs = config.halfCloseDrainIdleTimeoutMs;
+    }
+
+    if (Number.isFinite(config.halfCloseDrainMaxTimeoutMs)) {
+      this.halfCloseDrainMaxTimeoutMs = config.halfCloseDrainMaxTimeoutMs;
     }
 
     this.mitmDebugLog = !!config.mitmDebugLog;

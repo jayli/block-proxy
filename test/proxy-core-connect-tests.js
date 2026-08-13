@@ -30,7 +30,7 @@ class FakeClientSocket extends Duplex {
 
 class HalfOpenUpstream extends Duplex {
   constructor() {
-    super();
+    super({ allowHalfOpen: true, autoDestroy: false });
     this.received = [];
   }
 
@@ -423,6 +423,38 @@ async function testConnectDestroysClientSocketWhenUpstreamCloses() {
   assert.strictEqual(socket.destroyed, true);
 }
 
+async function testConnectDrainsClientAfterUpstreamFinWithoutClose() {
+  let readyCallback;
+  const upstream = new HalfOpenUpstream();
+  const handler = new RequestHandler({
+    httpServerPort: 18888,
+    wsIntercept: false,
+    forceProxyHttps: false,
+    dangerouslyIgnoreUnauthorized: false,
+    halfCloseDrainIdleTimeoutMs: 40,
+    halfCloseDrainMaxTimeoutMs: 120,
+    customConnect(host, port, callback) {
+      readyCallback = callback;
+      return upstream;
+    },
+  }, {
+    *beforeDealHttpsRequest() { return null; },
+    *onConnectError() {},
+    *onClientSocketError() {},
+  });
+  const req = { url: 'example.com:443', httpVersion: '1.1', method: 'CONNECT' };
+  const socket = new FakeClientSocket({ allowHalfOpen: true, autoDestroy: false });
+
+  handler.connectReqHandler(req, socket, Buffer.from('clienthello'));
+  await waitFor(() => typeof readyCallback === 'function');
+  readyCallback();
+  await waitFor(() => socket.clientWrites.length > 0);
+
+  upstream.push(null);
+  await waitFor(() => upstream.readableEnded);
+  await waitFor(() => socket.destroyed, 500);
+}
+
 function testHttpsServerSecureOptionsDisableSslv3AndTlsv1() {
   assert.strictEqual(
     HttpsServerMgr._test.getSecureOptions(),
@@ -542,6 +574,20 @@ function testRequestHandlerStoresTimeoutConfig() {
   }, {});
 
   assert.strictEqual(handler.timeout, 1234);
+}
+
+function testRequestHandlerStoresHalfCloseDrainConfig() {
+  const defaults = new RequestHandler({ httpServerPort: 18888 }, {});
+  assert.strictEqual(defaults.halfCloseDrainIdleTimeoutMs, 30_000);
+  assert.strictEqual(defaults.halfCloseDrainMaxTimeoutMs, 300_000);
+
+  const configured = new RequestHandler({
+    httpServerPort: 18888,
+    halfCloseDrainIdleTimeoutMs: 123,
+    halfCloseDrainMaxTimeoutMs: 456,
+  }, {});
+  assert.strictEqual(configured.halfCloseDrainIdleTimeoutMs, 123);
+  assert.strictEqual(configured.halfCloseDrainMaxTimeoutMs, 456);
 }
 
 function testProxyServerPassesTimeoutToRequestHandler() {
@@ -751,6 +797,8 @@ async function run() {
   console.log('PASS testChainProxyConnectFailureDoesNotFallbackDirect');
   testRequestHandlerStoresTimeoutConfig();
   console.log('PASS testRequestHandlerStoresTimeoutConfig');
+  testRequestHandlerStoresHalfCloseDrainConfig();
+  console.log('PASS testRequestHandlerStoresHalfCloseDrainConfig');
   testProxyServerPassesTimeoutToRequestHandler();
   console.log('PASS testProxyServerPassesTimeoutToRequestHandler');
   testChainProxyAddressParserValidatesInput();
@@ -779,6 +827,8 @@ async function run() {
   console.log('PASS testConnectDestroysLateAsyncUpstreamAfterClientCloses');
   await testConnectDestroysClientSocketWhenUpstreamCloses();
   console.log('PASS testConnectDestroysClientSocketWhenUpstreamCloses');
+  await testConnectDrainsClientAfterUpstreamFinWithoutClose();
+  console.log('PASS testConnectDrainsClientAfterUpstreamFinWithoutClose');
   await testMitmConnectForwardsHttpsRequest();
   console.log('PASS testMitmConnectForwardsHttpsRequest');
 }

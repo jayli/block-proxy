@@ -30,6 +30,7 @@ cert/yui_cool/privkey.pem
 /certificates/
 
 # misc
+.codex/
 .DS_Store
 .env.local
 .env.development.local
