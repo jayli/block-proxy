@@ -22,7 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `cd android-client && ./gradlew :app:testPhoneDebugUnitTest --tests '*ClassName'` – 运行单个测试类
 - 其他单测: `node test/tunnel-integration.test.js`, `node test/server-config-validation-tests.js`, `node test/fd-diagnostics-tests.js`, `node test/socks5-server-limits-tests.js`
 
-### Utilities
+### **Utilities**
 - `npm run rm_bkconfig` – Remove backup config
 - `npm run gen-icons` / `npm run watch:icons` – Generate/watch client app icons
 
