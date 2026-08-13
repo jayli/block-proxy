@@ -201,6 +201,10 @@ function createConnectionHandler(options) {
       activeTcpConnects--;
       closedTcpConnects++;
       if (proxySocket && !proxySocket.destroyed) proxySocket.destroy();
+      // 对端（下游 HTTP 代理）先关闭时，client socket 可能仍处于
+      // 半关闭状态（FIN_WAIT2/CLOSE_WAIT）。不强制销毁会滞留 fd，
+      // 长时间运行后触发 EMFILE。这里双向兜底销毁。
+      if (clientSocket && !clientSocket.destroyed) clientSocket.destroy();
     };
 
     proxySocket = net.connect(downstreamProxyPort, downstreamProxyHost, () => {

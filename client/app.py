@@ -96,7 +96,10 @@ class AppController(NSObject):
         self._pin_mismatch_pending = False
         self._last_pin_mismatch = None
         self.proxy.set_pin_callback(self._on_pin_callback)
-        self.proxy.set_edr_callback(self._on_edr_blocked)
+        self.proxy.set_edr_callback(
+            self._on_edr_blocked,
+            on_recovered=self._on_edr_recovered,
+        )
         self.tunnel_client = None
         self.sys_proxy = SystemProxy()
         self.connected = False
@@ -1097,6 +1100,14 @@ class AppController(NSObject):
         def _update():
             if self.connected:
                 self.toggle_item.setTitle_("请求被安全软件拦截，请加白名单")
+        self._run_on_main(_update)
+
+    def _on_edr_recovered(self):
+        """Called from proxy_core when the EDR-block suspicion clears (a connection succeeded)."""
+        self._edr_blocked = False
+        def _update():
+            if self.connected:
+                self.toggle_item.setTitle_("关闭代理")
         self._run_on_main(_update)
 
     def _show_notification(self, title, subtitle, message):

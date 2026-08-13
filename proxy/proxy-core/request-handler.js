@@ -758,6 +758,16 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
               return true;
             }
 
+            // 目标端先关闭时，client socket 可能仍处于半关闭状态
+            // （FIN_WAIT2/CLOSE_WAIT）。不强制销毁会滞留 fd，
+            // 长时间运行后触发 EMFILE。这里与 client→conn 方向对称地
+            // 做兜底销毁（close 事件代表连接已彻底结束，不影响半关闭语义）。
+            conn.once('close', () => {
+              if (!cltSocket.destroyed) {
+                cltSocket.destroy();
+              }
+            });
+
             if (reqHandlerCtx.timeout && conn.setTimeout) {
               conn.setTimeout(reqHandlerCtx.timeout, () => {
                 const error = new Error('connect timeout');

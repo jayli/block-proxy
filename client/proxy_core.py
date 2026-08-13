@@ -188,8 +188,9 @@ class EdrBlockDetector:
     WINDOW = 30            # seconds window for counting
     NOTIFY_COOLDOWN = 300  # seconds between notifications
 
-    def __init__(self, on_blocked=None):
+    def __init__(self, on_blocked=None, on_recovered=None):
         self._on_blocked = on_blocked  # callback(dest_addr, dest_port)
+        self._on_recovered = on_recovered  # callback() when blocking clears
         self._reset_times = []         # timestamps of recent resets
         self._last_notify = 0
         self._notified = False
@@ -221,6 +222,8 @@ class EdrBlockDetector:
         if self._notified:
             self._notified = False
             logger.info("EDR blocking no longer detected (connection succeeded)")
+            if self._on_recovered:
+                self._on_recovered()
 
 
 
@@ -637,6 +640,7 @@ class ProxyCore:
         self._cert_pin_mismatch_reported = False
         self._edr_detector = None
         self._on_edr_blocked = None
+        self._on_edr_recovered = None
         self._upstream_pool = None
         self._active_connections = 0
         self._last_proxy_activity = time.monotonic()
@@ -655,9 +659,14 @@ class ProxyCore:
     def set_pin_callback(self, callback):
         self._on_pin_callback = callback
 
-    def set_edr_callback(self, callback):
-        """Set callback for EDR blocking detection: callback(dest_addr, dest_port)."""
+    def set_edr_callback(self, callback, on_recovered=None):
+        """Set callbacks for EDR blocking detection.
+
+        callback(dest_addr, dest_port) fires when blocking is suspected;
+        on_recovered() fires when a later connection succeeds and clears the suspicion.
+        """
         self._on_edr_blocked = callback
+        self._on_edr_recovered = on_recovered
 
     def _emit_pin_event(self, event_type, data):
         cb = self._on_pin_callback
@@ -730,7 +739,10 @@ class ProxyCore:
         self._proxy_private = local.get("proxy_private", False)
         self._udp_enabled = local.get("udp", True)
         self._build_ssl_context()
-        self._edr_detector = EdrBlockDetector(on_blocked=self._on_edr_blocked)
+        self._edr_detector = EdrBlockDetector(
+            on_blocked=self._on_edr_blocked,
+            on_recovered=self._on_edr_recovered,
+        )
 
         # Initialize routing engine (geodata loaded selectively in RoutingEngine.__init__)
         from routing import RoutingEngine, _geodata_dir

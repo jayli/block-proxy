@@ -383,6 +383,46 @@ async function testConnectDestroysLateAsyncUpstreamAfterClientCloses() {
   assert.strictEqual(upstream.destroyed, true);
 }
 
+async function testConnectDestroysClientSocketWhenUpstreamCloses() {
+  let readyCallback;
+  const upstream = new HalfOpenUpstream();
+  const handler = new RequestHandler({
+    httpServerPort: 18888,
+    wsIntercept: false,
+    forceProxyHttps: false,
+    dangerouslyIgnoreUnauthorized: false,
+    customConnect(host, port, callback) {
+      readyCallback = callback;
+      return upstream;
+    },
+  }, {
+    *beforeDealHttpsRequest() {
+      return null;
+    },
+  });
+  const req = {
+    url: 'example.com:443',
+    httpVersion: '1.1',
+    method: 'CONNECT',
+  };
+  const socket = new FakeClientSocket();
+
+  handler.connectReqHandler(req, socket, Buffer.from('clienthello'));
+  await waitFor(() => typeof readyCallback === 'function');
+  readyCallback();
+  await waitFor(() => socket.clientWrites.length > 0);
+
+  // 目标端先关闭：先收到 FIN（readable EOF），随后连接彻底关闭。
+  // 此时必须销毁 client socket，否则半关闭 socket 会滞留并泄漏 fd。
+  upstream.push(null);
+  await waitFor(() => upstream.readableEnded);
+  upstream.destroy();
+  await waitFor(() => upstream.destroyed);
+
+  await waitFor(() => socket.destroyed);
+  assert.strictEqual(socket.destroyed, true);
+}
+
 function testHttpsServerSecureOptionsDisableSslv3AndTlsv1() {
   assert.strictEqual(
     HttpsServerMgr._test.getSecureOptions(),
@@ -737,6 +777,8 @@ async function run() {
   console.log('PASS testConnectKeepsUpstreamOpenAfterClientHalfClose');
   await testConnectDestroysLateAsyncUpstreamAfterClientCloses();
   console.log('PASS testConnectDestroysLateAsyncUpstreamAfterClientCloses');
+  await testConnectDestroysClientSocketWhenUpstreamCloses();
+  console.log('PASS testConnectDestroysClientSocketWhenUpstreamCloses');
   await testMitmConnectForwardsHttpsRequest();
   console.log('PASS testMitmConnectForwardsHttpsRequest');
 }

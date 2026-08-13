@@ -33,8 +33,8 @@ function closeServer(server) {
   return new Promise((resolve) => server.close(resolve));
 }
 
-function connect(port) {
-  return net.createConnection({ host: '127.0.0.1', port });
+function connect(port, options = {}) {
+  return net.createConnection({ host: '127.0.0.1', port, ...options });
 }
 
 async function readOnce(socket) {
@@ -45,6 +45,22 @@ async function readOnce(socket) {
 async function waitForClose(socket) {
   if (socket.destroyed) return;
   await once(socket, 'close');
+}
+
+async function waitFor(predicate, timeoutMs = 1500) {
+  const start = Date.now();
+  for (;;) {
+    const result = predicate();
+    if (result && typeof result.then === 'function') {
+      if (await result) return;
+    } else if (result) {
+      return;
+    }
+    if (Date.now() - start > timeoutMs) {
+      throw new Error('timed out waiting for condition');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 async function testHandshakeTimeoutClosesIdleSocket() {
@@ -90,8 +106,8 @@ async function testTcpConnectLimitRejectsNewConnect() {
   await closeServer(server);
 }
 
-async function openSocksConnect(port, hostName = 'example.com') {
-  const socket = connect(port);
+async function openSocksConnect(port, hostName = 'example.com', connectOptions = {}) {
+  const socket = connect(port, connectOptions);
   await once(socket, 'connect');
   socket.write(Buffer.from([0x05, 0x01, 0x00]));
   assert.deepEqual(await readOnce(socket), Buffer.from([0x05, 0x00]));
@@ -125,6 +141,49 @@ async function testTcpConnectCleanupReleasesCapacity() {
   second.destroy();
   await waitForClose(second);
 
+  await closeServer(server);
+  await closeServer(downstream);
+}
+
+async function createClosingDownstreamProxy() {
+  const server = net.createServer((socket) => {
+    socket.once('data', () => {
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      // 优雅关闭（FIN）：模拟下游 HTTP 代理先结束连接。
+      // RST 场景已被 pipe 的错误传播覆盖，泄漏发生在优雅半关闭时。
+      setTimeout(() => socket.end(), 30);
+    });
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  return server;
+}
+
+function getServerConnections(server) {
+  return new Promise((resolve, reject) => {
+    server.getConnections((err, count) => (err ? reject(err) : resolve(count)));
+  });
+}
+
+async function testDownstreamCloseDestroysClientSocket() {
+  const downstream = await createClosingDownstreamProxy();
+  const server = await createPlainServer({
+    downstreamProxyPort: downstream.address().port,
+    maxTcpConnects: 200,
+    handshakeTimeoutMs: 500,
+  });
+
+  // allowHalfOpen: 模拟真实客户端收到 FIN 后不主动关闭（Mac 客户端行为）。
+  const socket = await openSocksConnect(server.address().port, 'close-first.example', { allowHalfOpen: true });
+  // 客户端先收到服务端转发的 FIN（隧道半关闭）
+  await waitFor(() => socket.readableEnded);
+  // 下游 HTTP 代理先关闭连接时，服务端必须强制销毁 client socket，
+  // 否则半关闭 socket 会滞留 FIN_WAIT2 并泄漏 fd（服务端连接数仍为 1）。
+  await waitFor(async () => (await getServerConnections(server)) === 0);
+  assert.strictEqual(await getServerConnections(server), 0);
+
+  socket.destroy();
+  await waitForClose(socket);
   await closeServer(server);
   await closeServer(downstream);
 }
@@ -186,6 +245,7 @@ async function testStatsIncludeSocketsStillInHandshake() {
   await testHandshakeTimeoutClosesIdleSocket();
   await testTcpConnectLimitRejectsNewConnect();
   await testTcpConnectCleanupReleasesCapacity();
+  await testDownstreamCloseDestroysClientSocket();
   await testTcpConnectStatsLogReportsCounters();
   await testStatsIncludeSocketsStillInHandshake();
   console.log('socks5 server limit tests passed');
