@@ -36,6 +36,8 @@ const DEFAULT_PADDING_MAX_BYTES = 512;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 90_000;
 const DEFAULT_LIVENESS_SWEEP_MS = 10_000;
 const DEFAULT_TAKEOVER_GRACE_MS = 60_000;
+const PONG_PROBE_TIMEOUT_MS = 10_000;
+const PONG_PROBE_MAX_ATTEMPTS = 10;
 const MAX_POST_BODY_SIZE = 70_000; // 略大于 MAX_FRAME_PAYLOAD + header
 
 class XhttpHandler {
@@ -72,6 +74,8 @@ class XhttpHandler {
     this._livenessTimeoutMs = options.livenessTimeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS;
     this._livenessSweepMs = options.livenessSweepMs ?? DEFAULT_LIVENESS_SWEEP_MS;
     this._takeoverGraceMs = options.takeoverGraceMs ?? DEFAULT_TAKEOVER_GRACE_MS;
+    this._pongProbeTimeoutMs = PONG_PROBE_TIMEOUT_MS;
+    this._pongProbeMaxAttempts = PONG_PROBE_MAX_ATTEMPTS;
 
     this._onFrame = options.onFrame || (() => {});
     this._onSessionCreated = options.onSessionCreated || (() => {});
@@ -269,6 +273,8 @@ class XhttpHandler {
         consumeLoopRunning: false,
         lastActivityAt: Date.now(),
         lastPingPayload: null,
+        pingAttempts: 0,
+        pongProbeTimer: null,
       };
 
       this._sessions.set(sessionId, session);
@@ -463,6 +469,7 @@ class XhttpHandler {
       if (session.closed) return;
       if (session.sseRes === res) {
         console.log(`[xhttp] SSE stream closed: ${sessionId}`);
+        this._clearPongProbe(session);
         session.sseRes = null;
         if (session.keepaliveTimer) {
           clearTimeout(session.keepaliveTimer);
@@ -620,14 +627,17 @@ class XhttpHandler {
           }
 
           for (const frame of frames) {
-            if (frame.type === FRAME_TYPES.PONG &&
-                (!session.lastPingPayload || !Buffer.isBuffer(frame.payload) ||
-                 !frame.payload.equals(session.lastPingPayload))) {
-              console.warn(`[xhttp] Ignoring PONG with unexpected nonce for session ${session.sessionId}`);
-              continue;
-            }
-            if (frame.type === FRAME_TYPES.PONG) session.lastPingPayload = null;
             session.lastActivityAt = Date.now();
+            session.pingAttempts = 0;
+            this._clearPongProbe(session);
+            if (frame.type === FRAME_TYPES.PONG) {
+              if (session.lastPingPayload && Buffer.isBuffer(frame.payload) &&
+                  frame.payload.equals(session.lastPingPayload)) {
+                session.lastPingPayload = null;
+              } else {
+                console.warn(`[xhttp] PONG with unexpected nonce for session ${session.sessionId}`);
+              }
+            }
             try {
               this._onFrame(frame, session.sessionId);
             } catch (e) {
@@ -675,6 +685,7 @@ class XhttpHandler {
       clearTimeout(session.keepaliveTimer);
       session.keepaliveTimer = null;
     }
+    this._clearPongProbe(session);
 
     // 关闭 uploadQueue（唤醒所有等待者）
     session.uploadQueue.close();
@@ -697,6 +708,46 @@ class XhttpHandler {
         this._closeSession(sid, 'liveness-timeout');
       }
     }
+  }
+
+  _clearPongProbe(session) {
+    if (session.pongProbeTimer) {
+      clearTimeout(session.pongProbeTimer);
+      session.pongProbeTimer = null;
+    }
+  }
+
+  _armPongProbe(session) {
+    this._clearPongProbe(session);
+    session.pongProbeTimer = setTimeout(() => {
+      session.pongProbeTimer = null;
+      this._handlePongProbeTimeout(session);
+    }, this._pongProbeTimeoutMs);
+    session.pongProbeTimer.unref();
+  }
+
+  _sendProbePing(session) {
+    if (session.closed || !session.sseRes || session.sseRes.writableEnded) return false;
+
+    const payload = crypto.randomBytes(8);
+    if (!this._pushSseFrame(session, FRAME_TYPES.PING, encodeFrame({ type: FRAME_TYPES.PING, payload }), false)) {
+      return false;
+    }
+
+    session.lastPingPayload = payload;
+    session.pingAttempts++;
+    this._armPongProbe(session);
+    this._scheduleKeepalive(session);
+    return true;
+  }
+
+  _handlePongProbeTimeout(session) {
+    if (session.closed || !session.sseRes || !session.pingAttempts) return;
+    if (session.pingAttempts >= this._pongProbeMaxAttempts) {
+      this._closeSession(session.sessionId, 'liveness-timeout');
+      return;
+    }
+    this._sendProbePing(session);
   }
 
   /**
@@ -736,7 +787,7 @@ class XhttpHandler {
   /**
    * 调度 SSE keepalive 注释。
    */
-  _scheduleKeepalive(session) {
+  _scheduleKeepalive(session, fromNow = false) {
     if (!session.sseRes) return;
     if (session.keepaliveTimer) {
       clearTimeout(session.keepaliveTimer);
@@ -746,16 +797,17 @@ class XhttpHandler {
     const minMs = Math.max(1, this._keepaliveMinMs);
     const maxMs = Math.max(minMs, this._keepaliveMaxMs);
     const delay = minMs + Math.floor(Math.random() * (maxMs - minMs + 1));
-    const lastWriteAt = session.lastSseWriteAt || Date.now();
+    const lastWriteAt = fromNow ? Date.now() : (session.lastSseWriteAt || Date.now());
     const timeoutMs = Math.max(1, lastWriteAt + delay - Date.now());
 
     session.keepaliveTimer = setTimeout(() => {
       session.keepaliveTimer = null;
       if (session.sseRes && !session.sseRes.writableEnded) {
-        const payload = crypto.randomBytes(8);
-        session.lastPingPayload = payload;
-        if (!this._pushSseFrame(session, FRAME_TYPES.PING, encodeFrame({ type: FRAME_TYPES.PING, payload }), false)) return;
-        this._scheduleKeepalive(session);
+        if (session.pingAttempts > 0) {
+          this._scheduleKeepalive(session, true);
+          return;
+        }
+        this._sendProbePing(session);
       }
     }, timeoutMs);
     session.keepaliveTimer.unref();

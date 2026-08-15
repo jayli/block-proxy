@@ -525,6 +525,176 @@ describe('XhttpHandler session model', () => {
     handler.closeAll();
   });
 
+  it('retries a missing PONG before the next keepalive', async () => {
+    const { handler } = createHandler({
+      keepaliveMinMs: 100, keepaliveMaxMs: 100,
+    });
+    handler._pongProbeTimeoutMs = 40;
+    const sessionId = await createSession(handler);
+    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=client-a`);
+    const res = mockResponse();
+    assert.equal(handler.handleRequest(req, res), true);
+
+    await new Promise(resolve => setTimeout(resolve, 110));
+    assert.equal(sseFrames(res).filter(frame => frame.type === FRAME_TYPES.PING).length, 1);
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(sseFrames(res).filter(frame => frame.type === FRAME_TYPES.PING).length, 2);
+    handler.closeAll();
+  });
+
+  it('closes after the PONG retry limit', async () => {
+    const { handler, events } = createHandler({
+      keepaliveMinMs: 1, keepaliveMaxMs: 1,
+    });
+    handler._pongProbeTimeoutMs = 10;
+    handler._pongProbeMaxAttempts = 2;
+    const sessionId = await createSession(handler);
+    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=client-a`);
+    const res = mockResponse();
+    assert.equal(handler.handleRequest(req, res), true);
+
+    await new Promise(resolve => setTimeout(resolve, 35));
+    assert.equal(handler._sessions.has(sessionId), false);
+    assert.equal(events.filter(event => event.type === 'closed' && event.sessionId === sessionId).length, 1);
+    handler.closeAll();
+  });
+
+  it('stops the PONG probe when DATA arrives', async () => {
+    const { handler } = createHandler({
+      keepaliveMinMs: 100, keepaliveMaxMs: 100,
+    });
+    handler._pongProbeTimeoutMs = 40;
+    const sessionId = await createSession(handler);
+    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=client-a`);
+    const res = mockResponse();
+    assert.equal(handler.handleRequest(req, res), true);
+
+    await new Promise(resolve => setTimeout(resolve, 110));
+    const session = handler._sessions.get(sessionId);
+    assert.equal(session.pingAttempts, 1);
+
+    const uploadReq = mockRequest('POST', `/xhttp/upload/${sessionId}/0`, encodeFrame({
+      type: FRAME_TYPES.DATA, reqid: 0x8000, data: Buffer.from('alive'),
+    }));
+    const uploadRes = mockResponse();
+    assert.equal(handler.handleRequest(uploadReq, uploadRes), true);
+    uploadReq.emitBody();
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.equal(session.pingAttempts, 0);
+    assert.equal(session.pongProbeTimer, null);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(sseFrames(res).filter(frame => frame.type === FRAME_TYPES.PING).length, 1);
+    handler.closeAll();
+  });
+
+  it('clears the outstanding nonce when a matching PONG arrives', async () => {
+    const { handler } = createHandler({
+      keepaliveMinMs: 100, keepaliveMaxMs: 100,
+    });
+    handler._pongProbeTimeoutMs = 40;
+    const sessionId = await createSession(handler);
+    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=client-a`);
+    const res = mockResponse();
+    assert.equal(handler.handleRequest(req, res), true);
+
+    await new Promise(resolve => setTimeout(resolve, 110));
+    const session = handler._sessions.get(sessionId);
+    const ping = sseFrames(res).find(frame => frame.type === FRAME_TYPES.PING);
+    assert.ok(ping);
+
+    const uploadReq = mockRequest('POST', `/xhttp/upload/${sessionId}/0`, encodeFrame({
+      type: FRAME_TYPES.PONG, payload: ping.payload,
+    }));
+    const uploadRes = mockResponse();
+    assert.equal(handler.handleRequest(uploadReq, uploadRes), true);
+    uploadReq.emitBody();
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.equal(session.lastPingPayload, null);
+    assert.equal(session.pingAttempts, 0);
+    assert.equal(session.pongProbeTimer, null);
+    handler.closeAll();
+  });
+
+  it('treats a mismatched PONG as activity without clearing its nonce', async () => {
+    const { handler } = createHandler({
+      keepaliveMinMs: 100, keepaliveMaxMs: 100,
+    });
+    handler._pongProbeTimeoutMs = 40;
+    const sessionId = await createSession(handler);
+    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=client-a`);
+    const res = mockResponse();
+    assert.equal(handler.handleRequest(req, res), true);
+
+    await new Promise(resolve => setTimeout(resolve, 110));
+    const session = handler._sessions.get(sessionId);
+    const outstandingNonce = Buffer.from(session.lastPingPayload);
+    const beforePong = Date.now();
+    const uploadReq = mockRequest('POST', `/xhttp/upload/${sessionId}/0`, encodeFrame({
+      type: FRAME_TYPES.PONG, payload: Buffer.from('late-pong'),
+    }));
+    const uploadRes = mockResponse();
+    assert.equal(handler.handleRequest(uploadReq, uploadRes), true);
+    uploadReq.emitBody();
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+
+    assert.ok(session.lastActivityAt >= beforePong);
+    assert.equal(session.pingAttempts, 0);
+    assert.equal(session.pongProbeTimer, null);
+    assert.deepEqual(session.lastPingPayload, outstandingNonce);
+    handler.closeAll();
+  });
+
+  it('clears the PONG probe when the SSE stream closes', async () => {
+    const { handler } = createHandler({
+      keepaliveMinMs: 5, keepaliveMaxMs: 5,
+    });
+    handler._pongProbeTimeoutMs = 100;
+    const sessionId = await createSession(handler);
+    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=client-a`);
+    const res = mockResponse();
+    assert.equal(handler.handleRequest(req, res), true);
+
+    await new Promise(resolve => setTimeout(resolve, 15));
+    const session = handler._sessions.get(sessionId);
+    assert.equal(session.pingAttempts, 1);
+    const pingCount = sseFrames(res).filter(frame => frame.type === FRAME_TYPES.PING).length;
+
+    res.emit('close');
+    assert.equal(session.pongProbeTimer, null);
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(sseFrames(res).filter(frame => frame.type === FRAME_TYPES.PING).length, pingCount);
+    handler.closeAll();
+  });
+
+  it('clears the PONG probe when the session closes', async () => {
+    const { handler, events } = createHandler({
+      keepaliveMinMs: 5, keepaliveMaxMs: 5,
+    });
+    handler._pongProbeTimeoutMs = 100;
+    const sessionId = await createSession(handler);
+    const req = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${sessionId}&clientId=client-a`);
+    const res = mockResponse();
+    assert.equal(handler.handleRequest(req, res), true);
+
+    await new Promise(resolve => setTimeout(resolve, 15));
+    const session = handler._sessions.get(sessionId);
+    assert.equal(session.pingAttempts, 1);
+    const pingCount = sseFrames(res).filter(frame => frame.type === FRAME_TYPES.PING).length;
+
+    handler._closeSession(sessionId);
+    assert.equal(session.pongProbeTimer, null);
+    await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(sseFrames(res).filter(frame => frame.type === FRAME_TYPES.PING).length, pingCount);
+    assert.equal(events.filter(event => event.type === 'closed' && event.sessionId === sessionId).length, 1);
+    handler.closeAll();
+  });
+
   it('sends a PING keepalive and keeps a session alive after matching PONG', async () => {
     const { handler } = createHandler({
       keepaliveMinMs: 20, keepaliveMaxMs: 20, livenessTimeoutMs: 70, livenessSweepMs: 10,
