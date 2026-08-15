@@ -355,15 +355,7 @@ Block-Proxy 提供 macOS 客户端 **BlockProxyClient**，用于在 Mac 上连�
 
 ### 下载与安装
 
-从 GitHub Releases 下载：
-
-> 下载地址：https://github.com/jayli/block-proxy/releases
-
-根据 Mac 芯片选择对应版本：
-- M系列芯片（arm架构） → `BlockProxyClient-macos-arm64.zip`
-- Intel（x86架构） → `BlockProxyClient-macos-x86_64.zip`
-
-下载后解压，拖入「应用程序」文件夹即可。
+从 GitHub Releases 下载：https://github.com/jayli/block-proxy/releases
 
 首次打开时，如果提示"无法验证开发者"：
 1. 打开「系统设置」→「隐私与安全性」
