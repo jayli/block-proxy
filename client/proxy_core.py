@@ -512,6 +512,7 @@ MAX_CONCURRENT = 256
 POOL_SIZE = 3
 POOL_CHECK_INTERVAL = 1.0
 POOL_CONNECT_TIMEOUT = 8
+_POOL_ZOMBIE = object()
 
 
 class UpstreamPool:
@@ -538,13 +539,51 @@ class UpstreamPool:
             self._task = None
         while not self._pool.empty():
             try:
-                _, writer = self._pool.get_nowait()
-                await _close_writer(writer)
+                entry = self._pool.get_nowait()
             except asyncio.QueueEmpty:
                 break
+            self._pool.task_done()
+            if entry is _POOL_ZOMBIE:
+                continue
+            _, writer = entry
+            await _close_writer(writer)
+
+    def _tracks_tls_socks_preconnects(self):
+        protocol = self._server_config.get("protocol", "socks5")
+        return protocol == "socks5" and bool(self._server_config.get("tls"))
+
+    async def _mark_closed_preconnects(self):
+        if not self._tracks_tls_socks_preconnects():
+            return
+
+        entries = []
+        while not self._pool.empty():
+            try:
+                entry = self._pool.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            self._pool.task_done()
+            entries.append(entry)
+
+        stale_writers = []
+        for entry in entries:
+            if entry is _POOL_ZOMBIE:
+                self._pool.put_nowait(entry)
+                continue
+            reader, writer = entry
+            if writer.is_closing() or reader.at_eof():
+                self._pool.put_nowait(_POOL_ZOMBIE)
+                stale_writers.append(writer)
+            else:
+                self._pool.put_nowait(entry)
+
+        for writer in stale_writers:
+            logger.debug("discarding closed TLS SOCKS preconnect")
+            await _close_writer(writer)
 
     async def _maintain(self):
         while self._running:
+            await self._mark_closed_preconnects()
             if self._pool.qsize() < POOL_SIZE:
                 try:
                     reader, writer = await self.create_connection()
@@ -578,9 +617,13 @@ class UpstreamPool:
     async def acquire(self):
         while not self._pool.empty():
             try:
-                reader, writer = self._pool.get_nowait()
+                entry = self._pool.get_nowait()
             except asyncio.QueueEmpty:
                 break
+            self._pool.task_done()
+            if entry is _POOL_ZOMBIE:
+                continue
+            reader, writer = entry
             if writer.is_closing():
                 continue
             if reader.at_eof():
