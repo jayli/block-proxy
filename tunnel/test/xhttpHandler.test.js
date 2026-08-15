@@ -582,6 +582,45 @@ describe('XhttpHandler session model', () => {
     handler.closeAll();
   });
 
+  it('allows the same client id to take over its own zombie session waiting for SSE', async () => {
+    const { handler, events } = createHandler();
+    const oldSessionId = await createSession(handler, [], 'client-a');
+
+    const newSessionId = await createSession(handler, [], 'client-a');
+
+    assert.notEqual(newSessionId, oldSessionId);
+    assert.equal(handler._sessions.has(oldSessionId), false);
+    assert.equal(handler._sessions.has(newSessionId), true);
+    assert.ok(events.some(event => event.type === 'closed' && event.sessionId === oldSessionId));
+    handler.closeAll();
+  });
+
+  it('keeps the same client id session coexisting as draining when a new session is created', async () => {
+    const { handler } = createHandler();
+    const oldSessionId = await createSession(handler, [], 'client-a');
+    const oldStreamReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${oldSessionId}&clientId=client-a`);
+    const oldStreamRes = mockResponse();
+    assert.equal(handler.handleRequest(oldStreamReq, oldStreamRes), true);
+    assert.equal(handler.getActiveSessionId(), oldSessionId);
+
+    const newSessionId = await createSession(handler, [], 'client-a');
+    const newStreamReq = mockRequest('GET', `/xhttp/stream?token=${tokenFor()}&sessionId=${newSessionId}&clientId=client-a`);
+    const newStreamRes = mockResponse();
+    assert.equal(handler.handleRequest(newStreamReq, newStreamRes), true);
+
+    assert.notEqual(newSessionId, oldSessionId);
+    assert.equal(handler._sessions.has(oldSessionId), true);
+    assert.equal(handler._sessions.has(newSessionId), true);
+    assert.equal(handler.getActiveSessionId(), newSessionId);
+    assert.deepEqual(handler.getConnectionCounts(), {
+      active: 1,
+      candidate: 0,
+      draining: 1,
+      total: 2,
+    });
+    handler.closeAll();
+  });
+
   it('honors response padding probability and size options', () => {
     const { handler: disabled } = createHandler({
       paddingEnabled: true,

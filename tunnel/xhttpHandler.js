@@ -202,16 +202,42 @@ class XhttpHandler {
 
       const existingSessions = this._tokenSessions.get(token);
       if (existingSessions && existingSessions.size > 0) {
-        if (this._allSessionsStale(token)) {
-          for (const sid of [...existingSessions]) this._closeSession(sid, 'takeover');
+        const now = Date.now();
+        const foreignSessions = [];
+
+        for (const sid of [...existingSessions]) {
+          const session = this._sessions.get(sid);
+          if (!session) continue;
+
+          if (session.clientId === clientId) {
+            // 同一 clientId：
+            // - 未建立 SSE 的僵尸会话 → 关闭接管
+            // - 已建立 SSE 的会话 → 保留共存，作为 draining（优雅轮换）
+            if (!session.sseRes) {
+              this._closeSession(sid, 'takeover');
+            }
+          } else {
+            foreignSessions.push(session);
+          }
         }
-        if (this._tokenSessions.get(token)?.size > 0) {
-          console.warn('[xhttp] Create: tunnel occupied for token');
-          this._sendJson(res, 409, {
-            error: 'tunnel occupied',
-            message: '隧道已占用',
-          });
-          return;
+
+        // 其他 clientId 占用：全部过期才允许接管，否则返回 409
+        if (foreignSessions.length > 0) {
+          const allForeignStale = foreignSessions.every(
+            (session) => now - session.lastActivityAt > this._takeoverGraceMs,
+          );
+          if (allForeignStale) {
+            for (const session of foreignSessions) {
+              this._closeSession(session.sessionId, 'takeover');
+            }
+          } else {
+            console.warn('[xhttp] Create: tunnel occupied for token');
+            this._sendJson(res, 409, {
+              error: 'tunnel occupied',
+              message: '隧道已占用',
+            });
+            return;
+          }
         }
       }
 
@@ -661,16 +687,6 @@ class XhttpHandler {
 
     console.log(`[xhttp] Session closed: ${sessionId} (${reason})`);
     this._onSessionClosed(sessionId, session.token);
-  }
-
-  _allSessionsStale(token, now = Date.now()) {
-    const sessionIds = this._tokenSessions.get(token);
-    if (!sessionIds || sessionIds.size === 0) return false;
-    for (const sid of sessionIds) {
-      const session = this._sessions.get(sid);
-      if (!session || now - session.lastActivityAt <= this._takeoverGraceMs) return false;
-    }
-    return true;
   }
 
   _sweepStaleSessions() {
