@@ -577,6 +577,8 @@ curl -v https://8003.perf.qzz.io/xhttp/  # 能打到本地 8003 即通
 
 MITM 作为 服务中心，外围连接节点起点，远程办公/代理回家，双向访问...
 
+<img width="700" alt="image" src="https://github.com/user-attachments/assets/465cbdac-98ac-4c11-aa97-ac6040061397" />
+
 ### Q：隧道和代理安全性如何
 
 - 应用层隧道
