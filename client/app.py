@@ -368,7 +368,13 @@ class AppController(NSObject):
         self._update_icon()
 
     def _disconnect(self):
-        self._disconnect_core()
+        # 与 _disconnect_async 一致：置 _disconnecting 让健康检查跳过
+        # 整个关停过程，避免在 stop 与状态翻转之间误判线程死亡并重启
+        self._disconnecting = True
+        try:
+            self._disconnect_core()
+        finally:
+            self._disconnecting = False
         self._on_disconnected()
 
     def _disconnect_async(self):
@@ -819,28 +825,22 @@ class AppController(NSObject):
         def _loop():
             import time
             from logger import crash_logger
+            from health_policy import (
+                health_check_skip_reason,
+                health_check_restart_allowed,
+            )
 
             restart_count = 0
             while True:
                 time.sleep(3)
-                if not self.connected:
-                    restart_count = 0
-                    continue
-
-                # 如果 wake handler 或手动重连正在处理，跳过本轮检查
-                if self._reconnecting:
-                    restart_count = 0
-                    continue
-                if self._connecting:
-                    restart_count = 0
-                    continue
-                if self._disconnecting:
-                    restart_count = 0
-                    continue
-                # 屏幕点亮 recycle 进行中：listener 重建窗口（~3s）内
-                # 端口短暂不可用，跳过本轮，避免触发并发 stop/start
-                # 跨事件循环踩踏（RuntimeError / 端口漂移）
-                if self.proxy.is_recycling():
+                if health_check_skip_reason(
+                    connected=self.connected,
+                    quitting=getattr(self, "_quitting", False),
+                    reconnecting=self._reconnecting,
+                    connecting=self._connecting,
+                    disconnecting=self._disconnecting,
+                    recycling=self.proxy.is_recycling(),
+                ):
                     restart_count = 0
                     continue
 
@@ -903,6 +903,15 @@ class AppController(NSObject):
                     continue
 
                 time.sleep(RESTART_DELAY)
+                # 等待期间用户可能已关闭/重连代理：重启前复核，
+                # 避免把刚关闭的代理重新拉起（历史端口漂移竞态）
+                if not health_check_restart_allowed(
+                    connected=self.connected,
+                    disconnecting=self._disconnecting,
+                    connecting=self._connecting,
+                ):
+                    restart_count = 0
+                    continue
                 try:
                     self.proxy.stop()
                     self.proxy.start(self.config.data,

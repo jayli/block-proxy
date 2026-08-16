@@ -320,6 +320,16 @@ async def _close_writer(writer):
         pass
 
 
+def _close_writer_force(writer):
+    """立即 RST 关闭（SO_LINGER=0 + abort），不等对端 FIN。
+    用于 stop 时清空上游连接池；有 transport 时走 RST，否则退化为 close。"""
+    transport = getattr(writer, "transport", None)
+    if transport is not None:
+        _force_close_rst(writer)
+    else:
+        writer.close()
+
+
 async def connect_upstream_socks5(
     server_config, dest_addr, dest_port, ssl_ctx=None, verify_cert_pin=None
 ):
@@ -546,7 +556,7 @@ class UpstreamPool:
             if entry is _POOL_ZOMBIE:
                 continue
             _, writer = entry
-            await _close_writer(writer)
+            _close_writer_force(writer)
 
     def _tracks_tls_socks_preconnects(self):
         protocol = self._server_config.get("protocol", "socks5")
@@ -695,6 +705,9 @@ class ProxyCore:
         # recycle 进行中标志（跨线程安全）：app 层 health check 借此
         # 跳过本轮检查，避免在 listener 重建窗口内触发并发 stop/start
         self._recycling = threading.Event()
+        # 统计刷新协程句柄，stop 时先取消，避免残留任务在新 loop 上
+        # 继续调度 flush_stats
+        self._stats_task = None
 
     def set_tunnel_client(self, tc):
         self._tunnel_client = tc
@@ -811,28 +824,38 @@ class ProxyCore:
             thread = self._thread
 
             if loop and loop.is_running():
-                # 先关闭 server sockets 释放端口，再停 loop。
-                # 必须等待 _shutdown 完成（内部 wait_closed 与锁等待均
-                # 已限时），否则残留协程（如超时未退出的 recycle）会在
-                # 新事件循环上继续操作 server 引用，导致跨循环
-                # RuntimeError 与 EADDRINUSE 端口漂移。
+                # 收尾协程只做清理，不在协程内调用 loop.stop()：
+                # loop.stop() 会让 run_forever 在 future 完成回调执行前
+                # 退出，run_coroutine_threadsafe(...).result() 永远超时，
+                # 每次 stop 固定白等 8s。协程正常返回 → future 正常
+                # resolve，调用方在 finally 里再停 loop。
                 async def _shutdown():
                     await self._stop_servers()
-                    loop.stop()
                 try:
                     asyncio.run_coroutine_threadsafe(_shutdown(), loop).result(
                         timeout=LOCAL_PROXY_STOP_WAIT_TIMEOUT * 2 + 2
                     )
-                    # 正常路径：端口已释放，清空引用防止新 loop 误操作
-                    self._socks_server = None
-                    self._http_server = None
-                    self._server_sockets = []
                 except Exception:
+                    # 仅剩的安全网：僵尸锁等极端情况超时，强制关 socket
+                    # 释放端口，保证 stop() 必然完成
                     logger.warning("proxy shutdown timed out, forcing close", exc_info=True)
-                    # 超时路径：保留 _server_sockets 供下方强制关闭兜底，
-                    # 只丢弃 server 对象（跨 loop 操作会抛 RuntimeError）
-                    self._socks_server = None
-                    self._http_server = None
+                    for sock in self._server_sockets:
+                        try:
+                            sock.close()
+                        except Exception:
+                            pass
+                    self._server_sockets = []
+                finally:
+                    # future 已 resolve（或已放弃等待），此时停 loop 不会再
+                    # 吞掉任何回调；call_soon_threadsafe 保证线程安全
+                    if loop.is_running():
+                        loop.call_soon_threadsafe(loop.stop)
+
+                # 端口已释放，清空引用防止新 loop 误操作（跨 loop
+                # server 引用会抛 RuntimeError + EADDRINUSE 漂移）
+                self._socks_server = None
+                self._http_server = None
+                self._server_sockets = []
 
             if thread:
                 # Wait for thread to exit with short timeout
@@ -1067,7 +1090,7 @@ class ProxyCore:
     async def _start_servers(self):
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT)
         init_writer()
-        asyncio.ensure_future(self._flush_stats_loop())
+        self._stats_task = asyncio.ensure_future(self._flush_stats_loop())
         self._active_connections = 0
         self._mark_proxy_activity()
         await self._start_local_proxy(allow_port_retry=True)
@@ -1124,6 +1147,13 @@ class ProxyCore:
                     raise
 
     async def _stop_servers(self):
+        if self._stats_task and self._stats_task is not asyncio.current_task():
+            self._stats_task.cancel()
+            try:
+                await self._stats_task
+            except asyncio.CancelledError:
+                pass
+        self._stats_task = None
         if self._recycle_task and self._recycle_task is not asyncio.current_task():
             self._recycle_task.cancel()
             try:
@@ -1133,9 +1163,10 @@ class ProxyCore:
         self._recycle_task = None
         try:
             # 整体限时：等待锁被僵尸协程释放 + 关闭 server 收尾，
-            # 超时强制关 socket 释放端口，保证 stop() 必然快速完成
+            # 超时强制关 socket 释放端口，保证 stop() 必然快速完成。
+            # 正常路径在 force_abort 下亚秒完成，此超时只兜底异常。
             await asyncio.wait_for(
-                self._stop_local_proxy_locked(),
+                self._stop_local_proxy_locked(force_abort=True),
                 timeout=LOCAL_PROXY_STOP_WAIT_TIMEOUT + 2,
             )
         except asyncio.TimeoutError:
@@ -1149,9 +1180,9 @@ class ProxyCore:
             self._socks_server = None
             self._http_server = None
 
-    async def _stop_local_proxy_locked(self):
+    async def _stop_local_proxy_locked(self, force_abort=True):
         async with self._get_local_proxy_lock():
-            await self._stop_local_proxy()
+            await self._stop_local_proxy(force_abort=force_abort)
 
     def _get_local_proxy_lock(self):
         if self._local_proxy_lock is None:
@@ -1174,7 +1205,16 @@ class ProxyCore:
                 LOCAL_PROXY_STOP_WAIT_TIMEOUT,
             )
 
-    async def _stop_local_proxy(self):
+    async def _stop_local_proxy(self, force_abort=True):
+        if force_abort:
+            # 全量 stop 才主动断开活跃连接（用户点“关闭代理”即预期断开）。
+            # 各 handler 立即收尾，server.wait_closed() 不再等待
+            # keep-alive / 探测连接自然结束，3s 限时退化为纯安全网。
+            for transport in list(self._active_transports):
+                try:
+                    transport.abort()
+                except (OSError, RuntimeError):
+                    pass
         if self._upstream_pool:
             await self._upstream_pool.stop()
             self._upstream_pool = None
@@ -1237,7 +1277,7 @@ class ProxyCore:
 
     async def _recycle_local_proxy_once_unlocked(self):
         logger.info("local proxy recycle starting")
-        await self._stop_local_proxy()
+        await self._stop_local_proxy(force_abort=False)
         await self._start_local_proxy(allow_port_retry=False)
         self._mark_proxy_activity()
         logger.info(
