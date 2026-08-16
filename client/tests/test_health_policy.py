@@ -59,13 +59,19 @@ class TestHealthCheckSkipReason:
 
 class TestHealthCheckRestartAllowed:
     def test_allowed_when_connected_and_idle(self):
-        assert health_check_restart_allowed(True, False, False) is True
+        assert health_check_restart_allowed(True, False, False, False, False) is True
 
     def test_denied_when_not_connected(self):
-        assert health_check_restart_allowed(False, False, False) is False
+        assert health_check_restart_allowed(False, False, False, False, False) is False
 
     def test_denied_while_disconnecting(self):
-        assert health_check_restart_allowed(True, True, False) is False
+        assert health_check_restart_allowed(True, False, True, False, False) is False
 
     def test_denied_while_connecting(self):
-        assert health_check_restart_allowed(True, False, True) is False
+        assert health_check_restart_allowed(True, False, False, True, False) is False
+
+    def test_denied_while_quitting(self):
+        assert health_check_restart_allowed(True, True, False, False, False) is False
+
+    def test_denied_while_recycling(self):
+        assert health_check_restart_allowed(True, False, False, False, True) is False

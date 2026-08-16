@@ -5,6 +5,8 @@
 若在“用户点关闭代理”或全量重连的瞬间 tick，会误判线程死亡，把
 刚关闭的代理重新拉起（global 模式下还会重新开启系统代理）。
 这些函数把跳过/重启条件集中为纯逻辑并加回归测试。
+restart_allowed 含 quitting/recycling 维度（退出/recycle 发生在
+sleep(2) 期间时不得重启）。
 """
 
 
@@ -26,6 +28,17 @@ def health_check_skip_reason(connected, quitting, reconnecting,
     return None
 
 
-def health_check_restart_allowed(connected, disconnecting, connecting):
-    """sleep(2) 后重启前复核：关停/重连可能已在等待期间完成。"""
-    return bool(connected) and not disconnecting and not connecting
+def health_check_restart_allowed(connected, quitting, disconnecting,
+                                 connecting, recycling):
+    """sleep(2) 后重启前复核：关停/重连/退出/recycle 可能已在等待期间完成。
+
+    quitting 不可省略：若退出发生在 sleep 期间，重启会在进程退出前重新
+    enable 系统代理，把 networksetup 留在指向死端口的状态。
+    """
+    return (
+        bool(connected)
+        and not quitting
+        and not disconnecting
+        and not connecting
+        and not recycling
+    )

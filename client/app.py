@@ -907,11 +907,17 @@ class AppController(NSObject):
                 # 避免把刚关闭的代理重新拉起（历史端口漂移竞态）
                 if not health_check_restart_allowed(
                     connected=self.connected,
+                    quitting=getattr(self, "_quitting", False),
                     disconnecting=self._disconnecting,
                     connecting=self._connecting,
+                    recycling=self.proxy.is_recycling(),
                 ):
                     restart_count = 0
                     continue
+                # 重启期间占用 _disconnecting 标志：toggle 点击在该
+                # 亚秒窗口被忽略（_disconnect_async / toggleProxy_ 早退），
+                # 避免用户关停与 restart 交错导致端口漂移/系统代理黑洞
+                self._disconnecting = True
                 try:
                     self.proxy.stop()
                     self.proxy.start(self.config.data,
@@ -943,6 +949,8 @@ class AppController(NSObject):
                     crash_logger.warning(
                         "Proxy restart failed: %s", e, exc_info=True
                     )
+                finally:
+                    self._disconnecting = False
 
         threading.Thread(target=_loop, daemon=True).start()
 
