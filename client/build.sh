@@ -71,6 +71,7 @@ $PYTHON -m nuitka \
     --include-data-files=config_window.py=config_window.py \
     --include-data-files=doh_resolver.py=doh_resolver.py \
     --include-data-files=geodata_loader.py=geodata_loader.py \
+    --include-data-files=health_policy.py=health_policy.py \
     --include-data-files=logger.py=logger.py \
     --include-data-files=log_window.py=log_window.py \
     --include-data-files=proto_parser.py=proto_parser.py \
