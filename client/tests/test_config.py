@@ -40,6 +40,38 @@ class TestConfig:
         assert data["server"]["username"] == "user1"
         assert data["server"]["password"] == "pass1"
 
+    def test_save_is_atomic_and_leaves_no_tmp(self):
+        self.config.load()
+        self.config.data["server"]["address"] = "atomic.example.com"
+        self.config.save()
+
+        assert not os.path.exists(self.config_path + ".tmp")
+        with open(self.config_path) as f:
+            assert json.load(f)["server"]["address"] == "atomic.example.com"
+
+    def test_save_failure_keeps_previous_config(self, monkeypatch):
+        self.config.load()
+        self.config.data["server"]["address"] = "original.example.com"
+        self.config.save()
+
+        # 模拟写入中途失败（如磁盘满）：旧配置必须保持完整
+        real_open = open
+
+        def failing_open(path, *args, **kwargs):
+            if str(path).endswith(".tmp"):
+                raise OSError("simulated disk full")
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.open", failing_open)
+        self.config.data["server"]["address"] = "never-persisted.example.com"
+        with pytest.raises(OSError):
+            self.config.save()
+        monkeypatch.undo()
+
+        config2 = Config(config_path=self.config_path)
+        data = config2.load()
+        assert data["server"]["address"] == "original.example.com"
+
     def test_load_existing_config(self):
         existing = {
             "server": {

@@ -1,5 +1,7 @@
-rumps>=0.4.0
-py2app>=0.28
-pytest>=7.0
+# 运行时依赖（Nuitka 构建见 build.sh；rumps/py2app 已弃用，勿再安装）
+pyobjc-framework-Cocoa>=10.0
 aiohttp>=3.9
 websockets>=15,<16
+
+# 测试
+pytest>=7.0

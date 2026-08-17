@@ -69,8 +69,11 @@ class Config:
 
     def save(self):
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-        with open(self.config_path, "w") as f:
+        # 原子写：先写临时文件再 rename，避免写一半崩溃留下半截 JSON
+        tmp = self.config_path + ".tmp"
+        with open(tmp, "w") as f:
             json.dump(self.data, f, indent=2)
+        os.replace(tmp, self.config_path)
 
     def is_configured(self):
         return bool(self.data and self.data["server"]["address"])
