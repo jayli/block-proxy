@@ -1719,8 +1719,9 @@ function getAnyProxyOptions() {
                   'Server':'Video Stats Server',
                   'Content-Length': 0,
                   'X-XSS-Protection': 0,
-                  'X-Frame-Options': 'SAMEORIGIN',
-                  'Alt-Svc': 'h3=":443"; ma=2592000,h3-29=":443"; ma=2592000'
+                  'X-Frame-Options': 'SAMEORIGIN'
+                  // 注意：不要加 Alt-Svc 头。它会告诉客户端该域名支持 HTTP/3，
+                  // 客户端后续改用 QUIC(UDP) 直连源站，绕过 TCP 代理，拦截规则失效。
                 },
                 body: Buffer.alloc(0)
               }

@@ -87,6 +87,25 @@ class CommonReadableStream extends Readable {
 }
 
 /**
+ * Remove the Alt-Svc header (case-insensitive) from a response header object.
+ *
+ * Alt-Svc advertises an HTTP/3 (QUIC/UDP) endpoint for the origin. If a
+ * MITM'd client learns about it, subsequent requests switch to QUIC and
+ * bypass this TCP proxy entirely — block/rewrite rules stop applying.
+ * Stripping it pins clients to the TCP (HTTP/1.1) path the proxy can see.
+ *
+ * @param {object} header - response header object, mutated in place
+ */
+function stripAltSvcHeader(header) {
+  if (!header || typeof header !== 'object') return;
+  for (const key of Object.keys(header)) {
+    if (key.toLowerCase() === 'alt-svc') {
+      delete header[key];
+    }
+  }
+}
+
+/**
  * Get error response for exception scenarios.
  */
 const getErrorResponse = (error, fullUrl) => {
@@ -433,6 +452,10 @@ function getUserReqHandler(userRule) {
       const responseInfo = finalResponseData.response;
       const resHeader = responseInfo.header;
       const responseBody = responseInfo.body || '';
+
+      // 收口点：所有经 MITM 返回客户端的响应（源站抓取/流式/规则生成）
+      // 都从这里写出。剥离 Alt-Svc，防止客户端学到 h3 入口后绕过 TCP 代理。
+      stripAltSvcHeader(resHeader);
 
       const transferEncoding = resHeader['transfer-encoding'] || resHeader['Transfer-Encoding'] || '';
       const contentLength = resHeader['content-length'] || resHeader['Content-Length'];
@@ -1081,6 +1104,7 @@ RequestHandler._test = {
   matchResponseRule,
   fetchRemoteResponse,
   getWsReqInfo,
+  stripAltSvcHeader,
 };
 
 module.exports = RequestHandler;
