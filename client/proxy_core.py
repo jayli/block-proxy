@@ -1,4 +1,5 @@
 import asyncio
+import errno
 import functools
 import hashlib
 import ipaddress
@@ -12,7 +13,7 @@ import time
 
 logger = logging.getLogger("proxy_core")
 
-from logger import access_logger, crash_logger
+from logger import access_logger, crash_logger, diagnostics_logger
 from doh_resolver import resolve_node_address
 from traffic_stats import add_bytes, flush as flush_stats, init_writer
 
@@ -110,10 +111,11 @@ async def read_udp_frame(reader):
     return await reader.readexactly(length)
 
 
-async def relay(reader, writer, route=None, direction=None, on_activity=None):
+async def relay(reader, writer, route=None, direction=None, on_activity=None,
+                idle_timeout=RELAY_IDLE_TIMEOUT, on_idle_timeout=None):
     try:
         while True:
-            data = await asyncio.wait_for(reader.read(65536), timeout=RELAY_IDLE_TIMEOUT)
+            data = await asyncio.wait_for(reader.read(65536), timeout=idle_timeout)
             if not data:
                 break
             writer.write(data)
@@ -124,7 +126,8 @@ async def relay(reader, writer, route=None, direction=None, on_activity=None):
             if writer.transport.get_write_buffer_size() > 65536:
                 await writer.drain()
     except asyncio.TimeoutError:
-        pass
+        if on_idle_timeout:
+            on_idle_timeout()
     except (ConnectionResetError, BrokenPipeError, OSError):
         pass
     finally:
@@ -141,7 +144,12 @@ async def relay(reader, writer, route=None, direction=None, on_activity=None):
                     _force_close_rst(writer)
             else:
                 writer.close()
-                await writer.wait_closed()
+                try:
+                    await asyncio.wait_for(
+                        writer.wait_closed(), timeout=RELAY_EOF_WAIT_TIMEOUT
+                    )
+                except asyncio.TimeoutError:
+                    _force_close_rst(writer)
         except OSError:
             pass
 
@@ -195,23 +203,26 @@ class EdrBlockDetector:
         self._last_notify = 0
         self._notified = False
 
-    def record_reset(self, dest_addr, dest_port):
-        """Record a ConnectionResetError on outbound connect."""
+    def record_reset(self, dest_addr, dest_port, errno_value=None):
+        """Record an outbound connect failure (ConnectionResetError or EBADF)."""
         import time
         now = time.monotonic()
         self._reset_times.append(now)
         # Keep only resets within the window
         cutoff = now - self.WINDOW
         self._reset_times = [t for t in self._reset_times if t > cutoff]
+        cause = (
+            "ConnectionResetError" if errno_value is None else f"errno {errno_value}"
+        )
 
         if len(self._reset_times) >= self.THRESHOLD and not self._notified:
             if now - self._last_notify > self.NOTIFY_COOLDOWN:
                 self._notified = True
                 self._last_notify = now
                 logger.warning(
-                    "EDR blocking suspected: %d consecutive ConnectionResetError "
+                    "EDR blocking suspected: %d consecutive %s "
                     "on outbound connects (last: %s:%s)",
-                    len(self._reset_times), dest_addr, dest_port,
+                    len(self._reset_times), cause, dest_addr, dest_port,
                 )
                 if self._on_blocked:
                     self._on_blocked(dest_addr, dest_port)
@@ -315,8 +326,10 @@ async def _http_connect_handshake(reader, writer, server_config, dest_addr, dest
 async def _close_writer(writer):
     writer.close()
     try:
-        await writer.wait_closed()
-    except OSError:
+        await asyncio.wait_for(writer.wait_closed(), timeout=RELAY_EOF_WAIT_TIMEOUT)
+    except asyncio.TimeoutError:
+        _force_close_rst(writer)
+    except (OSError, AttributeError, RuntimeError):
         pass
 
 
@@ -467,6 +480,25 @@ async def connect_upstream_udp_associate(server_config, ssl_ctx=None):
 DIRECT_CONNECT_TIMEOUT = 10
 
 
+async def _open_direct(host, port):
+    """直连 open_connection，EBADF（errno 9）失败自动重试一次。
+
+    公司 EDR（如 AliEntSafe）会在握手期间让 socket fd 失效，表现为
+    "Connect call failed" + errno 9。单次重试通常即可绕开这类注入。
+    """
+    last_exc = None
+    for attempt in range(2):
+        try:
+            reader, writer = await asyncio.open_connection(host, port)
+            _set_nodelay(writer)
+            return reader, writer
+        except OSError as exc:
+            last_exc = exc
+            if exc.errno != errno.EBADF or attempt == 1:
+                raise
+    raise last_exc
+
+
 async def connect_direct(dest_addr, dest_port):
     """直连目标。域名时逐个尝试解析出的 IP（带超时），避免单个
     不可达 IP（如唤醒后系统 DNS 返回的坏缓存/跨网段 IP）挂死整个
@@ -478,9 +510,7 @@ async def connect_direct(dest_addr, dest_port):
         is_domain = True
 
     if not is_domain:
-        reader, writer = await asyncio.open_connection(dest_addr, dest_port)
-        _set_nodelay(writer)
-        return reader, writer
+        return await _open_direct(dest_addr, dest_port)
 
     loop = asyncio.get_running_loop()
     infos = await loop.getaddrinfo(dest_addr, dest_port, type=socket.SOCK_STREAM)
@@ -496,12 +526,10 @@ async def connect_direct(dest_addr, dest_port):
         try:
             # 注意：getaddrinfo 的 IPv6 地址是 4 元组 (host, port, flowinfo, scopeid)，
             # open_connection 只接受 (host, port)，取前两个即可
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(addr[0], addr[1]),
+            return await asyncio.wait_for(
+                _open_direct(addr[0], addr[1]),
                 timeout=DIRECT_CONNECT_TIMEOUT,
             )
-            _set_nodelay(writer)
-            return reader, writer
         except (asyncio.TimeoutError, OSError) as exc:
             last_exc = exc
             continue
@@ -518,6 +546,152 @@ def _is_edr_reset(exc):
 
 
 MAX_CONCURRENT = 256
+
+# 全局活跃连接总量上限。信号量只覆盖建连阶段后，用它兜底防止
+# fd/内存被无限多的长寿命连接耗尽（正常使用远达不到）。
+TOTAL_CONNECTION_LIMIT = 2048
+# 获取建连槽位的最长等待时间，超时快速失败而不是无限排队。
+SETUP_ACQUIRE_TIMEOUT = 10.0
+# TCP DNS（端口 53）的空闲超时：连接成功但查询永不回复的探测连接
+# 会在 15s 内自动回收，不再挂满 300s。
+DNS_TCP_IDLE_TIMEOUT = 15.0
+# 单目标并发上限：53 端口收紧，普通目标放宽（避免误伤 CDN 高并发）。
+TARGET_LIMIT_DEFAULT = 64
+TARGET_LIMIT_PORT_53 = 8
+# 诊断指标汇总周期。
+DIAGNOSTICS_INTERVAL = 60.0
+
+
+class RuntimeMetrics:
+    """聚合代理运行时的排队/异常指标，供周期诊断日志输出。
+
+    所有方法只在事件循环线程中调用，无需加锁。snapshot() 读取并
+    清空累计值，使每条诊断日志都是“上一个周期内”的增量。
+    """
+
+    def __init__(self):
+        self.setup_wait_count = 0
+        self.setup_wait_total = 0.0
+        self.setup_wait_max = 0.0
+        self.setup_wait_slow = 0
+        self.setup_timeout_rejects = 0
+        self.total_ceiling_rejects = 0
+        self.dns_idle_kills = 0
+        self.edr_badfd = 0
+        self.active_peak = 0
+
+    def record_setup_wait(self, wait_seconds):
+        self.setup_wait_count += 1
+        self.setup_wait_total += wait_seconds
+        if wait_seconds > self.setup_wait_max:
+            self.setup_wait_max = wait_seconds
+        if wait_seconds >= 1.0:
+            self.setup_wait_slow += 1
+
+    def record_setup_timeout(self):
+        self.setup_timeout_rejects += 1
+
+    def record_total_ceiling_reject(self):
+        self.total_ceiling_rejects += 1
+
+    def record_dns_idle_kill(self):
+        self.dns_idle_kills += 1
+
+    def record_edr_badfd(self):
+        self.edr_badfd += 1
+
+    def observe_active(self, count):
+        if count > self.active_peak:
+            self.active_peak = count
+
+    def snapshot(self):
+        count = self.setup_wait_count
+        avg_ms = round(self.setup_wait_total / count * 1000.0) if count else 0
+        data = {
+            "setup_wait_count": count,
+            "setup_wait_avg_ms": avg_ms,
+            "setup_wait_max_ms": round(self.setup_wait_max * 1000.0),
+            "setup_wait_slow": self.setup_wait_slow,
+            "setup_timeout_rejects": self.setup_timeout_rejects,
+            "total_ceiling_rejects": self.total_ceiling_rejects,
+            "dns_idle_kills": self.dns_idle_kills,
+            "edr_badfd": self.edr_badfd,
+            "active_peak": self.active_peak,
+        }
+        self.__init__()
+        return data
+
+
+class TargetAdmission:
+    """单目标并发准入：限制同一 host:port 的并发连接数。
+
+    异常流量（如连上但永不回复的 TCP DNS 探测）超限时会被快速拒绝，
+    只消耗它自己的配额，无法拖垮全局连接表或建连队列。
+    """
+
+    def __init__(self, default_limit=TARGET_LIMIT_DEFAULT):
+        self._default_limit = default_limit
+        self._counts = {}
+        self._rejected = {}
+
+    @staticmethod
+    def _key(host, port):
+        try:
+            host_key = str(host).lower()
+        except Exception:
+            host_key = ""
+        try:
+            port_key = int(port)
+        except (TypeError, ValueError):
+            port_key = 0
+        return (host_key, port_key)
+
+    def limit_for(self, port):
+        try:
+            port_int = int(port)
+        except (TypeError, ValueError):
+            port_int = 0
+        if port_int == 53:
+            return TARGET_LIMIT_PORT_53
+        return self._default_limit
+
+    def try_acquire(self, host, port):
+        key = self._key(host, port)
+        count = self._counts.get(key, 0)
+        if count >= self.limit_for(port):
+            self._rejected[key] = self._rejected.get(key, 0) + 1
+            return False
+        self._counts[key] = count + 1
+        return True
+
+    def release(self, host, port):
+        key = self._key(host, port)
+        count = self._counts.get(key, 0)
+        if count <= 1:
+            self._counts.pop(key, None)
+        else:
+            self._counts[key] = count - 1
+
+    def snapshot(self):
+        top_active = sorted(
+            self._counts.items(), key=lambda kv: kv[1], reverse=True
+        )[:5]
+        top_rejected = sorted(
+            self._rejected.items(), key=lambda kv: kv[1], reverse=True
+        )[:5]
+        return {
+            "active_total": sum(self._counts.values()),
+            "active_top": [
+                {"target": f"{host}:{port}", "count": count}
+                for (host, port), count in top_active
+            ],
+            "rejected_total": sum(self._rejected.values()),
+            "rejected_top": [
+                {"target": f"{host}:{port}", "count": count}
+                for (host, port), count in top_rejected
+            ],
+        }
+
 
 POOL_SIZE = 3
 POOL_CHECK_INTERVAL = 1.0
@@ -708,6 +882,9 @@ class ProxyCore:
         # 统计刷新协程句柄，stop 时先取消，避免残留任务在新 loop 上
         # 继续调度 flush_stats
         self._stats_task = None
+        self._metrics = RuntimeMetrics()
+        self._target_admission = TargetAdmission()
+        self._diagnostics_task = None
 
     def set_tunnel_client(self, tc):
         self._tunnel_client = tc
@@ -1013,7 +1190,11 @@ class ProxyCore:
             if writer:
                 writer.close()
                 try:
-                    await writer.wait_closed()
+                    await asyncio.wait_for(
+                        writer.wait_closed(), timeout=RELAY_EOF_WAIT_TIMEOUT
+                    )
+                except asyncio.TimeoutError:
+                    _force_close_rst(writer)
                 except OSError:
                     pass
 
@@ -1088,11 +1269,14 @@ class ProxyCore:
         self._loop.run_forever()
 
     async def _start_servers(self):
+        self._metrics = RuntimeMetrics()
+        self._target_admission = TargetAdmission()
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT)
         init_writer()
         self._stats_task = asyncio.ensure_future(self._flush_stats_loop())
         self._active_connections = 0
         self._mark_proxy_activity()
+        self._diagnostics_task = asyncio.ensure_future(self._diagnostics_loop())
         await self._start_local_proxy(allow_port_retry=True)
         self._recycle_task = asyncio.ensure_future(self._local_proxy_recycle_loop())
 
@@ -1154,6 +1338,13 @@ class ProxyCore:
             except asyncio.CancelledError:
                 pass
         self._stats_task = None
+        if self._diagnostics_task and self._diagnostics_task is not asyncio.current_task():
+            self._diagnostics_task.cancel()
+            try:
+                await self._diagnostics_task
+            except asyncio.CancelledError:
+                pass
+        self._diagnostics_task = None
         if self._recycle_task and self._recycle_task is not asyncio.current_task():
             self._recycle_task.cancel()
             try:
@@ -1233,6 +1424,7 @@ class ProxyCore:
 
     def _connection_started(self):
         self._active_connections += 1
+        self._metrics.observe_active(self._active_connections)
         self._mark_proxy_activity()
 
     def _connection_finished(self):
@@ -1291,6 +1483,114 @@ class ProxyCore:
             await asyncio.sleep(2)
             flush_stats()
 
+    async def _acquire_setup_slot(self):
+        """获取建连槽位，带超时与排队时长打点。
+
+        槽位只在建连阶段持有（见 _handle_http/_handle_socks），
+        超时后快速失败，避免异常流量把真实请求堵在队列里。
+        """
+        if self._semaphore is None:
+            return
+        started = time.monotonic()
+        try:
+            await asyncio.wait_for(
+                self._semaphore.acquire(), timeout=SETUP_ACQUIRE_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            self._metrics.record_setup_timeout()
+            raise
+        self._metrics.record_setup_wait(time.monotonic() - started)
+
+    def _release_setup_slot(self):
+        if self._semaphore is not None:
+            self._semaphore.release()
+
+    async def _close_client_writer(self, writer):
+        """有界关闭客户端侧 writer：对端不回 FIN 时超时 RST。
+
+        避免 handler 卡在无限 wait_closed()，杜绝 CLOSED fd 与
+        FIN_WAIT_2 堆积。
+        """
+        try:
+            writer.close()
+            try:
+                await asyncio.wait_for(
+                    writer.wait_closed(), timeout=RELAY_EOF_WAIT_TIMEOUT
+                )
+            except asyncio.TimeoutError:
+                _force_close_rst(writer)
+        except (OSError, RuntimeError, AttributeError):
+            pass
+
+    @staticmethod
+    async def _write_http_503(client_writer):
+        try:
+            client_writer.write(
+                b"HTTP/1.1 503 Service Unavailable\r\n"
+                b"Content-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            await client_writer.drain()
+        except OSError:
+            pass
+
+    @staticmethod
+    def _relay_idle_timeout(port):
+        try:
+            port_int = int(port)
+        except (TypeError, ValueError):
+            port_int = 0
+        if port_int == 53:
+            return DNS_TCP_IDLE_TIMEOUT
+        return RELAY_IDLE_TIMEOUT
+
+    def _on_relay_idle_timeout(self, port):
+        try:
+            port_int = int(port)
+        except (TypeError, ValueError):
+            port_int = 0
+        if port_int == 53:
+            self._metrics.record_dns_idle_kill()
+
+    async def _diagnostics_loop(self):
+        while True:
+            await asyncio.sleep(DIAGNOSTICS_INTERVAL)
+            try:
+                self._log_diagnostics()
+            except Exception:
+                crash_logger.warning("diagnostics logging failed", exc_info=True)
+
+    def _log_diagnostics(self):
+        metrics = self._metrics.snapshot()
+        admission = self._target_admission.snapshot()
+        active_top = ",".join(
+            f"{entry['target']}={entry['count']}" for entry in admission["active_top"]
+        )
+        rejected_top = ",".join(
+            f"{entry['target']}={entry['count']}" for entry in admission["rejected_top"]
+        )
+        diagnostics_logger.info(
+            "fd=%d active=%d active_peak=%d setup_wait_n=%d setup_wait_avg_ms=%d "
+            "setup_wait_max_ms=%d setup_wait_slow=%d setup_timeout_rejects=%d "
+            "total_ceiling_rejects=%d dns_idle_kills=%d edr_badfd=%d "
+            "target_active=%d target_active_top=%s target_rejected_total=%d "
+            "target_rejected_top=%s",
+            self.fd_count(),
+            self._active_connections,
+            metrics["active_peak"],
+            metrics["setup_wait_count"],
+            metrics["setup_wait_avg_ms"],
+            metrics["setup_wait_max_ms"],
+            metrics["setup_wait_slow"],
+            metrics["setup_timeout_rejects"],
+            metrics["total_ceiling_rejects"],
+            metrics["dns_idle_kills"],
+            metrics["edr_badfd"],
+            admission["active_total"],
+            active_top or "-",
+            admission["rejected_total"],
+            rejected_top or "-",
+        )
+
     def _should_direct(self, host):
         if self._proxy_private:
             return False
@@ -1342,6 +1642,14 @@ class ProxyCore:
         except ConnectionResetError:
             if self._edr_detector:
                 self._edr_detector.record_reset(dest_addr, dest_port)
+            raise
+        except OSError as e:
+            if e.errno == errno.EBADF:
+                self._metrics.record_edr_badfd()
+                if self._edr_detector:
+                    self._edr_detector.record_reset(
+                        dest_addr, dest_port, errno_value=e.errno
+                    )
             raise
 
     async def _connect_via_tunnel(self, dest_addr, dest_port):
@@ -1400,12 +1708,15 @@ class ProxyCore:
         transport = client_writer.transport
         self._active_transports.add(transport)
         try:
-            async with self._semaphore:
-                self._connection_started()
-                try:
-                    await self._do_handle_socks(client_reader, client_writer)
-                finally:
-                    self._connection_finished()
+            if self._active_connections >= TOTAL_CONNECTION_LIMIT:
+                self._metrics.record_total_ceiling_reject()
+                await self._close_client_writer(client_writer)
+                return
+            self._connection_started()
+            try:
+                await self._do_handle_socks(client_reader, client_writer)
+            finally:
+                self._connection_finished()
         finally:
             self._active_transports.discard(transport)
 
@@ -1466,45 +1777,72 @@ class ProxyCore:
 
             route = self._select_route(dest_addr, is_domain=is_domain)
             direct = route == "direct"
-            try:
-                remote_reader, remote_writer, route = await self._connect_target(
-                    dest_addr, dest_port, is_domain=is_domain, route=route
-                )
-            except Exception as e:
-                _log_access(dest_addr, dest_port, "CONNECT", direct, str(e))
-                if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
-                    crash_logger.warning(f"SOCKS5 connect failed: {dest_addr}:{dest_port}", exc_info=True)
+            if not self._target_admission.try_acquire(dest_addr, dest_port):
+                _log_access(dest_addr, dest_port, "CONNECT", direct, "target-limit")
+                client_writer.write(b"\x05\x01\x00\x01" + b"\x00" * 4 + b"\x00\x00")
+                try:
+                    await client_writer.drain()
+                except OSError:
+                    pass
                 return
 
-            _log_access(dest_addr, dest_port, "CONNECT", direct)
-
-            relay_started = False
+            slot_held = False
             try:
-                client_writer.write(
-                    b"\x05\x00\x00\x01" + b"\x00" * 4 + b"\x00\x00"
-                )
-                await client_writer.drain()
-                relay_started = True
+                try:
+                    await self._acquire_setup_slot()
+                    slot_held = True
+                except asyncio.TimeoutError:
+                    _log_access(dest_addr, dest_port, "CONNECT", direct, "setup-busy")
+                    client_writer.write(b"\x05\x01\x00\x01" + b"\x00" * 4 + b"\x00\x00")
+                    try:
+                        await client_writer.drain()
+                    except OSError:
+                        pass
+                    return
+                try:
+                    remote_reader, remote_writer, route = await self._connect_target(
+                        dest_addr, dest_port, is_domain=is_domain, route=route
+                    )
+                except Exception as e:
+                    _log_access(dest_addr, dest_port, "CONNECT", direct, str(e))
+                    if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
+                        crash_logger.warning(f"SOCKS5 connect failed: {dest_addr}:{dest_port}", exc_info=True)
+                    return
 
-                await asyncio.gather(
-                    relay(client_reader, remote_writer, route, "outbound", self._mark_proxy_activity),
-                    relay(remote_reader, client_writer, route, "inbound", self._mark_proxy_activity),
-                )
+                _log_access(dest_addr, dest_port, "CONNECT", direct)
+
+                relay_started = False
+                try:
+                    client_writer.write(
+                        b"\x05\x00\x00\x01" + b"\x00" * 4 + b"\x00\x00"
+                    )
+                    await client_writer.drain()
+                    relay_started = True
+
+                    idle_timeout = self._relay_idle_timeout(dest_port)
+                    await asyncio.gather(
+                        relay(client_reader, remote_writer, route, "outbound",
+                              self._mark_proxy_activity, idle_timeout=idle_timeout,
+                              on_idle_timeout=lambda: self._on_relay_idle_timeout(dest_port)),
+                        relay(remote_reader, client_writer, route, "inbound",
+                              self._mark_proxy_activity, idle_timeout=idle_timeout,
+                              on_idle_timeout=lambda: self._on_relay_idle_timeout(dest_port)),
+                    )
+                finally:
+                    # 与 HTTP 分支同理：握手后客户端立即断开时兜底关闭 remote_writer
+                    if not relay_started:
+                        _force_close_rst(remote_writer)
             finally:
-                # 与 HTTP 分支同理：握手后客户端立即断开时兜底关闭 remote_writer
-                if not relay_started:
-                    _force_close_rst(remote_writer)
+                if slot_held:
+                    self._release_setup_slot()
+                self._target_admission.release(dest_addr, dest_port)
         except asyncio.IncompleteReadError:
             return
         except Exception as e:
             if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
                 crash_logger.warning("SOCKS5 handler unexpected error", exc_info=True)
         finally:
-            try:
-                client_writer.close()
-                await client_writer.wait_closed()
-            except OSError:
-                pass
+            await self._close_client_writer(client_writer)
 
     async def _handle_udp_associate(self, client_reader, client_writer, atyp):
         # 消费掉请求中剩余的地址和端口字段
@@ -1592,22 +1930,22 @@ class ProxyCore:
                 )
             except (asyncio.TimeoutError, OSError):
                 _force_close_rst(remote_writer)
-            try:
-                client_writer.close()
-                await client_writer.wait_closed()
-            except OSError:
-                pass
+            await self._close_client_writer(client_writer)
 
     async def _handle_http(self, client_reader, client_writer):
         transport = client_writer.transport
         self._active_transports.add(transport)
         try:
-            async with self._semaphore:
-                self._connection_started()
-                try:
-                    await self._do_handle_http(client_reader, client_writer)
-                finally:
-                    self._connection_finished()
+            if self._active_connections >= TOTAL_CONNECTION_LIMIT:
+                self._metrics.record_total_ceiling_reject()
+                await self._write_http_503(client_writer)
+                await self._close_client_writer(client_writer)
+                return
+            self._connection_started()
+            try:
+                await self._do_handle_http(client_reader, client_writer)
+            finally:
+                self._connection_finished()
         finally:
             self._active_transports.discard(transport)
 
@@ -1651,35 +1989,58 @@ class ProxyCore:
 
                 route = self._select_route(host, is_domain=is_domain)
                 direct = route == "direct"
-                try:
-                    remote_reader, remote_writer, route = await self._connect_target(
-                        host, port, is_domain=is_domain, route=route
-                    )
-                except Exception as e:
-                    _log_access(host, port, "CONNECT", direct, str(e))
-                    if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
-                        crash_logger.warning(f"HTTP CONNECT failed: {host}:{port}", exc_info=True)
+                if not self._target_admission.try_acquire(host, port):
+                    _log_access(host, port, "CONNECT", direct, "target-limit")
+                    await self._write_http_503(client_writer)
                     return
 
-                _log_access(host, port, "CONNECT", direct)
-
-                relay_started = False
+                slot_held = False
                 try:
-                    client_writer.write(
-                        b"HTTP/1.1 200 Connection Established\r\n\r\n"
-                    )
-                    await client_writer.drain()
-                    relay_started = True
+                    try:
+                        await self._acquire_setup_slot()
+                        slot_held = True
+                    except asyncio.TimeoutError:
+                        _log_access(host, port, "CONNECT", direct, "setup-busy")
+                        await self._write_http_503(client_writer)
+                        return
+                    try:
+                        remote_reader, remote_writer, route = await self._connect_target(
+                            host, port, is_domain=is_domain, route=route
+                        )
+                    except Exception as e:
+                        _log_access(host, port, "CONNECT", direct, str(e))
+                        if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
+                            crash_logger.warning(f"HTTP CONNECT failed: {host}:{port}", exc_info=True)
+                        return
 
-                    await asyncio.gather(
-                        relay(client_reader, remote_writer, route, "outbound", self._mark_proxy_activity),
-                        relay(remote_reader, client_writer, route, "inbound", self._mark_proxy_activity),
-                    )
+                    _log_access(host, port, "CONNECT", direct)
+
+                    relay_started = False
+                    try:
+                        client_writer.write(
+                            b"HTTP/1.1 200 Connection Established\r\n\r\n"
+                        )
+                        await client_writer.drain()
+                        relay_started = True
+
+                        idle_timeout = self._relay_idle_timeout(port)
+                        await asyncio.gather(
+                            relay(client_reader, remote_writer, route, "outbound",
+                                  self._mark_proxy_activity, idle_timeout=idle_timeout,
+                                  on_idle_timeout=lambda: self._on_relay_idle_timeout(port)),
+                            relay(remote_reader, client_writer, route, "inbound",
+                                  self._mark_proxy_activity, idle_timeout=idle_timeout,
+                                  on_idle_timeout=lambda: self._on_relay_idle_timeout(port)),
+                        )
+                    finally:
+                        # 客户端在握手后立即断开（如探测连接）时，drain 抛异常
+                        # 会跳过 relay，remote_writer 必须在此兜底关闭，防止 fd 泄漏
+                        if not relay_started:
+                            _force_close_rst(remote_writer)
                 finally:
-                    # 客户端在握手后立即断开（如探测连接）时，drain 抛异常
-                    # 会跳过 relay，remote_writer 必须在此兜底关闭，防止 fd 泄漏
-                    if not relay_started:
-                        _force_close_rst(remote_writer)
+                    if slot_held:
+                        self._release_setup_slot()
+                    self._target_admission.release(host, port)
             else:
                 url = parts[1]
                 if url.startswith("http://"):
@@ -1714,40 +2075,63 @@ class ProxyCore:
 
                     route = self._select_route(host, is_domain=is_domain)
                     direct = route == "direct"
-                    try:
-                        remote_reader, remote_writer, route = await self._connect_target(
-                            host, port, is_domain=is_domain, route=route
-                        )
-                    except Exception as e:
-                        _log_access(host, port, method, direct, str(e))
-                        if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
-                            crash_logger.warning(f"HTTP request failed: {host}:{port}", exc_info=True)
+                    if not self._target_admission.try_acquire(host, port):
+                        _log_access(host, port, method, direct, "target-limit")
+                        await self._write_http_503(client_writer)
                         return
 
-                    _log_access(host, port, method, direct)
-
-                    relay_started = False
+                    slot_held = False
                     try:
-                        if direct:
-                            # 直连目标服务器：用路径格式
-                            request_line = f"{method} {path} {parts[2]}\r\n".encode()
-                        else:
-                            # 下游是代理（tunnel 或 upstream proxy）：保留完整 URL
-                            request_line = f"{method} {url} {parts[2]}\r\n".encode()
-                        remote_writer.write(request_line)
-                        for h in headers:
-                            remote_writer.write(h)
-                        remote_writer.write(b"\r\n")
-                        await remote_writer.drain()
-                        relay_started = True
+                        try:
+                            await self._acquire_setup_slot()
+                            slot_held = True
+                        except asyncio.TimeoutError:
+                            _log_access(host, port, method, direct, "setup-busy")
+                            await self._write_http_503(client_writer)
+                            return
+                        try:
+                            remote_reader, remote_writer, route = await self._connect_target(
+                                host, port, is_domain=is_domain, route=route
+                            )
+                        except Exception as e:
+                            _log_access(host, port, method, direct, str(e))
+                            if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
+                                crash_logger.warning(f"HTTP request failed: {host}:{port}", exc_info=True)
+                            return
 
-                        await asyncio.gather(
-                            relay(remote_reader, client_writer, route, "inbound", self._mark_proxy_activity),
-                            relay(client_reader, remote_writer, route, "outbound", self._mark_proxy_activity),
-                        )
+                        _log_access(host, port, method, direct)
+
+                        relay_started = False
+                        try:
+                            if direct:
+                                # 直连目标服务器：用路径格式
+                                request_line = f"{method} {path} {parts[2]}\r\n".encode()
+                            else:
+                                # 下游是代理（tunnel 或 upstream proxy）：保留完整 URL
+                                request_line = f"{method} {url} {parts[2]}\r\n".encode()
+                            remote_writer.write(request_line)
+                            for h in headers:
+                                remote_writer.write(h)
+                            remote_writer.write(b"\r\n")
+                            await remote_writer.drain()
+                            relay_started = True
+
+                            idle_timeout = self._relay_idle_timeout(port)
+                            await asyncio.gather(
+                                relay(remote_reader, client_writer, route, "inbound",
+                                      self._mark_proxy_activity, idle_timeout=idle_timeout,
+                                      on_idle_timeout=lambda: self._on_relay_idle_timeout(port)),
+                                relay(client_reader, remote_writer, route, "outbound",
+                                      self._mark_proxy_activity, idle_timeout=idle_timeout,
+                                      on_idle_timeout=lambda: self._on_relay_idle_timeout(port)),
+                            )
+                        finally:
+                            if not relay_started:
+                                _force_close_rst(remote_writer)
                     finally:
-                        if not relay_started:
-                            _force_close_rst(remote_writer)
+                        if slot_held:
+                            self._release_setup_slot()
+                        self._target_admission.release(host, port)
                 else:
                     client_writer.close()
                     return
@@ -1755,8 +2139,4 @@ class ProxyCore:
             if not isinstance(e, (ConnectionResetError, BrokenPipeError, TimeoutError, OSError)):
                 crash_logger.warning("HTTP handler unexpected error", exc_info=True)
         finally:
-            try:
-                client_writer.close()
-                await client_writer.wait_closed()
-            except OSError:
-                pass
+            await self._close_client_writer(client_writer)

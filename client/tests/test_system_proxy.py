@@ -26,7 +26,7 @@ class TestSystemProxy:
             call(["networksetup", "-setwebproxystate", "Wi-Fi", "on"], capture_output=True, text=True),
             call(["networksetup", "-setsecurewebproxy", "Wi-Fi", "127.0.0.1", "1087"], capture_output=True, text=True),
             call(["networksetup", "-setsecurewebproxystate", "Wi-Fi", "on"], capture_output=True, text=True),
-            call(["networksetup", "-setproxybypassdomains", "Wi-Fi", "*.local", "169.254.0.0/16", "127.0.0.1", "localhost", "0.0.0.0", "::1", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"], capture_output=True, text=True),
+            call(["networksetup", "-setproxybypassdomains", "Wi-Fi", "*.local", "169.254.0.0/16", "127.0.0.1", "localhost", "0.0.0.0", "::1", "fc00::/7", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"], capture_output=True, text=True),
         ]
         mock_run.assert_has_calls(expected_calls, any_order=True)
 

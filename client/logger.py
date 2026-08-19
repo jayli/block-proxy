@@ -14,6 +14,7 @@ BACKUP_COUNT = 10
 
 access_logger = logging.getLogger("blockproxyclient.access")
 crash_logger = logging.getLogger("blockproxyclient.crash")
+diagnostics_logger = logging.getLogger("blockproxyclient.diagnostics")
 
 _crash_file = None
 _initialized = False
@@ -54,6 +55,19 @@ def setup_logging(log_dir=None):
     )
     crash_logger.addHandler(crash_handler)
     crash_logger.setLevel(logging.WARNING)
+
+    # Diagnostics logger — 周期性的运行指标/异常打点
+    diagnostics_handler = logging.handlers.RotatingFileHandler(
+        os.path.join(log_dir, "diagnostics.log"),
+        maxBytes=MAX_BYTES,
+        backupCount=BACKUP_COUNT,
+        encoding="utf-8",
+    )
+    diagnostics_handler.setFormatter(
+        logging.Formatter("%(asctime)s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+    )
+    diagnostics_logger.addHandler(diagnostics_handler)
+    diagnostics_logger.setLevel(logging.INFO)
 
     # faulthandler — writes C-level tracebacks to a separate fault.log
     fault_log_path = os.path.join(log_dir, "fault.log")

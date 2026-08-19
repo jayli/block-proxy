@@ -311,7 +311,8 @@ def test_http_connect_normal_completion_does_not_force_rst(monkeypatch):
     async def fake_connect_target(host, port, is_domain=None, route=None):
         return object(), Writer(), "proxy"
 
-    async def fake_relay(reader, writer, route=None, direction=None, on_activity=None):
+    async def fake_relay(reader, writer, route=None, direction=None, on_activity=None,
+                         idle_timeout=None, on_idle_timeout=None):
         return
 
     rst_calls = []

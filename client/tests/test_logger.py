@@ -12,10 +12,11 @@ class TestSetupLogging:
         self.log_dir = os.path.join(self.tmp_dir, "logs")
 
     def teardown_method(self):
-        from logger import access_logger, crash_logger
+        from logger import access_logger, crash_logger, diagnostics_logger
         import logger
         access_logger.handlers.clear()
         crash_logger.handlers.clear()
+        diagnostics_logger.handlers.clear()
         logger._initialized = False
         if logger._crash_file and not logger._crash_file.closed:
             logger._crash_file.close()
@@ -40,6 +41,13 @@ class TestSetupLogging:
         from logger import crash_logger
         crash_logger.critical("test crash")
         assert os.path.exists(os.path.join(self.log_dir, "crash.log"))
+
+    def test_creates_diagnostics_log_file(self):
+        from logger import setup_logging
+        setup_logging(log_dir=self.log_dir)
+        from logger import diagnostics_logger
+        diagnostics_logger.info("fd=100 active=5")
+        assert os.path.exists(os.path.join(self.log_dir, "diagnostics.log"))
 
     def test_access_logger_format(self):
         from logger import setup_logging
