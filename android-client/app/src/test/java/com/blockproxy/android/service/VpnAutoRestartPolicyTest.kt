@@ -4,12 +4,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class BootRestartReceiverTest {
+class VpnAutoRestartPolicyTest {
 
     @Test
-    fun `shouldStartOnBoot returns true when config exists, tunnel enabled, and service not running`() {
+    fun `shouldStartService returns true when all conditions met including prepared`() {
         assertTrue(
-            BootRestartReceiver.shouldStartOnBoot(
+            VpnAutoRestartPolicy.shouldStartService(
                 hasConfig = true,
                 tunnelEnabled = true,
                 isServiceRunning = false,
@@ -19,9 +19,21 @@ class BootRestartReceiverTest {
     }
 
     @Test
-    fun `shouldStartOnBoot returns false when tunnel disabled`() {
+    fun `shouldStartService returns false when VPN is not prepared for this boot`() {
         assertFalse(
-            BootRestartReceiver.shouldStartOnBoot(
+            VpnAutoRestartPolicy.shouldStartService(
+                hasConfig = true,
+                tunnelEnabled = true,
+                isServiceRunning = false,
+                vpnPrepared = false,
+            )
+        )
+    }
+
+    @Test
+    fun `shouldStartService returns false when tunnel disabled even if prepared`() {
+        assertFalse(
+            VpnAutoRestartPolicy.shouldStartService(
                 hasConfig = true,
                 tunnelEnabled = false,
                 isServiceRunning = false,
@@ -31,21 +43,9 @@ class BootRestartReceiverTest {
     }
 
     @Test
-    fun `shouldStartOnBoot returns false when config is missing`() {
+    fun `shouldStartService returns false when service is already running`() {
         assertFalse(
-            BootRestartReceiver.shouldStartOnBoot(
-                hasConfig = false,
-                tunnelEnabled = true,
-                isServiceRunning = false,
-                vpnPrepared = true,
-            )
-        )
-    }
-
-    @Test
-    fun `shouldStartOnBoot returns false when service is already running`() {
-        assertFalse(
-            BootRestartReceiver.shouldStartOnBoot(
+            VpnAutoRestartPolicy.shouldStartService(
                 hasConfig = true,
                 tunnelEnabled = true,
                 isServiceRunning = true,
@@ -55,13 +55,13 @@ class BootRestartReceiverTest {
     }
 
     @Test
-    fun `shouldStartOnBoot returns false when VPN is not prepared`() {
+    fun `shouldStartService returns false when config is missing`() {
         assertFalse(
-            BootRestartReceiver.shouldStartOnBoot(
-                hasConfig = true,
+            VpnAutoRestartPolicy.shouldStartService(
+                hasConfig = false,
                 tunnelEnabled = true,
                 isServiceRunning = false,
-                vpnPrepared = false,
+                vpnPrepared = true,
             )
         )
     }

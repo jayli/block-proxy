@@ -3,6 +3,7 @@ package com.blockproxy.android.service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.net.VpnService
 import android.os.Build
 import com.blockproxy.android.config.ConfigRepository
 import com.blockproxy.android.config.DataStoreConfigDataSource
@@ -20,8 +21,14 @@ class BootRestartReceiver : BroadcastReceiver() {
             hasConfig: Boolean,
             tunnelEnabled: Boolean,
             isServiceRunning: Boolean,
+            vpnPrepared: Boolean,
         ): Boolean {
-            return hasConfig && tunnelEnabled && !isServiceRunning
+            return VpnAutoRestartPolicy.shouldStartService(
+                hasConfig = hasConfig,
+                tunnelEnabled = tunnelEnabled,
+                isServiceRunning = isServiceRunning,
+                vpnPrepared = vpnPrepared,
+            )
         }
     }
 
@@ -44,7 +51,21 @@ class BootRestartReceiver : BroadcastReceiver() {
                     false
                 }
 
-                if (shouldStartOnBoot(hasConfig, tunnelEnabled, BlockProxyVpnService.isRunning)) {
+                // Android resets the prepared VPN owner after reboot. Re-prepare
+                // here: with persisted ACTIVATE_VPN authorization this succeeds
+                // silently, otherwise we must not start the service because
+                // establish() would fail without a consent dialog.
+                val vpnPrepared = runCatching {
+                    VpnService.prepare(appContext) == null
+                }.getOrDefault(false)
+
+                if (shouldStartOnBoot(
+                        hasConfig = hasConfig,
+                        tunnelEnabled = tunnelEnabled,
+                        isServiceRunning = BlockProxyVpnService.isRunning,
+                        vpnPrepared = vpnPrepared,
+                    )
+                ) {
                     TunnelDiagnosticsLog.write("boot.restart_service")
                     val serviceIntent = Intent(appContext, BlockProxyVpnService::class.java).apply {
                         putExtra(BlockProxyVpnService.EXTRA_BOOT_RESTORE, true)
@@ -57,7 +78,8 @@ class BootRestartReceiver : BroadcastReceiver() {
                 } else {
                     TunnelDiagnosticsLog.write(
                         "boot.skip_restart",
-                        "hasConfig=$hasConfig tunnelEnabled=$tunnelEnabled running=${BlockProxyVpnService.isRunning}"
+                        "hasConfig=$hasConfig tunnelEnabled=$tunnelEnabled " +
+                            "running=${BlockProxyVpnService.isRunning} vpnPrepared=$vpnPrepared"
                     )
                 }
             } finally {

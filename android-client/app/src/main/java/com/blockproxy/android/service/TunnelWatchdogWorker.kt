@@ -2,11 +2,13 @@ package com.blockproxy.android.service
 
 import android.content.Context
 import android.content.Intent
+import android.net.VpnService
 import android.os.Build
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.blockproxy.android.config.ConfigRepository
 import com.blockproxy.android.config.DataStoreConfigDataSource
+import com.blockproxy.android.diagnostics.TunnelDiagnosticsLog
 import kotlinx.coroutines.flow.first
 
 /**
@@ -41,15 +43,20 @@ class TunnelWatchdogWorker(
          * @param hasConfig       Whether a server configuration is persisted.
          * @param tunnelEnabled   Whether the user persisted the tunnel as enabled.
          * @param isServiceRunning Whether [BlockProxyVpnService] is currently alive.
+         * @param vpnPrepared     Whether [VpnService.prepare] returned null this boot.
          */
         fun shouldRestart(
             hasConfig: Boolean,
             tunnelEnabled: Boolean,
             isServiceRunning: Boolean,
+            vpnPrepared: Boolean,
         ): Boolean {
-            return hasConfig &&
-                tunnelEnabled &&
-                !isServiceRunning
+            return VpnAutoRestartPolicy.shouldStartService(
+                hasConfig = hasConfig,
+                tunnelEnabled = tunnelEnabled,
+                isServiceRunning = isServiceRunning,
+                vpnPrepared = vpnPrepared,
+            )
         }
     }
 
@@ -68,13 +75,31 @@ class TunnelWatchdogWorker(
 
         val isRunning = BlockProxyVpnService.isRunning
 
-        if (shouldRestart(config != null, tunnelEnabled, isRunning)) {
+        // Re-prepare before restarting: the VPN owner resets on reboot and
+        // establish() would silently fail if we skip this step.
+        val vpnPrepared = runCatching {
+            VpnService.prepare(applicationContext) == null
+        }.getOrDefault(false)
+
+        if (shouldRestart(
+                hasConfig = config != null,
+                tunnelEnabled = tunnelEnabled,
+                isServiceRunning = isRunning,
+                vpnPrepared = vpnPrepared,
+            )
+        ) {
             val intent = Intent(applicationContext, BlockProxyVpnService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 applicationContext.startForegroundService(intent)
             } else {
                 applicationContext.startService(intent)
             }
+        } else {
+            TunnelDiagnosticsLog.write(
+                "watchdog.skip_restart",
+                "hasConfig=${config != null} tunnelEnabled=$tunnelEnabled " +
+                    "running=$isRunning vpnPrepared=$vpnPrepared"
+            )
         }
 
         return Result.success()

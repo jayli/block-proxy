@@ -400,6 +400,18 @@ class BlockProxyVpnService : VpnService() {
             }
             ok
         }
+        // Android resets the prepared VPN owner after reboot. Re-prepare here as
+        // a safety net for any start path (boot receiver, watchdog, system start):
+        // with persisted ACTIVATE_VPN authorization this succeeds silently.
+        val prepareIntent = runCatching { VpnService.prepare(this) }.getOrNull()
+        if (prepareIntent != null) {
+            TunnelDiagnosticsLog.write(
+                "vpn.not_prepared",
+                "action=${prepareIntent.action ?: ""}"
+            )
+            enterErrorAndStop("VPN 授权已失效，请打开 App 重新授权")
+            return
+        }
         // Establish VPN interface with routes and DNS
         val vpnResult = establishVpnInterface()
         if (vpnResult == null) {
@@ -610,10 +622,18 @@ class BlockProxyVpnService : VpnService() {
                 false
             }
 
-            builder.establish()?.let { descriptor ->
+            val descriptor = builder.establish()
+            if (descriptor == null) {
+                TunnelDiagnosticsLog.write("vpn.establish_null")
+                null
+            } else {
                 VpnInterfaceResult(descriptor, appExclusionSucceeded)
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            TunnelDiagnosticsLog.write(
+                "vpn.establish_exception",
+                "type=${e::class.java.simpleName} message=${e.message ?: ""}"
+            )
             null
         }
     }

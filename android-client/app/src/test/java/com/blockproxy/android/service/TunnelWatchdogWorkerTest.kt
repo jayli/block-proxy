@@ -25,6 +25,7 @@ class TunnelWatchdogWorkerTest {
                 hasConfig = true,
                 tunnelEnabled = true,
                 isServiceRunning = false,
+                vpnPrepared = true,
             )
         )
     }
@@ -38,6 +39,7 @@ class TunnelWatchdogWorkerTest {
                 hasConfig = false,
                 tunnelEnabled = true,
                 isServiceRunning = false,
+                vpnPrepared = true,
             )
         )
     }
@@ -51,6 +53,7 @@ class TunnelWatchdogWorkerTest {
                 hasConfig = true,
                 tunnelEnabled = false,
                 isServiceRunning = false,
+                vpnPrepared = true,
             )
         )
     }
@@ -64,6 +67,7 @@ class TunnelWatchdogWorkerTest {
                 hasConfig = true,
                 tunnelEnabled = true,
                 isServiceRunning = true,
+                vpnPrepared = true,
             )
         )
     }
@@ -78,6 +82,7 @@ class TunnelWatchdogWorkerTest {
                 hasConfig = false,
                 tunnelEnabled = false,
                 isServiceRunning = true,
+                vpnPrepared = true,
             )
         )
     }
@@ -89,6 +94,19 @@ class TunnelWatchdogWorkerTest {
                 hasConfig = false,
                 tunnelEnabled = true,
                 isServiceRunning = false,
+                vpnPrepared = true,
+            )
+        )
+    }
+
+    @Test
+    fun `shouldRestart returns false when VPN is not prepared`() {
+        assertFalse(
+            TunnelWatchdogWorker.shouldRestart(
+                hasConfig = true,
+                tunnelEnabled = true,
+                isServiceRunning = false,
+                vpnPrepared = false,
             )
         )
     }
