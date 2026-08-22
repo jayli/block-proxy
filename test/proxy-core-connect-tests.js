@@ -5,6 +5,7 @@ const constants = require('constants');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
+const net = require('net');
 const path = require('path');
 const tls = require('tls');
 const { Duplex, PassThrough } = require('stream');
@@ -453,6 +454,83 @@ async function testConnectDrainsClientAfterUpstreamFinWithoutClose() {
   upstream.push(null);
   await waitFor(() => upstream.readableEnded);
   await waitFor(() => socket.destroyed, 500);
+}
+
+async function testConnectDestroysClientSocketWhenClientEndsWithoutData() {
+  const connectTargets = [];
+  let connectErrorCalls = 0;
+  const handler = new RequestHandler({
+    httpServerPort: 18888,
+    wsIntercept: false,
+    forceProxyHttps: false,
+    dangerouslyIgnoreUnauthorized: false,
+    customConnect(host, port, callback) {
+      connectTargets.push({ host, port });
+      return new PassThrough();
+    },
+  }, {
+    *beforeDealHttpsRequest() { return null; },
+    *onConnectError() { connectErrorCalls += 1; },
+    *onClientSocketError() {},
+  });
+  const req = { url: 'example.com:443', httpVersion: '1.1', method: 'CONNECT' };
+  const socket = new FakeClientSocket();
+
+  handler.connectReqHandler(req, socket, Buffer.alloc(0));
+
+  await waitFor(() => socket.clientWrites.length > 0);
+  socket.emit('end');
+
+  await waitFor(() => socket.destroyed, 500);
+  assert.strictEqual(socket.destroyed, true);
+  assert.strictEqual(connectTargets.length, 0);
+  assert.strictEqual(connectErrorCalls, 0);
+}
+
+async function testConnectClosesServerSocketWhenClientFinWithoutData() {
+  const proxyPort = await util.getFreePort();
+  const proxy = new ProxyServer({
+    port: proxyPort,
+    dangerouslyIgnoreUnauthorized: true,
+    rule: {
+      *beforeDealHttpsRequest() {
+        return false;
+      },
+    },
+  });
+
+  let socket;
+  try {
+    await new Promise((resolve, reject) => {
+      proxy.once('ready', resolve);
+      proxy.once('error', reject);
+      proxy.start();
+    });
+
+    socket = net.connect(proxyPort, '127.0.0.1');
+    const closedPromise = new Promise(resolve => socket.once('close', () => resolve(true)));
+    await new Promise(resolve => socket.once('connect', resolve));
+    socket.write('CONNECT example.test:443 HTTP/1.1\r\nHost: example.test:443\r\n\r\n');
+    await new Promise((resolve) => {
+      socket.on('data', function onData(chunk) {
+        if (chunk.toString().includes('200')) {
+          socket.removeListener('data', onData);
+          socket.end();
+          resolve();
+        }
+      });
+    });
+
+    const closed = await Promise.race([
+      closedPromise,
+      new Promise(resolve => setTimeout(() => resolve(false), 2000)),
+    ]);
+
+    assert.strictEqual(closed, true, 'server must close CONNECT socket when client FINs without sending data');
+  } finally {
+    if (socket && !socket.destroyed) socket.destroy();
+    await proxy.close();
+  }
 }
 
 function testHttpsServerSecureOptionsDisableSslv3AndTlsv1() {
@@ -953,6 +1031,10 @@ async function run() {
   console.log('PASS testConnectDestroysClientSocketWhenUpstreamCloses');
   await testConnectDrainsClientAfterUpstreamFinWithoutClose();
   console.log('PASS testConnectDrainsClientAfterUpstreamFinWithoutClose');
+  await testConnectDestroysClientSocketWhenClientEndsWithoutData();
+  console.log('PASS testConnectDestroysClientSocketWhenClientEndsWithoutData');
+  await testConnectClosesServerSocketWhenClientFinWithoutData();
+  console.log('PASS testConnectClosesServerSocketWhenClientFinWithoutData');
   await testMitmConnectForwardsHttpsRequest();
   console.log('PASS testMitmConnectForwardsHttpsRequest');
   testStripAltSvcHeaderRemovesAllCases();

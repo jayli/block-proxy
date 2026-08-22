@@ -595,6 +595,7 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
     let requestDetail;
     const requestStream = new CommonReadableStream();
     let connectResponseSent = false;
+    let clientEndedBeforeData = false;
 
     const handleClientSocketError = (error) => {
       if (error.code === 'EPIPE') {
@@ -696,6 +697,11 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
           });
           cltSocket.on('end', () => {
             requestStream.push(null);
+            if (!resolved) {
+              clientEndedBeforeData = true;
+              resolved = true;
+              resolve();
+            }
           });
 
           if (isTunnelConnect && !resolved) {
@@ -703,6 +709,13 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
             resolve();
           }
         });
+      })
+      .then(() => {
+        if (!clientEndedBeforeData) return;
+        if (!cltSocket.destroyed) cltSocket.destroy();
+        const earlyCloseError = new Error('client closed CONNECT before sending data');
+        earlyCloseError.code = 'ECLIENTCLOSEDNODATA';
+        throw earlyCloseError;
       })
       .then(() => {
         if (shouldIntercept) {
@@ -907,6 +920,9 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
         });
       })
       .catch(co.wrap(function *(error) {
+        if (error && error.code === 'ECLIENTCLOSEDNODATA') {
+          return;
+        }
         logUtil.printLog(util.collectErrorLog(error), logUtil.T_ERR);
 
         try {
