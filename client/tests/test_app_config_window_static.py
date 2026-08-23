@@ -363,7 +363,7 @@ def test_super_dns_menu_opens_dedicated_subprocess_window():
 def test_super_dns_window_creates_nsapplication_before_menu_setup():
     source_path = Path(__file__).parents[1].joinpath("super_dns_window.py")
     source = source_path.read_text()
-    main_block = source[source.index('if __name__ == "__main__":'):]
+    main_block = source[source.rindex('if __name__ == "__main__":'):]
 
     shared_app_index = main_block.index("NSApplication.sharedApplication()")
     setup_menu_index = main_block.index("_setup_minimal_menu()")

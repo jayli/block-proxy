@@ -3,6 +3,15 @@ BlockProxyClient Super DNS domains window.
 Launched as a subprocess from the main status bar app.
 """
 
+import os
+import sys
+
+if __name__ == "__main__":
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    while _script_dir in sys.path:
+        sys.path.remove(_script_dir)
+    sys.path.append(_script_dir)
+
 import objc
 
 from Foundation import NSObject, NSURL, NSMutableAttributedString

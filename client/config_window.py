@@ -4,11 +4,18 @@ Pure PyObjC implementation (no tkinter dependency).
 Launched as a subprocess from the main status bar app.
 """
 
+import os
+import sys
+
+if __name__ == "__main__":
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    while _script_dir in sys.path:
+        sys.path.remove(_script_dir)
+    sys.path.append(_script_dir)
+
 import json
 import objc
-import os
 import platform
-import sys
 
 from Foundation import NSObject
 from AppKit import (
