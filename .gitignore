@@ -52,3 +52,6 @@ android-client/app/libs/utlsws-sources.jar
 
 # worktrees
 .worktrees/
+
+# qoder
+.qoder/
