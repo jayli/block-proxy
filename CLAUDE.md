@@ -60,9 +60,10 @@ Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 (8002) 
 
 ### Core Components
 - **Proxy** (`/proxy/`) – `proxy.js` 入口, `attacker.js` 拦截判断, `domain.js` host 匹配, `fs.js` config 读写备份, `scan.js` 每 2h ARP 扫描, `mitm/rule.js` 规则 + 响应修改器(YouTube 去广告/有道 VIP), `http.js` HTTP 助手, `monitor.js` 系统指标, `operator.js` 管理路由, `wanip.js` 公网 IP, `fd-diagnostics.js` fd/TCP 诊断; `mitm/` 另含 `registry.js`(规则注册), `persistentStore.js`, `uaFilter.js`, `ydcd/`, `youtube/`
-- **Proxy-Core** (`/proxy/proxy-core/`) – AnyProxy fork 本地模块（非 npm 依赖）: `proxy-server.js`(入口), `index.js`, `request-handler.js`(HTTP/S/WS 转发核心, 1086 行), `https-server-mgr.js`(SNI+IP HTTPS, LRU 1000), `cert-lifecycle.js`(预热/并发去重/健康检查), `cert-mgr.js`, `util.js`, `log.js`, `rule-default.js`, `request-error-handler.js`(内联错误页), `ws-server-mgr.js`(WS 服务器工厂)
+- **Proxy-Core** (`/proxy/proxy-core/`) – AnyProxy fork 本地模块（非 npm 依赖）: `proxy-server.js`(入口), `index.js`, `request-handler.js`(HTTP/S/WS 转发核心, 1126 行), `https-server-mgr.js`(SNI+IP HTTPS, LRU 1000), `cert-lifecycle.js`(预热/并发去重/健康检查), `cert-mgr.js`, `util.js`, `log.js`, `rule-default.js`, `request-error-handler.js`(内联错误页), `ws-server-mgr.js`(WS 服务器工厂)
   - 证书存储: `~/.anyproxy` → 项目本地 `certificates/`；`X-Tunnel-Relay: 1` 头注入 tunnel CONNECT 响应
   - ECONNRESET/EPIPE 自动重试一次 (GET/HEAD/OPTIONS)；keep-alive `maxRequestsPerSocket: 50` 防 gRPC RST_STREAM；流式响应阈值 20MB (无 responseRules 时 64KB)
+  - 剥离 MITM 响应中的 `Alt-Svc` 头，防止客户端学到 h3/QUIC 入口绕过 TCP 代理
 - **SOCKS5** (`/socks5/`) – SOCKS5 over TLS + UDP over TCP(自定义帧): `server.js`, `start.js`, `test_tls_reuse.js`; 客户端 `client/proxy_core.py` (asyncio 实现)
 - **Tunnel** (`/tunnel/`) – xhttp 传输协议（HTTP POST 上行 + SSE 下行）: `server.js`(HTTP/2 入口), `xhttpHandler.js`(核心处理器), `uploadQueue.js`(上行帧重排序), `protocol.js`(帧编解码), `manager.js`(连接生命周期), `sseControl.js`(旧 SSE 适配), `disguiseResponse.js`(HTTPS 伪装)
 - **Server** (`/server/`) – Express API (8004), 托管 React build, token cookie 认证: `start.js`, `express.js`, `timestampConsole.js`, `util.js`
@@ -70,7 +71,7 @@ Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 (8002) 
 - **CLI** (`/bin/start.js`) – 全局入口, 失败自动重启, 退出清理全局配置
 - **Certs** (`/cert/`) – `rootCA.key` + `rootCA.crt`, 运行时同步到 `certificates/`
 - **Config** (`config.json`) – 运行时配置（见下）；**Test Suite** (`/test/`) – `run.js` 一键测试(自动启动 Mock Server), `proxy-tests.js`, `proxy-core-connect-tests.js` 及隧道/MITM/fd/socks5 单测
-- **Docs** (`/docs/`) – `tunnel-testing.md`, `android-client-deployment.md`, `ios-client-deployment.md`, `plans/`(设计与实施记录, 命名 `YYYY-MM-DD-<主题>-design/implementation.md`)
+- **Docs** (`/docs/`) – `tunnel-testing.md`, `android-client-deployment.md`, `ios-client-deployment.md`, `plans/` 与 `superpowers/{specs,plans}/`(设计与实施记录, 命名 `YYYY-MM-DD-<主题>-design/implementation.md`)
 
 ### Config (`config.json`)
 
@@ -108,7 +109,7 @@ Pure Python（PyObjC UI + asyncio proxy core），Nuitka 编译原生二进制�
 
 ```
 main.py (入口, 单实例, 崩溃重启) → app.py (PyObjC 状态栏)
-  ├── proxy_core.py (asyncio SOCKS5/HTTP + UDP over TCP) / tunnel_client.py (xhttp 隧道 + 自动重连)
+  ├── proxy_core.py (asyncio SOCKS5/HTTP + UDP over TCP) / tunnel_client.py (xhttp 隧道 + 自动重连) / health_policy.py (健康检查重启窗口守卫)
   ├── routing.py / geodata_loader.py / proto_parser.py (geosite/geoip 分流) / doh_resolver.py (DoH 解析节点)
   ├── super_dns_control.py / super_dns_window.py (Super DNS 域名管理)
   ├── config.py (~/Library/Application Support/BlockProxyClient/) + config_window.py / routing_window.py / log_window.py (PyObjC 独立进程)
