@@ -55,6 +55,7 @@ class XhttpTransport(
     private val paddingEnabled: Boolean = false,
     private val uploadBatchEnabled: Boolean = false,
     private val sseIdleTimeoutMs: Long = DEFAULT_SSE_IDLE_TIMEOUT_MS,
+    private val uploadListener: XhttpUploadListener? = null,
 ) : FrameSender {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -85,6 +86,7 @@ class XhttpTransport(
         uploadClient = uploadClient,
         paddingHeaders = { buildPaddingHeader()?.let { mapOf("X-Padding" to it) } ?: emptyMap() },
         batchEnabled = uploadBatchEnabled,
+        uploadListener = uploadListener,
     )
 
     private val sseDisconnectNotified = AtomicBoolean(false)

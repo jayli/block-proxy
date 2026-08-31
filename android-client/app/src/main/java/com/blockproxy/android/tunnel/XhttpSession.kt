@@ -29,6 +29,7 @@ class XhttpSession(
     private val uploadClient: XhttpUploadClient,
     private val protect: ((java.net.Socket) -> Boolean)? = null,
     private val uploadH2Enabled: Boolean = false,
+    private val uploadListener: XhttpUploadListener? = null,
 ) {
     data class CreatedSession(
         val sessionId: String,
@@ -114,6 +115,7 @@ class XhttpSession(
             protect = protect,
             paddingEnabled = config.paddingEnabled,
             uploadBatchEnabled = created.capabilities.contains(FrameCodec.CAP_UPLOAD_BATCH),
+            uploadListener = uploadListener,
         )
 
         transport.start()

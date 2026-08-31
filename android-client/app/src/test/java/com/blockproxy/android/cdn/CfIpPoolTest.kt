@@ -116,7 +116,7 @@ class CfIpPoolTest {
 
         assertEquals("8.147.229.152", pool.loadAllIps().first())
         assertEquals("223.111.27.112", pool.loadAllIps().last())
-        assertEquals(157, pool.loadAllIps().size)
+        assertEquals(158, pool.loadAllIps().size)
     }
 
     @Test

@@ -18,6 +18,7 @@ class TunnelTransportFactory(
     private val uploadClient: XhttpUploadClient,
     private val protect: ((java.net.Socket) -> Boolean)? = null,
     private val uploadH2Enabled: Boolean = false,
+    private val uploadListener: XhttpUploadListener? = null,
 ) {
     /**
      * 建立 xhttp 连接。
@@ -33,6 +34,7 @@ class TunnelTransportFactory(
             uploadClient = uploadClient,
             protect = protect,
             uploadH2Enabled = uploadH2Enabled,
+            uploadListener = uploadListener,
         )
         return session.establish()
     }

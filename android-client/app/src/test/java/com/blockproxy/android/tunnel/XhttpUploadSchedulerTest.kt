@@ -10,6 +10,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -148,6 +149,158 @@ class XhttpUploadSchedulerTest {
         scheduler.close()
     }
 
+    @Test
+    fun `notifies listener after consecutive failure threshold and debounces further failures`() = runTest {
+        val uploadClient = FailingUploadClient { false }
+        val notifications = AtomicInteger(0)
+        val lastCount = AtomicInteger(0)
+        val scheduler = XhttpUploadScheduler(
+            scope = this,
+            baseUrl = "https://example.com/xhttp",
+            sessionId = "sid",
+            uploadClient = uploadClient,
+            maxConcurrentPosts = 1,
+            consecutiveFailureThreshold = 3,
+            uploadListener = { count ->
+                notifications.incrementAndGet()
+                lastCount.set(count)
+            },
+        )
+
+        repeat(3) {
+            val send = async { scheduler.sendFrame(FrameCodec.encode(Frame.Pong(byteArrayOf(1)))) }
+            runCurrent()
+            assertFalse(send.await())
+        }
+        assertEquals(1, notifications.get())
+        assertEquals(3, lastCount.get())
+
+        // 继续失败不重复通知（防抖），直到失败数翻倍
+        repeat(2) {
+            val send = async { scheduler.sendFrame(FrameCodec.encode(Frame.Pong(byteArrayOf(1)))) }
+            runCurrent()
+            assertFalse(send.await())
+        }
+        assertEquals(1, notifications.get())
+        scheduler.close()
+    }
+
+    @Test
+    fun `re-notifies when consecutive failures double after threshold`() = runTest {
+        val uploadClient = FailingUploadClient { false }
+        val notifications = AtomicInteger(0)
+        val lastCount = AtomicInteger(0)
+        val scheduler = XhttpUploadScheduler(
+            scope = this,
+            baseUrl = "https://example.com/xhttp",
+            sessionId = "sid",
+            uploadClient = uploadClient,
+            maxConcurrentPosts = 1,
+            consecutiveFailureThreshold = 2,
+            uploadListener = { count ->
+                notifications.incrementAndGet()
+                lastCount.set(count)
+            },
+        )
+
+        repeat(6) {
+            val send = async { scheduler.sendFrame(FrameCodec.encode(Frame.Pong(byteArrayOf(1)))) }
+            runCurrent()
+            assertFalse(send.await())
+        }
+
+        // 阈值 2 通知一次，失败数翻倍到 4 再通知一次，6 次时尚未到 8
+        assertEquals(2, notifications.get())
+        assertEquals(4, lastCount.get())
+        scheduler.close()
+    }
+
+    @Test
+    fun `success resets failure count and re-arms notification`() = runTest {
+        val uploadClient = FailingUploadClient { call -> call == 2 } // 前两次失败，第 3 次成功
+        val notifications = AtomicInteger(0)
+        val scheduler = XhttpUploadScheduler(
+            scope = this,
+            baseUrl = "https://example.com/xhttp",
+            sessionId = "sid",
+            uploadClient = uploadClient,
+            maxConcurrentPosts = 1,
+            consecutiveFailureThreshold = 2,
+            uploadListener = { notifications.incrementAndGet() },
+        )
+
+        // 失败 2 次 → 通知
+        repeat(2) {
+            val send = async { scheduler.sendFrame(FrameCodec.encode(Frame.Pong(byteArrayOf(1)))) }
+            runCurrent()
+            assertFalse(send.await())
+        }
+        assertEquals(1, notifications.get())
+
+        // 成功 → 计数归零
+        val success = async { scheduler.sendFrame(FrameCodec.encode(Frame.Pong(byteArrayOf(1)))) }
+        runCurrent()
+        assertTrue(success.await())
+        assertEquals(0, scheduler.consecutiveFailures)
+
+        // 再失败 2 次 → 重新武装后再次通知
+        repeat(2) {
+            val send = async { scheduler.sendFrame(FrameCodec.encode(Frame.Pong(byteArrayOf(1)))) }
+            runCurrent()
+            assertFalse(send.await())
+        }
+        assertEquals(2, notifications.get())
+        scheduler.close()
+    }
+
+    @Test
+    fun `exception from upload client counts as failure`() = runTest {
+        val uploadClient = FailingUploadClient { null } // null = 抛异常
+        val scheduler = XhttpUploadScheduler(
+            scope = this,
+            baseUrl = "https://example.com/xhttp",
+            sessionId = "sid",
+            uploadClient = uploadClient,
+            maxConcurrentPosts = 1,
+        )
+
+        val send = async { scheduler.sendFrame(FrameCodec.encode(Frame.Pong(byteArrayOf(1)))) }
+        runCurrent()
+        assertFalse(send.await())
+        assertEquals(1, scheduler.consecutiveFailures)
+
+        // worker 未崩溃，后续任务继续处理
+        val second = async { scheduler.sendFrame(FrameCodec.encode(Frame.Pong(byteArrayOf(2)))) }
+        runCurrent()
+        assertFalse(second.await())
+        assertEquals(2, scheduler.consecutiveFailures)
+        scheduler.close()
+    }
+
+    @Test
+    fun `closing scheduler with pending tasks does not count as failures`() = runTest {
+        val uploadClient = BlockingUploadClient()
+        val notifications = AtomicInteger(0)
+        val scheduler = XhttpUploadScheduler(
+            scope = this,
+            baseUrl = "https://example.com/xhttp",
+            sessionId = "sid",
+            uploadClient = uploadClient,
+            maxConcurrentPosts = 1,
+            consecutiveFailureThreshold = 1,
+            uploadListener = { notifications.incrementAndGet() },
+        )
+
+        val send = async { scheduler.sendFrame(FrameCodec.encode(Frame.Pong(byteArrayOf(1)))) }
+        runCurrent()
+        scheduler.close()
+        runCurrent()
+
+        assertFalse(send.await())
+        assertEquals(0, scheduler.consecutiveFailures)
+        assertEquals(0, notifications.get())
+    }
+
     private class BlockingUploadClient : XhttpUploadClient {
         val active = AtomicInteger(0)
         val maxActive = AtomicInteger(0)
@@ -203,6 +356,28 @@ class XhttpUploadSchedulerTest {
         ): Boolean {
             bodies.add(body)
             return true
+        }
+    }
+
+    /**
+     * 脚本化失败的上行客户端：按调用次序决定结果。
+     * 返回 true/false 表示成功/失败，返回 null 抛异常。
+     */
+    private class FailingUploadClient(
+        private val scripted: (call: Int) -> Boolean?,
+    ) : XhttpUploadClient {
+        private val calls = AtomicInteger(0)
+
+        override suspend fun postFrame(
+            url: String,
+            body: ByteArray,
+            headers: Map<String, String>,
+        ): Boolean {
+            val call = calls.getAndIncrement()
+            return when (val result = scripted(call)) {
+                null -> throw IOException("simulated upload failure")
+                else -> result
+            }
         }
     }
 }

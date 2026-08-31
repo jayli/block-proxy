@@ -1,15 +1,20 @@
 package com.blockproxy.android.ui
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.blockproxy.android.config.RoutingConfig
@@ -65,6 +70,10 @@ class RoutingScreenComposeTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
+    /** 匹配唯一的分流开关（ui-test 1.7 没有 hasToggleAction()，用 keyIsDefined 等价实现）。 */
+    private val switchMatcher =
+        SemanticsMatcher.keyIsDefined(SemanticsProperties.ToggleableState)
+
     private fun createViewModel(
         initial: RoutingConfig = RoutingConfig()
     ): Pair<RoutingViewModel, UiTestFakeRoutingDataSource> {
@@ -118,7 +127,8 @@ class RoutingScreenComposeTest {
 
         composeTestRule.onNodeWithText("启用分流").assertIsDisplayed()
         composeTestRule.onNodeWithText("所有流量通过代理").assertDoesNotExist()
-        composeTestRule.onNodeWithText("直连规则").assertIsDisplayed()
+        // 直连规则出现两次：Tab 标签 + 编辑器 label
+        composeTestRule.onAllNodesWithText("直连规则").assertCountEquals(2)
         composeTestRule.onNodeWithText("代理规则").assertIsDisplayed()
     }
 
@@ -133,14 +143,15 @@ class RoutingScreenComposeTest {
         // Switch is off → no tabs
         composeTestRule.onNodeWithText("直连规则").assertDoesNotExist()
 
-        // Click the switch on
-        composeTestRule.onNodeWithText("启用分流").performClick()
+        // Click the switch on（"启用分流"只是标题，开关本身是独立的 Switch 节点）
+        composeTestRule.onNode(switchMatcher).performClick()
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithText("直连规则").assertIsDisplayed()
+        // Tab 标签 + 编辑器 label，共两个节点
+        composeTestRule.onAllNodesWithText("直连规则").assertCountEquals(2)
 
         // Click the switch off again
-        composeTestRule.onNodeWithText("启用分流").performClick()
+        composeTestRule.onNode(switchMatcher).performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithText("直连规则").assertDoesNotExist()
@@ -157,7 +168,8 @@ class RoutingScreenComposeTest {
         }
 
         // The direct rules editor should be visible by default
-        composeTestRule.onNodeWithText("直连规则").assertIsDisplayed()
+        // （Tab 标签 + 编辑器 label 共两个节点）
+        composeTestRule.onAllNodesWithText("直连规则").assertCountEquals(2)
         // The hint for direct rules should appear
         composeTestRule.onNodeWithText("匹配的流量将绕过代理，直接连接目标服务器")
             .assertIsDisplayed()
@@ -214,8 +226,8 @@ class RoutingScreenComposeTest {
             RoutingScreen(viewModel = vm, onNavigateBack = {})
         }
 
-        // Enable routing, then save
-        composeTestRule.onNodeWithText("启用分流").performClick()
+        // Enable routing, then save（点开关本身，"启用分流"只是标题文本）
+        composeTestRule.onNode(switchMatcher).performClick()
         composeTestRule.waitForIdle()
 
         composeTestRule.onNodeWithText("保存").performClick()
@@ -238,6 +250,12 @@ class RoutingScreenComposeTest {
                 onUpdatePort = {},
                 onUpdateUsername = {},
                 onUpdatePassword = {},
+                onUpdateCdnProvider = {},
+                onRefreshCfIpPool = {},
+                cfIpRefreshState = CfIpRefreshState.Idle,
+                connectionTestState = ConnectionTestState.Idle,
+                onTestConnection = {},
+                onDismissConnectionTest = {},
                 onSave = {},
                 onBatterySettingsClick = {},
                 routingEnabled = false,
@@ -245,9 +263,10 @@ class RoutingScreenComposeTest {
             )
         }
 
-        composeTestRule.onNodeWithText("路由规则").assertIsDisplayed()
-        composeTestRule.onNodeWithText("分流规则").assertIsDisplayed()
-        composeTestRule.onNodeWithText("未启用（全部走代理）").assertIsDisplayed()
+        composeTestRule.onNodeWithText("路由规则").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("分流规则").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("未启用；全局代理默认关闭，手机流量默认直连")
+            .performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -261,6 +280,12 @@ class RoutingScreenComposeTest {
                 onUpdatePort = {},
                 onUpdateUsername = {},
                 onUpdatePassword = {},
+                onUpdateCdnProvider = {},
+                onRefreshCfIpPool = {},
+                cfIpRefreshState = CfIpRefreshState.Idle,
+                connectionTestState = ConnectionTestState.Idle,
+                onTestConnection = {},
+                onDismissConnectionTest = {},
                 onSave = {},
                 onBatterySettingsClick = {},
                 routingEnabled = true,
@@ -268,8 +293,9 @@ class RoutingScreenComposeTest {
             )
         }
 
-        composeTestRule.onNodeWithText("路由规则").assertIsDisplayed()
-        composeTestRule.onNodeWithText("已启用").assertIsDisplayed()
+        composeTestRule.onNodeWithText("路由规则").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("已启用；直连白名单→代理白名单→默认直连")
+            .performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -284,6 +310,12 @@ class RoutingScreenComposeTest {
                 onUpdatePort = {},
                 onUpdateUsername = {},
                 onUpdatePassword = {},
+                onUpdateCdnProvider = {},
+                onRefreshCfIpPool = {},
+                cfIpRefreshState = CfIpRefreshState.Idle,
+                connectionTestState = ConnectionTestState.Idle,
+                onTestConnection = {},
+                onDismissConnectionTest = {},
                 onSave = {},
                 onBatterySettingsClick = {},
                 routingEnabled = false,
@@ -291,7 +323,9 @@ class RoutingScreenComposeTest {
             )
         }
 
-        composeTestRule.onNodeWithText("配置").performClick()
+        // "配置"出现两次（顶栏标题 + 路由按钮），用 hasClickAction 精确定位按钮
+        // （顶栏标题无点击动作；合并树中按钮的语义含其内部 Text）
+        composeTestRule.onNode(hasText("配置") and hasClickAction()).performClick()
         assertTrue(navigated)
     }
 }

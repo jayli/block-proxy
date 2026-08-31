@@ -15,6 +15,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 private const val UPLOAD_SCHEDULER_TAG = "XhttpUploadScheduler"
@@ -40,6 +41,8 @@ class XhttpUploadScheduler(
     private val batchFlushMs: Long = DEFAULT_BATCH_FLUSH_MS,
     private val batchMaxBytes: Int = DEFAULT_BATCH_MAX_BYTES,
     private val batchMaxFrames: Int = DEFAULT_BATCH_MAX_FRAMES,
+    private val uploadListener: XhttpUploadListener? = null,
+    private val consecutiveFailureThreshold: Int = DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD,
 ) {
     companion object {
         const val DEFAULT_MAX_CONCURRENT_POSTS = 4
@@ -49,6 +52,7 @@ class XhttpUploadScheduler(
         const val DEFAULT_BATCH_FLUSH_MS = 10L
         const val DEFAULT_BATCH_MAX_BYTES = 16 * 1024
         const val DEFAULT_BATCH_MAX_FRAMES = 32
+        const val DEFAULT_CONSECUTIVE_FAILURE_THRESHOLD = 5
     }
 
     private enum class Priority { CONTROL, REVERSE, FORWARD }
@@ -70,6 +74,12 @@ class XhttpUploadScheduler(
     private val forwardQueue = Channel<UploadTask>(forwardCapacity)
     private val seqCounter = AtomicLong(0)
     private val closed = AtomicBoolean(false)
+    private val failureCounter = AtomicInteger(0)
+    private var lastNotifiedFailureCount = 0
+
+    /** 当前连续上传失败次数（成功后归零）。仅供测试与诊断。 */
+    internal val consecutiveFailures: Int
+        get() = failureCounter.get()
     private val pendingTasks = ConcurrentHashMap<Long, UploadTask>()
     private val batchMutex = Mutex()
     private val batchBuffers = mutableMapOf<Priority, MutableList<PendingFrame>>()
@@ -136,6 +146,7 @@ class XhttpUploadScheduler(
                     Log.w(UPLOAD_SCHEDULER_TAG, "Upload worker failed: ${t.message}")
                     false
                 }
+                recordUploadResult(ok)
                 task.results.forEach { it.complete(ok) }
             } catch (e: CancellationException) {
                 task.results.forEach { it.complete(false) }
@@ -143,6 +154,32 @@ class XhttpUploadScheduler(
             } finally {
                 pendingTasks.remove(task.seq)
             }
+        }
+    }
+
+    /**
+     * 记账一次上传结果并在连续失败达到阈值时通知 [uploadListener]。
+     *
+     * 防抖：连续失败达到 [consecutiveFailureThreshold] 时通知一次，之后连续失败数
+     * 翻倍（2×、4×…）才再次通知；一次成功即完全复位。避免上行通路失效期间
+     * 每次 POST 失败都触发一次断链重连。
+     */
+    private fun recordUploadResult(ok: Boolean) {
+        if (ok) {
+            failureCounter.set(0)
+            lastNotifiedFailureCount = 0
+            return
+        }
+
+        val failures = failureCounter.incrementAndGet()
+        val listener = uploadListener ?: return
+
+        val shouldNotify =
+            (lastNotifiedFailureCount == 0 && failures >= consecutiveFailureThreshold) ||
+            (lastNotifiedFailureCount > 0 && failures >= lastNotifiedFailureCount * 2)
+        if (shouldNotify) {
+            lastNotifiedFailureCount = failures
+            listener.onConsecutiveUploadFailures(failures)
         }
     }
 

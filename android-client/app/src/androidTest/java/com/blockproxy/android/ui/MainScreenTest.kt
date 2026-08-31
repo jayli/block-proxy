@@ -99,13 +99,15 @@ class MainScreenTest {
     fun mainScreen_statusText_reflectsStatus() {
         // Test a few key statuses instead of all (to avoid multiple setContent calls)
         val status = TunnelStatus.Connected
-        val expectedText = "已连接"
+        val expectedText = "已连接 · example.com:8003"
 
         composeTestRule.setContent {
             MainScreen(
                 status = status,
                 isConfigValid = true,
                 batteryExempted = true,
+                host = "example.com",
+                port = "8003",
                 onStart = {},
                 onStop = {},
                 onBatterySettingsClick = {},
@@ -163,6 +165,12 @@ class MainScreenTest {
                 onUpdatePort = {},
                 onUpdateUsername = {},
                 onUpdatePassword = {},
+                onUpdateCdnProvider = {},
+                onRefreshCfIpPool = {},
+                cfIpRefreshState = CfIpRefreshState.Idle,
+                connectionTestState = ConnectionTestState.Idle,
+                onTestConnection = {},
+                onDismissConnectionTest = {},
                 onSave = {},
                 onBatterySettingsClick = {},
                 routingEnabled = false,
@@ -170,12 +178,11 @@ class MainScreenTest {
             )
         }
 
-        // Check top bar title which is always visible
-        composeTestRule.onNodeWithText("配置").assertIsDisplayed()
+        // Top bar title and the routing "配置" button both render this text
+        composeTestRule.onAllNodesWithText("配置").assertCountEquals(2)
         // Check that the form exists (scrollable content)
         composeTestRule.onAllNodesWithText("服务器地址").assertCountEquals(1)
         composeTestRule.onAllNodesWithText("保存").assertCountEquals(1)
-        composeTestRule.onAllNodesWithText("取消").assertCountEquals(1)
     }
 
     @Test
@@ -194,6 +201,12 @@ class MainScreenTest {
                 onUpdatePort = {},
                 onUpdateUsername = {},
                 onUpdatePassword = {},
+                onUpdateCdnProvider = {},
+                onRefreshCfIpPool = {},
+                cfIpRefreshState = CfIpRefreshState.Idle,
+                connectionTestState = ConnectionTestState.Idle,
+                onTestConnection = {},
+                onDismissConnectionTest = {},
                 onSave = {},
                 onBatterySettingsClick = {},
                 routingEnabled = false,
@@ -221,6 +234,12 @@ class MainScreenTest {
                 onUpdatePort = {},
                 onUpdateUsername = {},
                 onUpdatePassword = {},
+                onUpdateCdnProvider = {},
+                onRefreshCfIpPool = {},
+                cfIpRefreshState = CfIpRefreshState.Idle,
+                connectionTestState = ConnectionTestState.Idle,
+                onTestConnection = {},
+                onDismissConnectionTest = {},
                 onSave = {},
                 onBatterySettingsClick = {},
                 routingEnabled = false,

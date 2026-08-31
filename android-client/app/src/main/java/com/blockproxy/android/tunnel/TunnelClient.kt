@@ -22,6 +22,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.max
 import kotlin.math.min
 
@@ -55,6 +57,15 @@ class TunnelClient(
         private const val DEFAULT_DRAIN_TIMEOUT_MS = 10_000L   // 10 s
         private const val DEFAULT_DRAIN_IDLE_TIMEOUT_MS = 20_000L // 20 s
         private const val XHTTP_H2_ENABLED = false
+
+        /**
+         * 上行 POST 的整次调用超时。
+         *
+         * 默认 readTimeout/writeTimeout 为无限（适配 SSE 长连接），但上行小帧
+         * 不需要无限超时：半死路径上挂死的 POST 会让失败计数永远凑不齐，
+         * 自愈无法触发。20s 远大于正常小帧上传耗时，远小于服务端 90s 踢连窗口。
+         */
+        private const val UPLOAD_CALL_TIMEOUT_MS = 20_000L
     }
 
     private val _status = MutableStateFlow<TunnelStatus>(TunnelStatus.Disconnected)
@@ -83,7 +94,7 @@ class TunnelClient(
         allowInsecure = config.allowInsecure,
         protect = protect,
         preferHttp2 = false,
-    )
+    ).newBuilder().callTimeout(UPLOAD_CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS).build()
 
     private val sseH2OkHttpClient = XhttpTransport.createOkHttpClient(
         allowInsecure = config.allowInsecure,
@@ -95,7 +106,7 @@ class TunnelClient(
         allowInsecure = config.allowInsecure,
         protect = protect,
         preferHttp2 = true,
-    )
+    ).newBuilder().callTimeout(UPLOAD_CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS).build()
 
     // xhttp transport state
     @Volatile private var activeTransport: XhttpTransport? = null
@@ -109,6 +120,9 @@ class TunnelClient(
     private var mainJob: Job? = null
     private var rotationJob: Job? = null
     private var readJob: Job? = null
+
+    /** 上行连续失败触发的重连协程（防重入）。 */
+    @Volatile private var uploadReconnectJob: Job? = null
 
     private val stateMutex = Mutex()
 
@@ -149,6 +163,8 @@ class TunnelClient(
         mainJob = null
         readJob?.cancel()
         readJob = null
+        uploadReconnectJob?.cancel()
+        uploadReconnectJob = null
 
         for (transport in listOfNotNull(activeTransport, candidateTransport, drainingTransport)) {
             transport.closeSessionOnServer()
@@ -316,6 +332,11 @@ class TunnelClient(
             "host=${config.serverHost} port=${config.serverPort} preferHttp2=$preferHttp2"
         )
 
+        // listener 在 connect() 返回前创建，用 AtomicReference 延迟绑定本次会话的 transport，
+        // 使失败回调只关闭"触发它的那条"链路，对已被轮换掉的旧链路天然 no-op。
+        val transportRef = AtomicReference<XhttpTransport?>()
+        val uploadListener = createUploadFailureListener(transportRef)
+
         val transportFactory = TunnelTransportFactory(
             config = config,
             credentials = credentials,
@@ -324,10 +345,11 @@ class TunnelClient(
             uploadClient = uploadClient(preferHttp2),
             protect = protect,
             uploadH2Enabled = preferHttp2,
+            uploadListener = uploadListener,
         )
 
         return try {
-            transportFactory.connect()
+            transportFactory.connect().also { transportRef.set(it) }
         } catch (e: Exception) {
             sseCfIpSelector?.markCandidateFailed()
             TunnelDiagnosticsLog.write(
@@ -335,6 +357,45 @@ class TunnelClient(
                 "type=${e::class.java.simpleName} message=${e.message ?: ""}"
             )
             throw e
+        }
+    }
+
+    /**
+     * 构造本条链路的上行失败回调。
+     *
+     * [transportRef] 在 establishConnection 中于 connect() 返回后延迟绑定本次会话的
+     * transport，保证失败回调只关闭"触发它的那条"链路（=== 比较），
+     * 对已被轮换/替换掉的旧链路天然 no-op，避免陈旧回调误杀新链路。
+     */
+    private fun createUploadFailureListener(
+        transportRef: AtomicReference<XhttpTransport?>,
+    ): XhttpUploadListener {
+        return XhttpUploadListener { failureCount ->
+            // 回调在 scheduler 的 IO 协程上下文，必须非阻塞：只做状态标记并投递到 clientScope。
+            uploadCfIpSelector?.markActiveDisconnectedUnexpectedly()
+            TunnelDiagnosticsLog.write(
+                "upload.consecutive_failures",
+                "count=$failureCount session=${transportRef.get()?.sessionDebugId() ?: "?"}"
+            )
+            triggerUploadReconnect(transportRef.get())
+        }
+    }
+
+    /** 上行连续失败触发的整链重连。防重入：同一时刻只允许一个重连协程。 */
+    private fun triggerUploadReconnect(snapshot: XhttpTransport?) {
+        if (stopped || snapshot == null) return
+        if (uploadReconnectJob?.isActive == true) return
+
+        Log.w(TAG, "Upload path broken, forcing tunnel reconnect (session=${snapshot.sessionDebugId()})")
+        TunnelDiagnosticsLog.write("tunnel.upload_reconnect", "session=${snapshot.sessionDebugId()}")
+        uploadReconnectJob = clientScope.launch {
+            try {
+                closeTransport(snapshot)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "upload reconnect close failed: ${e.message}")
+            }
         }
     }
 
@@ -406,7 +467,16 @@ class TunnelClient(
                 when (frame) {
                     is Frame.Ping -> {
                         try {
-                            transport.sendFrame(FrameCodec.encode(Frame.Pong(frame.payload)))
+                            val pongSent = transport.sendFrame(FrameCodec.encode(Frame.Pong(frame.payload)))
+                            if (!pongSent && transport.isOpenFlow.value) {
+                                // 隧道仍在线却发不出 PONG：上行通路异常。
+                                // 不在此处触发重连——重连决策统一交给上行失败计数回调。
+                                Log.w(TAG, "PONG send failed (session=${transport.sessionDebugId()})")
+                                TunnelDiagnosticsLog.write(
+                                    "upload.pong_send_failed",
+                                    "session=${transport.sessionDebugId()}"
+                                )
+                            }
                         } catch (_: Exception) {}
                     }
                     is Frame.Pong -> { }
