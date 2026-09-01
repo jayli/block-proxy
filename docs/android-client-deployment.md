@@ -82,6 +82,55 @@ adb uninstall com.blockproxy.android
 4. 默认 TLS 开启，`allowInsecure=true`（加密但不校验证书链）
 5. 返回主界面，点击启动隧道
 
+## 开机自启与国产 ROM 配置（重要）
+
+客户端内置了两层开机/进程死亡自愈机制：
+
+1. **`BootRestartReceiver`**：监听 `BOOT_COMPLETED`，开机后自动拉起隧道服务
+2. **`TunnelWatchdogWorker`**：WorkManager 周期任务（15 分钟），进程被杀后兜底重启
+
+两者启动服务前都会先调用 `VpnService.prepare()` 重新获取 VPN 授权（Android 重启后会重置 VPN owner，不重新 prepare 会导致 `establish()` 静默失败）。首次使用时授予过一次 VPN 授权后，该授权会被系统持久化，重启后可静默复用。
+
+但**国产 ROM（vivo/OPPO/小米/华为等）会在系统层拦截 `BOOT_COMPLETED` 广播和后台进程**，导致上述两层机制全部失效——表现为手机重启后隧道长时间（数小时）不恢复，诊断日志在重启时间段完全空白。必须手动完成以下配置：
+
+### vivo（Funtouch OS，已在 Y67A / Android 6 实测）
+
+1. **允许自启动**：i 管家 → 应用管理 → 自启动管理 → 打开 BlockProxy
+   （这是关键项：不开启时 `BOOT_COMPLETED` 不会送达，`BootRestartReceiver` 不会执行）
+2. **允许后台高耗电**：i 管家 → 电池 → 后台高耗电管理（或 设置 → 电池）→ 允许 BlockProxy
+   （防止运行中进程被省电策略杀掉）
+3. **最近任务加锁**（可选加固）：最近任务列表中下拉 BlockProxy 卡片加锁
+
+其他国产 ROM 同理：在各自的「自启动管理」和「电池优化白名单」中放行 BlockProxy。
+
+### 全盘加密（FDE）设备的注意事项
+
+Android 6 设备多为块级全盘加密（`ro.crypto.type=block`）：**重启后、用户解锁屏幕之前 `/data` 分区不解密，任何 app 都无法运行**，`BOOT_COMPLETED` 也不会送达。因此：
+
+- 作为长期在线隧道设备的手机，建议**不设置锁屏密码**（开机自动完成解密，无需人工干预）
+- 若设置了锁屏密码，重启后必须人工解锁一次，隧道才能自愈
+
+### 自愈验证方法
+
+配置完成后重启手机实测一次，拉取诊断日志确认链路：
+
+```bash
+adb reboot
+# 等待开机完成（FDE 设备需解锁屏幕）后：
+adb shell run-as com.blockproxy.android cat files/tunnel-diagnostics.log | tail -30
+```
+
+预期日志链路（开机后约 30 秒内完成）：
+
+```
+boot.restart_service                              ← BOOT_COMPLETED 送达并触发
+service.on_start_command ... bootRestore=true
+vpn.established appExclusionSucceeded=true        ← VPN 重新 prepare + establish 成功
+tunnel.connected session=... cdnIp=...            ← 隧道恢复
+```
+
+若出现 `boot.skip_restart ... vpnPrepared=false`，说明该机型重启后未保留 VPN 授权，需打开 App 重新授权一次；若连 `boot.*` 日志都没有，说明自启动权限未生效。
+
 ## 服务端配置
 
 **重要**: block-proxy 服务端必须配置 `tunnel_domains` 才能将请求路由到 Android tunnel。
