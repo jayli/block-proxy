@@ -7,7 +7,6 @@ import logging
 import objc
 import os
 import sys
-import platform
 import socket
 import subprocess
 import threading
@@ -41,14 +40,6 @@ from proxy_core import LOCAL_PROXY_FD_RECYCLE_THRESHOLD, ProxyCore
 from super_dns_control import is_super_dns_running
 from system_proxy import SystemProxy
 from tunnel_client import TunnelClient
-
-
-def _is_tahoe_or_newer():
-    try:
-        ver = tuple(map(int, platform.mac_ver()[0].split(".")))
-        return ver >= (26, 0)
-    except Exception:
-        return False
 
 
 def _is_compiled():
@@ -89,7 +80,6 @@ class AppController(NSObject):
         if self is None:
             return None
 
-        self._template = _is_tahoe_or_newer()
         self.config = Config()
         self.config.load()
         self.proxy = ProxyCore()
@@ -150,8 +140,7 @@ class AppController(NSObject):
         if image is None:
             return
         image.setSize_(NSSize(23, 23))
-        if self._template is not None:
-            image.setTemplate_(self._template)
+        image.setTemplate_(True)
         self._status_item.button().setImage_(image)
 
     # ------------------------------------------------------------------

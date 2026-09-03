@@ -124,7 +124,7 @@ main.py (入口, 单实例, 崩溃重启) → app.py (PyObjC 状态栏)
 - DoH 解析节点: 默认 `dns.alidns.com` + bootstrap `223.5.5.5,223.6.6.6`
 - 窗口为独立进程（Nuitka 编译后 `sys.executable` 非 Python 解释器, 用 `subprocess.Popen` + 系统 Python）
 - 系统唤醒恢复: socket 探测端口存活 + 隧道线程状态恢复, 等 3s 网络稳定后重试
-- Nuitka 构建后处理: `build.sh` 自动重命名可执行文件、修正 Info.plist (CFBundleExecutable, LSUIElement)；macOS Tahoe (26+): `_is_tahoe_or_newer()` 适配 Liquid Glass 图标
+- Nuitka 构建后处理: `build.sh` 自动重命名可执行文件、修正 Info.plist (CFBundleExecutable, LSUIElement)；状态栏图标始终 `setTemplate_(True)`（单色黑+alpha, 系统按浅/深色模式自动反白, 兼容 Tahoe Liquid Glass）
 
 ## Android Client (`/android-client/`)
 
