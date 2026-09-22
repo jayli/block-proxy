@@ -27,6 +27,7 @@ const attacker = require('./attacker.js');
 const domain = require('./domain.js');
 const wanip = require('./wanip.js');
 const operator = require("./operator.js");
+const accessLogger = require("./access-logger.js");
 const mitmRegistry = require("./mitm/registry.js");
 const TunnelServer = require('../tunnel/server');
 const TunnelManager = require('../tunnel/manager');
@@ -93,6 +94,13 @@ var socks5_tls = "1";
 
 var enable_mitm = "1"; // "0", "1"，是否对 HTTPS 启用 MITM 解密（关闭后纯隧道转发，不拦截）
 var mitm_debug_log = "0"; // "0", "1"，是否输出 MITM 调试日志（[DEBUG-REQ] 等）
+// 访问日志：记录被监控 MAC 的设备访问其配置拦截域名的请求（域名/时间/path/来源 IP）
+var access_log_enabled = "1"; // "0", "1"
+var access_log_dir = ""; // 空则用默认 logs/access
+var access_log_max_total_bytes = 50 * 1024 * 1024; // 全部分片总大小上限，默认 50MB
+var access_log_flush_interval_ms = 1000; // 异步入盘的批量间隔
+// 仅当访问日志的关键状态变化时才打印一行启动日志，避免 loadConfig 每 2 小时刷屏
+var lastAccessLogStatusSignature = "";
 var chain_proxy_enabled = "0"; // "0", "1"，是否启用下游链式代理
 var chain_proxy_type = "http"; // "http" 或 "socks5"
 var chain_proxy_address = ""; // 上游代理地址，格式: username:password@host:port 或 host:port
@@ -225,6 +233,22 @@ async function rebuildRuleRegistry(config) {
   });
 }
 
+function logAccessLoggerStatus() {
+  const stats = accessLogger.getStats();
+  // 设备数（knownIps）每 2 小时扫描会变，不纳入签名，避免周期性刷屏；
+  // 只关心 enabled / 目录 / 监控 MAC 数 / 上限 / 间隔 这些配置级变化
+  const signature = [stats.enabled, stats.dir, stats.monitoredMacs, stats.maxTotalBytes, stats.flushIntervalMs].join('|');
+  if (signature === lastAccessLogStatusSignature) {
+    return;
+  }
+  lastAccessLogStatusSignature = signature;
+  if (stats.enabled) {
+    console.log(`[AccessLog] 已启用，目录: ${stats.dir}，监控 MAC: ${stats.monitoredMacs} 台，总大小上限: ${stats.maxTotalBytes} 字节`);
+  } else {
+    console.log('[AccessLog] 已关闭 (access_log.enabled = 0)');
+  }
+}
+
 function isEmpty(obj) {
   if (obj === null || obj === undefined) {
     return true;
@@ -264,6 +288,12 @@ async function loadConfig() {
     chain_proxy_enabled: chain_proxy_enabled,
     chain_proxy_type: chain_proxy_type,
     chain_proxy_address: chain_proxy_address,
+    access_log: {
+      enabled: access_log_enabled,
+      dir: access_log_dir,
+      max_total_bytes: access_log_max_total_bytes,
+      flush_interval_ms: access_log_flush_interval_ms
+    },
   };
 
   try {
@@ -321,6 +351,28 @@ async function loadConfig() {
 
       mitm_debug_log = loadedConfig.mitm_debug_log || "0"; // 默认关闭
       config.mitm_debug_log = mitm_debug_log;
+
+      // 访问日志配置（对象或字符串 "0"/"1" 均兼容）
+      const loadedAccessLog = loadedConfig.access_log || {};
+      const accessLogOpts = (typeof loadedAccessLog === 'object' && loadedAccessLog !== null)
+        ? loadedAccessLog
+        : { enabled: String(loadedAccessLog) };
+      access_log_enabled = (accessLogOpts.enabled === undefined || accessLogOpts.enabled === null)
+        ? "1"
+        : String(accessLogOpts.enabled);
+      access_log_dir = accessLogOpts.dir || "";
+      access_log_max_total_bytes = Number(accessLogOpts.max_total_bytes) > 0
+        ? Number(accessLogOpts.max_total_bytes)
+        : 50 * 1024 * 1024;
+      access_log_flush_interval_ms = Number(accessLogOpts.flush_interval_ms) > 0
+        ? Number(accessLogOpts.flush_interval_ms)
+        : 1000;
+      config.access_log = {
+        enabled: access_log_enabled,
+        dir: access_log_dir,
+        max_total_bytes: access_log_max_total_bytes,
+        flush_interval_ms: access_log_flush_interval_ms
+      };
 
       chain_proxy_enabled = loadedConfig.chain_proxy_enabled || "0";
       config.chain_proxy_enabled = chain_proxy_enabled;
@@ -394,7 +446,13 @@ async function loadConfig() {
         tunnel_padding: { enabled: false },
         tunnel_domains: [],
         rule_modules: {},
-        vpn_proxy: ""
+        vpn_proxy: "",
+        access_log: {
+          enabled: access_log_enabled,
+          dir: access_log_dir,
+          max_total_bytes: access_log_max_total_bytes,
+          flush_interval_ms: access_log_flush_interval_ms
+        }
       });
       // fs.writeFileSync(configPath, JSON.stringify({
       // }, null, 2));
@@ -403,7 +461,14 @@ async function loadConfig() {
   } catch (err) {
     console.error('Error reading config file, using default config:', err);
   }
-  
+
+  // 访问日志的配置、MAC→域名索引、IP→MAC 索引在这里统一重建，
+  // 保证与本次 loadConfig 的 block_hosts / devices 一致
+  accessLogger.configure(config.access_log);
+  accessLogger.setRules(blockHosts);
+  accessLogger.setDevices(devices);
+  logAccessLoggerStatus();
+
   return config;
 }
 
@@ -741,6 +806,22 @@ function getRemoteAddressFromReq(requestDetail) {
   } else {
     return normalizeIP(rawIP);
   }
+}
+
+// HTTPS 未解密（纯隧道转发）时的访问日志打点：
+// 拿不到 path 与 method，只记录到域名级别，action=connect
+function logConnectAccess(clientIp, host) {
+  const matched = accessLogger.matchRequest(clientIp, host);
+  if (!matched) return;
+  accessLogger.record({
+    ts: new Date(),
+    ip: clientIp,
+    mac: matched.mac,
+    action: 'connect',
+    method: 'CONNECT',
+    host: host,
+    path: ''
+  });
 }
 
 // 获得 Symbol 实例的属性
@@ -1595,7 +1676,9 @@ function getAnyProxyOptions() {
         }
 
         // enable_mitm 关闭时纯隧道转发，不做任何拦截
+        // 此时拿不到 path（未解密），只记录到域名级别，action=connect
         if (enable_mitm != "1") {
+          logConnectAccess(clientIp, host);
           return false;
         }
 
@@ -1605,7 +1688,9 @@ function getAnyProxyOptions() {
           console.log('https 拦截', host, '接下来判断是否根据 match_rule 进行拦截');
           return true;
         }
-        return false; // 不拦截 HTTPS，透明隧道转发
+        // 不拦截 HTTPS，透明隧道转发；同样只能记录到域名级别
+        logConnectAccess(clientIp, host);
+        return false;
       },
 
       // 拦截 HTTP 请求以及 HTTPS 拆包的请求
@@ -1639,6 +1724,21 @@ function getAnyProxyOptions() {
         // 如果是裸IP请求，全部放行
         if (net.isIPv4(host) || net.isIPv6(host)) {
           return passRequestWithHttpAgent(requestDetail, isHttps);
+        }
+
+        // 访问日志打点：被监控 MAC 的设备访问了为其配置的拦截域名
+        // matchRequest() 只做内存 Map 查找，record() 只入队，全部 IO 在异步 flush 中完成
+        var accessMatch = accessLogger.matchRequest(clientIp, host);
+        if (accessMatch) {
+          accessLogger.record({
+            ts: new Date(),
+            ip: clientIp,
+            mac: accessMatch.mac,
+            action: isHttps ? 'https' : 'http',
+            method: requestOptions.method,
+            host: requestOptions.hostname,
+            path: requestOptions.path
+          });
         }
 
         // Hack, 根据 UA 判断是否符合放行条件，比如 Youtube 的 MITM 只对 App 生效，则浏览器的 UA 就需要放行
@@ -1904,6 +2004,8 @@ var LocalProxy = {
     // fs.writeFileSync(configPath, JSON.stringify({
     // }, null, 2));
     devices = mergedRouterMap;
+    // IP→MAC 映射变了，同步给访问日志，否则新设备/换 IP 的设备记不到
+    accessLogger.setDevices(devices);
     console.log('Devices updated!');
   },
   start: async function(callback) {
@@ -2000,6 +2102,13 @@ module.exports = LocalProxy;
 
 // 测试钩子（仅在测试环境中使用）
 module.exports._test = {
+  loadConfig,
+  setDevicesForTest(nextDevices) {
+    devices = Array.isArray(nextDevices) ? nextDevices : [];
+  },
+  setBlockHostsForTest(nextBlockHosts) {
+    blockHosts = Array.isArray(nextBlockHosts) ? nextBlockHosts : [];
+  },
   setRuleRegistryForTest(nextRegistry) {
     ruleRegistry = nextRegistry;
   },

@@ -62,6 +62,7 @@
     "test:proxy-core": "node test/proxy-core-connect-tests.js",
     "test:registry": "node test/mitm-registry-tests.js",
     "test:mitm-runtime": "node test/mitm-runtime-tests.js",
+    "test:access-logger": "node test/access-logger-tests.js && node test/access-logger-integration-tests.js",
     "eject": "react-scripts eject"
   },
   "devDependencies": {
