@@ -165,7 +165,7 @@ Kotlin + Jetpack Compose + VpnService + tun2socks (JNI) + xhttp 传输。v0.1.6 
 
 ## Project Skills (`.claude/skills/`)
 
-调用方式 `$skill-name` 或按描述自动触发: `commit`(智能提交), `build-client`(构建 macOS 客户端), `release-client`(发布 GitHub Release), `icon-generate`(状态栏图标 44x44 @ 144 DPI), `pcap-analyse`(分析 pcap/pcapng)。
+调用方式 `$skill-name` 或按描述自动触发: `build-client`(构建 macOS 客户端), `release-client`(发布 GitHub Release), `icon-generate`(状态栏图标 44x44 @ 144 DPI), `pcap-analyse`(分析 pcap/pcapng)。
 
 ## Project Rules
 
