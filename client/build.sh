@@ -74,6 +74,7 @@ $PYTHON -m nuitka \
     --include-data-files=health_policy.py=health_policy.py \
     --include-data-files=logger.py=logger.py \
     --include-data-files=log_window.py=log_window.py \
+    --include-data-files=node_connect.py=node_connect.py \
     --include-data-files=proto_parser.py=proto_parser.py \
     --include-data-files=proxy_core.py=proxy_core.py \
     --include-data-files=routing.py=routing.py \
