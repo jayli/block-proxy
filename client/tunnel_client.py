@@ -9,7 +9,10 @@ import random
 import types
 import time
 from logger import crash_logger
-from doh_resolver import resolve_node_address
+from node_connect import (
+    connect_with_sni_fallback,
+    for_each_node_address,
+)
 
 try:
     import aiohttp
@@ -533,29 +536,44 @@ class TunnelClient:
         if not ws_path.startswith('/'):
             ws_path = '/' + ws_path
 
+        sni_headers = None
+        if self._tunnel_cfg.get('headers'):
+            sni_headers = self._tunnel_cfg['headers']
+
+        async def make_connection(connect_host, sni):
+            connect_addr = self._url_host(connect_host)
+            ws_url = f'wss://{connect_addr}:{port}{ws_path}'
+            connect_kwargs = {
+                'ssl': self._ssl_ctx,
+                'ping_interval': None,
+                'ping_timeout': None,
+            }
+            if sni:
+                connect_kwargs['server_hostname'] = sni
+                headers = self._headers_with_host(sni_headers, f'{sni}:{port}')
+                connect_kwargs['additional_headers'] = headers
+            elif sni_headers:
+                connect_kwargs['additional_headers'] = sni_headers
+            return await asyncio.wait_for(
+                websockets.connect(ws_url, proxy=None, **connect_kwargs),
+                timeout=10
+            )
+
+        async def attempt(connect_host, server_hostname):
+            if not server_hostname:
+                return await make_connection(connect_host, None)
+
+            async def make(sni):
+                return await make_connection(connect_host, sni)
+
+            return await connect_with_sni_fallback(
+                server_hostname, connect_host, make, self._ssl_ctx
+            )
+
         if self._tunnel_cfg.get('http_disguise', False):
-            await self._perform_http_disguise(addr, port)
+            await for_each_node_address(addr, self._disguise_attempt(port))
 
-        resolved = await resolve_node_address(addr)
-        connect_addr = self._url_host(resolved.connect_host)
-        ws_url = f'wss://{connect_addr}:{port}{ws_path}'
-        headers = self._tunnel_cfg.get('headers') or None
-        if resolved.server_hostname:
-            headers = self._headers_with_host(headers, f'{resolved.server_hostname}:{port}')
-        connect_kwargs = {
-            'ssl': self._ssl_ctx,
-            'ping_interval': None,
-            'ping_timeout': None,
-        }
-        if resolved.server_hostname:
-            connect_kwargs['server_hostname'] = resolved.server_hostname
-        if headers:
-            connect_kwargs['additional_headers'] = headers
-
-        ws = await asyncio.wait_for(
-            websockets.connect(ws_url, proxy=None, **connect_kwargs),
-            timeout=10
-        )
+        ws = await for_each_node_address(addr, attempt)
 
         await self._ws_send(ws, encode_frame(
             FRAME_AUTH,
@@ -578,22 +596,31 @@ class TunnelClient:
             await self._close_ws(ws)
             raise Exception(f'Unexpected response: {response["type"]:#x}')
 
-    async def _perform_http_disguise(self, addr, port):
+    def _disguise_attempt(self, port):
+        async def attempt(connect_host, server_hostname):
+            if not server_hostname:
+                return await self._perform_http_disguise(connect_host, port, None)
+
+            async def make(sni):
+                return await self._perform_http_disguise(connect_host, port, sni)
+
+            return await connect_with_sni_fallback(
+                server_hostname, connect_host, make, self._ssl_ctx
+            )
+
+        return attempt
+
+    async def _perform_http_disguise(self, connect_host, port, server_hostname):
         if aiohttp.ClientSession is None:
             raise RuntimeError('aiohttp dependency is not installed')
 
         connector = aiohttp.TCPConnector(ssl=self._ssl_ctx) if aiohttp.TCPConnector else None
-        resolved = await resolve_node_address(addr)
-        connect_addr = self._url_host(resolved.connect_host)
-        base = f'https://{connect_addr}:{port}'
-        headers = None
+        base = f'https://{self._url_host(connect_host)}:{port}'
         request_kwargs = {}
-        if resolved.server_hostname:
-            headers = {'Host': f'{resolved.server_hostname}:{port}'}
-            request_kwargs['server_hostname'] = resolved.server_hostname
+        if server_hostname:
+            request_kwargs['server_hostname'] = server_hostname
+            request_kwargs['headers'] = {'Host': f'{server_hostname}:{port}'}
         async with aiohttp.ClientSession(connector=connector, trust_env=False) as session:
-            if headers:
-                request_kwargs['headers'] = headers
             async with session.get(f'{base}/', **request_kwargs):
                 pass
             await asyncio.sleep(random.uniform(0.5, 2.0))

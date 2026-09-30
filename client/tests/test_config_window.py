@@ -264,8 +264,7 @@ def test_config_window_contains_cert_binding_ui_text():
     source = os.path.join(os.path.dirname(__file__), "..", "config_window.py")
     text = open(source).read()
 
-    assert "允许自签证书" in text
-    assert "只接受信任的 CA 签发的证书" in text
+    assert "节点使用自签证书，已固定开启" in text
     assert "绑定服务器证书" in text
     assert "证书指纹不匹配（中间人攻击 or 服务端证书已更新）" in text
     assert "首次连接时将自动绑定证书指纹" in text
@@ -315,14 +314,18 @@ def test_config_window_cert_pin_mismatch_replaces_fingerprint_label():
     assert "self._cert_pin_error_label.setHidden_(True)" in text
 
 
-def test_config_window_allow_insecure_disables_when_tls_is_off():
+def test_config_window_allow_insecure_is_pinned_true_and_disabled():
+    """allowInsecure 钉死为 True（节点自签证书，身份校验靠证书指纹）。"""
     source = os.path.join(os.path.dirname(__file__), "..", "config_window.py")
     text = open(source).read()
 
-    assert 'insecure_supported = self._selected_protocol() != "tunnel" and self._tls_enabled()' in text
-    assert "self._insecure_cb.setEnabled_(insecure_supported)" in text
-    assert "self._insecure_hint_label.setTextColor_(NSColor.disabledControlTextColor())" in text
-    assert "self._insecure_hint_label.setTextColor_(NSColor.labelColor())" in text
-    assert "self._refresh_insecure_hint()" in text[
-        text.index("def onTlsChange_") : text.index("def onCertBindChange_")
-    ]
+    # 复选框默认勾选且置灰
+    assert 'self._insecure_cb = checkbox(y_pos, "允许不安全连接（跳过证书验证）", True)' in text
+    assert 'self._insecure_cb.setState_(NSOnState)' in text
+    assert 'self._insecure_cb.setEnabled_(False)' in text
+    # 不再支持用户切换，回调与动态启用逻辑已移除
+    assert "onAllowInsecureChange_" not in text
+    assert 'insecure_supported = self._selected_protocol()' not in text
+    # 保存时恒为 True，不读取复选框状态
+    assert text.count('config["server"]["allowInsecure"] = ALLOW_INSECURE_FORCED') == 2
+    assert 'config["server"]["allowInsecure"] = bool(self._insecure_cb.state())' not in text

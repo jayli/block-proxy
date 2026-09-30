@@ -17,6 +17,10 @@ import json
 import objc
 import platform
 
+# allowInsecure 钉死为 True（节点自签证书，身份校验由证书指纹承担）；
+# 取值从 config 模块引入，避免两处常量漂移。
+from config import ALLOW_INSECURE_FORCED
+
 from Foundation import NSObject
 from AppKit import (
     NSApplication,
@@ -271,9 +275,11 @@ class ConfigWindowController(NSObject):
         self._tls_cb.setAction_("onTlsChange:")
         y_pos -= row_h + 4
 
-        self._insecure_cb = checkbox(y_pos, "允许不安全连接（跳过证书验证）", server_cfg.get("allowInsecure", True))
-        self._insecure_cb.setTarget_(self)
-        self._insecure_cb.setAction_("onAllowInsecureChange:")
+        self._insecure_cb = checkbox(y_pos, "允许不安全连接（跳过证书验证）", True)
+        # 钉死为 True：节点用自签证书，身份校验由“绑定服务器证书”的指纹承担，
+        # 面板上仅作展示，不允许变更。
+        self._insecure_cb.setState_(NSOnState)
+        self._insecure_cb.setEnabled_(False)
         y_pos -= 20
 
         self._insecure_hint_label = hint_label(y_pos, "")
@@ -350,7 +356,6 @@ class ConfigWindowController(NSObject):
             self._tls_cb.setState_(NSOnState)
             self._proxy_private_cb.setState_(NSOffState)
         self._tls_cb.setEnabled_(not enabled)
-        self._insecure_cb.setEnabled_(not enabled)
         self._udp_cb.setEnabled_(not enabled)
         self._proxy_private_cb.setEnabled_(not enabled)
         self._refresh_insecure_hint()
@@ -366,16 +371,11 @@ class ConfigWindowController(NSObject):
     def _refresh_insecure_hint(self):
         if not hasattr(self, "_insecure_hint_label"):
             return
-        insecure_supported = self._selected_protocol() != "tunnel" and self._tls_enabled()
-        self._insecure_cb.setEnabled_(insecure_supported)
-        if bool(self._insecure_cb.state()):
-            self._insecure_hint_label.setStringValue_("允许自签证书")
-        else:
-            self._insecure_hint_label.setStringValue_("只接受信任的 CA 签发的证书")
-        if insecure_supported:
-            self._insecure_hint_label.setTextColor_(NSColor.labelColor())
-        else:
-            self._insecure_hint_label.setTextColor_(NSColor.disabledControlTextColor())
+        # 钉死为 True：始终勾选且不可变，仅保留说明文字
+        self._insecure_cb.setState_(NSOnState)
+        self._insecure_cb.setEnabled_(False)
+        self._insecure_hint_label.setStringValue_("节点使用自签证书，已固定开启")
+        self._insecure_hint_label.setTextColor_(NSColor.disabledControlTextColor())
 
     def _refresh_cert_bind_ui(self):
         if not hasattr(self, "_cert_bind_cb"):
@@ -408,11 +408,7 @@ class ConfigWindowController(NSObject):
         self._reset_pin_btn.setHidden_(not (supported and enabled and has_pin))
         self._cert_pin_error_label.setHidden_(True)
 
-    def onAllowInsecureChange_(self, sender):
-        self._refresh_insecure_hint()
-
     def onTlsChange_(self, sender):
-        self._refresh_insecure_hint()
         self._refresh_cert_bind_ui()
 
     def onCertBindChange_(self, sender):
@@ -488,13 +484,13 @@ class ConfigWindowController(NSObject):
             config["tunnel"]["enabled"] = True
             # Tunnel always uses TLS
             config["server"]["tls"] = True
-            config["server"]["allowInsecure"] = bool(self._insecure_cb.state())
+            config["server"]["allowInsecure"] = ALLOW_INSECURE_FORCED
         else:
             config["server"]["port"] = port
             if "tunnel" in config:
                 config["tunnel"]["enabled"] = False
             config["server"]["tls"] = bool(self._tls_cb.state())
-            config["server"]["allowInsecure"] = bool(self._insecure_cb.state())
+            config["server"]["allowInsecure"] = ALLOW_INSECURE_FORCED
 
         config["server"]["username"] = self._fields["username"].stringValue()
         config["server"]["password"] = self._fields["password"].stringValue()

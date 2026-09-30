@@ -1,6 +1,7 @@
 import struct
 import asyncio
 import pytest
+import node_connect
 from tunnel_client import (
     FRAME_CONNECT, FRAME_DATA, FRAME_CLOSE, FRAME_CONNECT_OK,
     FRAME_CONNECT_FAILED, FRAME_AUTH, FRAME_AUTH_OK, FRAME_ERROR,
@@ -87,6 +88,11 @@ class TestDecodeFrame:
 
 
 class TestTunnelClientLifecycle:
+    @pytest.fixture(autouse=True)
+    def _clear_sni_suppression(self):
+        node_connect.clear_sni_suppression()
+        yield
+        node_connect.clear_sni_suppression()
     def test_stop_schedules_active_ws_close(self):
         cfg = {
             'server': {
@@ -215,14 +221,15 @@ class TestTunnelClientLifecycle:
         class FakeResolved:
             connect_host = '198.51.100.7'
             server_hostname = 'buffer.fun'
+            all_hosts = ['198.51.100.7']
             is_resolved = True
 
-        async def fake_resolve(host):
+        async def fake_resolve(host, force_refresh=False):
             assert host == 'buffer.fun'
             return FakeResolved()
 
         monkeypatch.setattr('tunnel_client.websockets.connect', fake_connect)
-        monkeypatch.setattr('tunnel_client.resolve_node_address', fake_resolve)
+        monkeypatch.setattr(node_connect, 'resolve_node_address', fake_resolve)
 
         cfg = {
             'server': {'address': 'buffer.fun', 'username': 'u', 'password': 'p', 'allowInsecure': False},
@@ -255,13 +262,14 @@ class TestTunnelClientLifecycle:
         class FakeResolved:
             connect_host = '2001:db8::7'
             server_hostname = 'buffer.fun'
+            all_hosts = ['2001:db8::7']
             is_resolved = True
 
-        async def fake_resolve(host):
+        async def fake_resolve(host, force_refresh=False):
             return FakeResolved()
 
         monkeypatch.setattr('tunnel_client.websockets.connect', fake_connect)
-        monkeypatch.setattr('tunnel_client.resolve_node_address', fake_resolve)
+        monkeypatch.setattr(node_connect, 'resolve_node_address', fake_resolve)
 
         cfg = {
             'server': {'address': 'buffer.fun', 'username': 'u', 'password': 'p', 'allowInsecure': True},

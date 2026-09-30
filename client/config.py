@@ -2,6 +2,12 @@ import json
 import os
 import copy
 
+# 节点服务端用自签证书（SAN 只有 localhost/127.0.0.1，见 cert/generator.js），
+# 主机名校验必然失败；且实际身份校验由 certBindEnabled 的证书指纹（TOFU）
+# 承担。因此 allowInsecure 钉死为 True：面板置灰不可改，旧配置里的
+# False 也会在加载时被纠正，避免升级后被一个连不上的开关锁死。
+ALLOW_INSECURE_FORCED = True
+
 DEFAULT_CONFIG = {
     "server": {
         "protocol": "socks5",
@@ -10,7 +16,7 @@ DEFAULT_CONFIG = {
         "username": "",
         "password": "",
         "tls": True,
-        "allowInsecure": True,
+        "allowInsecure": ALLOW_INSECURE_FORCED,
         "certBindEnabled": False,
         "certPin": "",
     },
@@ -40,6 +46,12 @@ DEFAULT_CONFIG_DIR = os.path.expanduser(
 )
 
 
+def _force_allow_insecure(data):
+    server = data.get("server")
+    if isinstance(server, dict) and server.get("allowInsecure") is not True:
+        server["allowInsecure"] = ALLOW_INSECURE_FORCED
+
+
 class Config:
     def __init__(self, config_path=None):
         if config_path is None:
@@ -55,6 +67,7 @@ class Config:
         else:
             self.data = copy.deepcopy(DEFAULT_CONFIG)
             self.save()
+        _force_allow_insecure(self.data)
         return self.data
 
     def _fill_defaults(self):
@@ -69,6 +82,7 @@ class Config:
 
     def save(self):
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        _force_allow_insecure(self.data)
         # 原子写：先写临时文件再 rename，避免写一半崩溃留下半截 JSON
         tmp = self.config_path + ".tmp"
         with open(tmp, "w") as f:

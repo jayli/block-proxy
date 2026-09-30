@@ -178,3 +178,39 @@ class TestConfig:
 
         assert data["server"]["certBindEnabled"] is False
         assert data["server"]["certPin"] == ""
+
+    def test_allow_insecure_is_forced_true_in_default_config(self):
+        data = self.config.load()
+        assert data["server"]["allowInsecure"] is True
+
+    def test_legacy_allow_insecure_false_is_corrected_on_load(self):
+        """旧配置里的 False 必须被纠正：节点自签证书，关掉后必然连不上。"""
+        legacy = {
+            "server": {"address": "node.example.com", "allowInsecure": False},
+            "local": {},
+        }
+        with open(self.config_path, "w") as f:
+            json.dump(legacy, f)
+
+        data = self.config.load()
+
+        assert data["server"]["allowInsecure"] is True
+        # 其他字段不受影响
+        assert data["server"]["address"] == "node.example.com"
+
+    def test_allow_insecure_false_is_rewritten_on_save(self):
+        self.config.load()
+        self.config.data["server"]["allowInsecure"] = False
+        self.config.save()
+
+        saved = json.load(open(self.config_path))
+        assert saved["server"]["allowInsecure"] is True
+
+    def test_save_does_not_add_allow_insecure_when_server_missing(self):
+        """防御性：server 不是 dict 时不注入字段，不抛异常。"""
+        self.config.load()
+        self.config.data["server"] = None
+        self.config.save()
+
+        saved = json.load(open(self.config_path))
+        assert saved["server"] is None

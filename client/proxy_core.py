@@ -14,7 +14,7 @@ import time
 logger = logging.getLogger("proxy_core")
 
 from logger import access_logger, crash_logger, diagnostics_logger
-from doh_resolver import resolve_node_address
+from node_connect import open_node_connection
 from traffic_stats import add_bytes, flush as flush_stats, init_writer
 
 
@@ -346,19 +346,9 @@ def _close_writer_force(writer):
 async def connect_upstream_socks5(
     server_config, dest_addr, dest_port, ssl_ctx=None, verify_cert_pin=None
 ):
-    host = server_config["address"]
-    port = server_config["port"]
     use_tls = server_config["tls"]
-    resolved = await resolve_node_address(host)
-    connect_host = resolved.connect_host
-    server_hostname = resolved.server_hostname or host
-
-    reader, writer = await asyncio.wait_for(
-        asyncio.open_connection(
-            connect_host, port, ssl=ssl_ctx if use_tls else None,
-            server_hostname=server_hostname if use_tls else None,
-        ),
-        timeout=CONNECT_TIMEOUT,
+    reader, writer = await open_node_connection(
+        server_config, use_tls=use_tls, ssl_ctx=ssl_ctx, timeout=CONNECT_TIMEOUT
     )
     if verify_cert_pin and use_tls:
         verify_cert_pin(writer.get_extra_info("ssl_object"))
@@ -377,19 +367,8 @@ async def connect_upstream_socks5(
 
 
 async def connect_upstream_http(server_config, dest_addr, dest_port, ssl_ctx=None):
-    host = server_config["address"]
-    port = server_config["port"]
-    use_tls = False
-    resolved = await resolve_node_address(host)
-    connect_host = resolved.connect_host
-    server_hostname = resolved.server_hostname or host
-
-    reader, writer = await asyncio.wait_for(
-        asyncio.open_connection(
-            connect_host, port, ssl=ssl_ctx if use_tls else None,
-            server_hostname=server_hostname if use_tls else None,
-        ),
-        timeout=CONNECT_TIMEOUT,
+    reader, writer = await open_node_connection(
+        server_config, use_tls=False, timeout=CONNECT_TIMEOUT
     )
     _set_nodelay(writer)
 
@@ -406,21 +385,11 @@ async def connect_upstream_http(server_config, dest_addr, dest_port, ssl_ctx=Non
 
 
 async def connect_upstream_udp_associate(server_config, ssl_ctx=None):
-    host = server_config["address"]
-    port = server_config["port"]
     username = server_config["username"]
     password = server_config["password"]
     use_tls = server_config["tls"]
-    resolved = await resolve_node_address(host)
-    connect_host = resolved.connect_host
-    server_hostname = resolved.server_hostname or host
-
-    reader, writer = await asyncio.wait_for(
-        asyncio.open_connection(
-            connect_host, port, ssl=ssl_ctx if use_tls else None,
-            server_hostname=server_hostname if use_tls else None,
-        ),
-        timeout=CONNECT_TIMEOUT,
+    reader, writer = await open_node_connection(
+        server_config, use_tls=use_tls, ssl_ctx=ssl_ctx, timeout=CONNECT_TIMEOUT
     )
     _set_nodelay(writer)
 
@@ -777,20 +746,12 @@ class UpstreamPool:
             await asyncio.sleep(POOL_CHECK_INTERVAL)
 
     async def create_connection(self):
-        host = self._server_config["address"]
-        port = self._server_config["port"]
         protocol = self._server_config.get("protocol", "socks5")
         use_tls = self._server_config["tls"] if protocol == "socks5" else False
-        resolved = await resolve_node_address(host)
-        connect_host = resolved.connect_host
-        server_hostname = resolved.server_hostname or host
-
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(
-                connect_host, port,
-                ssl=self._ssl_ctx if use_tls else None,
-                server_hostname=server_hostname if use_tls else None,
-            ),
+        reader, writer = await open_node_connection(
+            self._server_config,
+            use_tls=use_tls,
+            ssl_ctx=self._ssl_ctx,
             timeout=POOL_CONNECT_TIMEOUT,
         )
         if self._verify_cert_pin and use_tls:
@@ -1148,26 +1109,20 @@ class ProxyCore:
                 raise NodeUnreachableError("Tunnel CONNECT failed")
             return (latency, None)
 
-        addr = self._server_config["address"]
-        port = self._server_config["port"]
-        resolved = await resolve_node_address(addr)
-        connect_addr = resolved.connect_host
-        server_hostname = resolved.server_hostname or addr
+        use_tls = self._server_config["tls"]
 
         start = time.monotonic()
         reader = None
         writer = None
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(
-                    connect_addr, port,
-                    ssl=self._ssl_ctx if self._server_config["tls"] else None,
-                    server_hostname=server_hostname if self._server_config["tls"] else None,
-                ),
+            reader, writer = await open_node_connection(
+                self._server_config,
+                use_tls=use_tls,
+                ssl_ctx=self._ssl_ctx,
                 timeout=5,
             )
 
-            if protocol == "socks5" and self._server_config["tls"]:
+            if protocol == "socks5" and use_tls:
                 self._verify_cert_pin(writer.get_extra_info("ssl_object"))
 
             if protocol == "http":

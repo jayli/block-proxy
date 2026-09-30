@@ -5,6 +5,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import proxy_core
+import node_connect
 
 
 class FakeReader:
@@ -57,9 +58,10 @@ def test_connect_upstream_socks5_uses_doh_ip_for_node_connection_but_keeps_sni(m
     class FakeResolved:
         connect_host = "198.51.100.7"
         server_hostname = "buffer.fun"
+        all_hosts = ["198.51.100.7"]
         is_resolved = True
 
-    async def fake_resolve(host):
+    async def fake_resolve(host, force_refresh=False):
         assert host == "buffer.fun"
         return FakeResolved()
 
@@ -67,8 +69,8 @@ def test_connect_upstream_socks5_uses_doh_ip_for_node_connection_but_keeps_sni(m
         calls.append((args, kwargs))
         return reader, writer
 
-    monkeypatch.setattr(proxy_core, "resolve_node_address", fake_resolve)
-    monkeypatch.setattr(proxy_core.asyncio, "open_connection", fake_open_connection)
+    monkeypatch.setattr(node_connect, "resolve_node_address", fake_resolve)
+    monkeypatch.setattr(node_connect.asyncio, "open_connection", fake_open_connection)
 
     config = {
         "address": "buffer.fun",
@@ -95,17 +97,18 @@ def test_connect_upstream_http_uses_doh_ip_and_plain_tcp(monkeypatch):
     class FakeResolved:
         connect_host = "198.51.100.8"
         server_hostname = "buffer.fun"
+        all_hosts = ["198.51.100.8"]
         is_resolved = True
 
-    async def fake_resolve(host):
+    async def fake_resolve(host, force_refresh=False):
         return FakeResolved()
 
     async def fake_open_connection(*args, **kwargs):
         calls.append((args, kwargs))
         return reader, writer
 
-    monkeypatch.setattr(proxy_core, "resolve_node_address", fake_resolve)
-    monkeypatch.setattr(proxy_core.asyncio, "open_connection", fake_open_connection)
+    monkeypatch.setattr(node_connect, "resolve_node_address", fake_resolve)
+    monkeypatch.setattr(node_connect.asyncio, "open_connection", fake_open_connection)
 
     config = {
         "address": "buffer.fun",
@@ -118,8 +121,8 @@ def test_connect_upstream_http_uses_doh_ip_and_plain_tcp(monkeypatch):
     asyncio.run(proxy_core.connect_upstream_http(config, "target.example", 443, ssl_ctx=object()))
 
     assert calls[0][0][:2] == ("198.51.100.8", 8002)
-    assert calls[0][1]["ssl"] is None
-    assert calls[0][1]["server_hostname"] is None
+    assert calls[0][1].get("ssl") is None
+    assert calls[0][1].get("server_hostname") is None
     assert writer.writes[0].startswith(b"CONNECT target.example:443 HTTP/1.1\r\n")
 
 

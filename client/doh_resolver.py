@@ -159,10 +159,13 @@ class NodeAddressResolver:
         self._fresh_cache = {}
         self._stale_cache = {}
 
-    def clear_fresh_cache(self):
-        self._fresh_cache.clear()
+    def clear_fresh_cache(self, host=None):
+        if host is None:
+            self._fresh_cache.clear()
+        else:
+            self._fresh_cache.pop(str(host).strip(), None)
 
-    async def resolve(self, host):
+    async def resolve(self, host, force_refresh=False):
         host = str(host).strip()
         if not host:
             raise RuntimeError("Node host is empty")
@@ -175,7 +178,7 @@ class NodeAddressResolver:
             )
 
         now = time.monotonic()
-        cached = self._fresh_cache.get(host)
+        cached = None if force_refresh else self._fresh_cache.get(host)
         if cached and cached[0] > now:
             return cached[1]
 
@@ -212,5 +215,5 @@ class NodeAddressResolver:
 _default_resolver = NodeAddressResolver()
 
 
-async def resolve_node_address(host):
-    return await _default_resolver.resolve(host)
+async def resolve_node_address(host, force_refresh=False):
+    return await _default_resolver.resolve(host, force_refresh=force_refresh)
