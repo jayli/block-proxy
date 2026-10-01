@@ -151,6 +151,14 @@ class AppController(NSObject):
         menu = NSMenu.alloc().init()
         menu.setAutoenablesItems_(False)
 
+        # 第一项：连接状态展示，不可点击
+        self.status_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+            "未连接", None, ""
+        )
+        self.status_item.setEnabled_(False)
+        menu.addItem_(self.status_item)
+        menu.addItem_(NSMenuItem.separatorItem())
+
         self.toggle_item = self._add_menu_item(
             menu, "启动代理", "toggleProxy:"
         )
@@ -231,6 +239,22 @@ class AppController(NSObject):
         is_global = self.config.data["mode"] == "global"
         self.global_item.setState_(1 if is_global else 0)
         self.manual_item.setState_(1 if not is_global else 0)
+
+    def _status_protocol_name(self):
+        protocol = self.config.data.get("server", {}).get("protocol", "socks5")
+        name_map = {"http": "http", "socks5": "socks", "tunnel": "隧道"}
+        return name_map.get(protocol, protocol)
+
+    def _status_title_connected(self, detail=None):
+        name = self._status_protocol_name()
+        # 中英文之间加空格，中文之间不加空格
+        base = f"{name} 已连接" if name.isascii() else f"{name}已连接"
+        return f"{base} - {detail}" if detail else base
+
+    def _status_title_interrupted(self, detail=None):
+        name = self._status_protocol_name()
+        base = f"{name} 已中断" if name.isascii() else f"{name}已中断"
+        return f"{base} - {detail}" if detail else base
 
     def _routing_menu_title(self, routing_enabled):
         return "分流规则（已开启）..." if routing_enabled else "分流规则..."
@@ -316,6 +340,7 @@ class AppController(NSObject):
         self._connecting = True
         self.toggle_item.setEnabled_(False)
         self.toggle_item.setTitle_("正在连接...")
+        self.status_item.setTitle_("正在连接...")
 
     def _finish_connecting(self):
         if self._connecting:
@@ -354,6 +379,7 @@ class AppController(NSObject):
         self._finish_connecting()
         self.connected = True
         self.toggle_item.setTitle_("关闭代理")
+        self.status_item.setTitle_(self._status_title_connected())
         self._update_icon()
 
     def _disconnect(self):
@@ -372,6 +398,7 @@ class AppController(NSObject):
         self._disconnecting = True
         self.toggle_item.setEnabled_(False)
         self.toggle_item.setTitle_("正在关闭代理...")
+        self.status_item.setTitle_("正在断开...")
 
         def _stop():
             try:
@@ -404,6 +431,7 @@ class AppController(NSObject):
         self.connected = False
         self._edr_blocked = False
         self.toggle_item.setTitle_("启动代理")
+        self.status_item.setTitle_("未连接")
         self._update_icon()
 
     # ------------------------------------------------------------------
@@ -739,6 +767,7 @@ class AppController(NSObject):
         self._quitting = True
         self.toggle_item.setEnabled_(False)
         self.toggle_item.setTitle_("正在退出...")
+        self.status_item.setTitle_("正在退出...")
 
         def _cleanup_then_terminate():
             try:
@@ -973,15 +1002,10 @@ class AppController(NSObject):
                     if result is None:
                         # 代理未运行，不更新标题
                         return
-                    protocol_name, latency, failure_reason = result
-                    # 中英文之间加空格，中文之间不加空格
-                    if protocol_name.isascii():
-                        proto_display = f"{protocol_name} 已连接"
-                    else:
-                        proto_display = f"{protocol_name}已连接"
+                    _protocol_name, latency, failure_reason = result
                     if latency is not None:
-                        self.toggle_item.setTitle_(
-                            f"关闭代理（{proto_display} - {latency}ms）"
+                        self.status_item.setTitle_(
+                            self._status_title_connected(f"{latency}ms")
                         )
                     else:
                         reason_map = {
@@ -990,24 +1014,9 @@ class AppController(NSObject):
                             "reconnecting": "重试中...",
                         }
                         suffix = reason_map.get(failure_reason)
-                        if suffix:
-                            if protocol_name.isascii():
-                                self.toggle_item.setTitle_(
-                                    f"关闭代理（{protocol_name} 已中断 - {suffix}）"
-                                )
-                            else:
-                                self.toggle_item.setTitle_(
-                                    f"关闭代理（{protocol_name}已中断 - {suffix}）"
-                                )
-                        else:
-                            if protocol_name.isascii():
-                                self.toggle_item.setTitle_(
-                                    f"关闭代理（{protocol_name} 已中断）"
-                                )
-                            else:
-                                self.toggle_item.setTitle_(
-                                    f"关闭代理（{protocol_name}已中断）"
-                                )
+                        self.status_item.setTitle_(
+                            self._status_title_interrupted(suffix)
+                        )
 
                 self._run_on_main(_update)
             finally:
@@ -1105,7 +1114,7 @@ class AppController(NSObject):
         self._edr_blocked = True
         def _update():
             if self.connected:
-                self.toggle_item.setTitle_("请求被安全软件拦截，请加白名单")
+                self.status_item.setTitle_("请求被安全软件拦截，请加白名单")
         self._run_on_main(_update)
 
     def _on_edr_recovered(self):
@@ -1113,7 +1122,7 @@ class AppController(NSObject):
         self._edr_blocked = False
         def _update():
             if self.connected:
-                self.toggle_item.setTitle_("关闭代理")
+                self.status_item.setTitle_(self._status_title_connected())
         self._run_on_main(_update)
 
     def _show_notification(self, title, subtitle, message):
