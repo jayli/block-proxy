@@ -116,6 +116,10 @@ class LogDataSource(NSObject):
 class LogWindowController(NSObject):
 
     def init(self):
+        self = self.initWithTab_("access")
+        return self
+
+    def initWithTab_(self, tab):
         self = objc.super(LogWindowController, self).init()
         if self is None:
             return None
@@ -133,8 +137,11 @@ class LogWindowController(NSObject):
 
         self._build_window()
         self._traffic_view.start()  # start stats collection immediately
-        self._initial_load()
-        self._start_tail()
+        if tab == "traffic":
+            self._select_tab(2)
+        else:
+            self._initial_load()
+            self._start_tail()
         return self
 
     # ------------------------------------------------------------------
@@ -395,7 +402,11 @@ class LogWindowController(NSObject):
     # ------------------------------------------------------------------
 
     def onTabSwitch_(self, sender):
-        seg = sender.selectedSegment()
+        self._select_tab(sender.selectedSegment())
+
+    def _select_tab(self, seg):
+        """切换到指定 tab（0=Access, 1=Crash, 2=流量统计）。"""
+        self._toggle.setSelectedSegment_(seg)
         if seg == 2:
             # Traffic stats tab
             self._stop_tail()
@@ -489,11 +500,18 @@ def _setup_menu():
 
 
 if __name__ == "__main__":
+    _tab = "access"
+    if "--tab" in sys.argv:
+        try:
+            _tab = sys.argv[sys.argv.index("--tab") + 1]
+        except IndexError:
+            _tab = "access"
+
     app = NSApplication.sharedApplication()
     app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
     _setup_menu()
 
-    ctrl = LogWindowController.alloc().init()
+    ctrl = LogWindowController.alloc().initWithTab_(_tab)
     if ctrl is None:
         sys.exit(1)
     ctrl.show()

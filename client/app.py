@@ -103,11 +103,13 @@ class AppController(NSObject):
         self._reconnecting = False
         self._disconnecting = False
         self._was_connected = False  # state before sleep
+        self._status_interrupted = False  # 状态项当前显示的是否为中断文案
         self._sleep_obs = None
         self._wake_obs = None
 
         self._build_status_item()
         self._build_menu()
+        self._update_status_item_visibility()
         self._update_icon()
         self._start_health_check()
 
@@ -151,13 +153,15 @@ class AppController(NSObject):
         menu = NSMenu.alloc().init()
         menu.setAutoenablesItems_(False)
 
-        # 第一项：连接状态展示，不可点击
-        self.status_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "未连接", None, ""
+        # 第一项：连接状态。已连接时可点击，点开日志面板（流量统计 tab）；
+        # 未连接时整项与下方分隔线一起隐藏，第一项直接是「启动代理」。
+        # 可直接用原生菜单项：字体/颜色/左对齐由 AppKit 按普通菜单项渲染，
+        # 不再需要自定义 view。
+        self.status_item = self._add_menu_item(
+            menu, self._status_title_connected(), "openStatusLog:"
         )
-        self.status_item.setEnabled_(False)
-        menu.addItem_(self.status_item)
-        menu.addItem_(NSMenuItem.separatorItem())
+        self.status_separator = NSMenuItem.separatorItem()
+        menu.addItem_(self.status_separator)
 
         self.toggle_item = self._add_menu_item(
             menu, "启动代理", "toggleProxy:"
@@ -239,6 +243,21 @@ class AppController(NSObject):
         is_global = self.config.data["mode"] == "global"
         self.global_item.setState_(1 if is_global else 0)
         self.manual_item.setState_(1 if not is_global else 0)
+
+    def _set_status_title(self, text, interrupted=False):
+        """更新状态项文字（原生菜单项，字体/颜色/左对齐由 AppKit 按普通菜单项渲染）。
+
+        interrupted=True 表示当前是「已中断」类文案，点击时定位到访问日志 tab；
+        正常已连接时点击定位到流量统计 tab。
+        """
+        self._status_interrupted = interrupted
+        self.status_item.setTitle_(text)
+
+    def _update_status_item_visibility(self):
+        """未连接时隐藏状态项及其分隔线，让「启动代理」成为第一项。"""
+        visible = self.connected
+        self.status_item.setHidden_(not visible)
+        self.status_separator.setHidden_(not visible)
 
     def _status_protocol_name(self):
         protocol = self.config.data.get("server", {}).get("protocol", "socks5")
@@ -340,7 +359,7 @@ class AppController(NSObject):
         self._connecting = True
         self.toggle_item.setEnabled_(False)
         self.toggle_item.setTitle_("正在连接...")
-        self.status_item.setTitle_("正在连接...")
+        self._set_status_title("正在连接...")
 
     def _finish_connecting(self):
         if self._connecting:
@@ -379,7 +398,8 @@ class AppController(NSObject):
         self._finish_connecting()
         self.connected = True
         self.toggle_item.setTitle_("关闭代理")
-        self.status_item.setTitle_(self._status_title_connected())
+        self._set_status_title(self._status_title_connected())
+        self._update_status_item_visibility()
         self._update_icon()
 
     def _disconnect(self):
@@ -398,7 +418,7 @@ class AppController(NSObject):
         self._disconnecting = True
         self.toggle_item.setEnabled_(False)
         self.toggle_item.setTitle_("正在关闭代理...")
-        self.status_item.setTitle_("正在断开...")
+        self._set_status_title("正在断开...")
 
         def _stop():
             try:
@@ -431,7 +451,8 @@ class AppController(NSObject):
         self.connected = False
         self._edr_blocked = False
         self.toggle_item.setTitle_("启动代理")
-        self.status_item.setTitle_("未连接")
+        self._set_status_title("未连接")
+        self._update_status_item_visibility()
         self._update_icon()
 
     # ------------------------------------------------------------------
@@ -477,11 +498,24 @@ class AppController(NSObject):
         self._show_super_dns_window()
 
     def openLog_(self, sender):
+        self._open_log_window("access")
+
+    def openStatusLog_(self, sender):
+        """点击状态项：已连接时看流量统计，中断时看访问日志。"""
+        if self._status_interrupted:
+            self._open_log_window("access")
+        else:
+            self._open_log_window("traffic")
+
+    def _open_log_window(self, tab):
+        """打开日志面板并定位到指定 tab（已在打开则忽略，与原有行为一致）。"""
         if self._log_proc and self._log_proc.poll() is None:
             return
         script_path = os.path.join(_bundle_resource_dir(), "log_window.py")
         python_path = self._find_python() if _is_compiled() else sys.executable
-        self._log_proc = subprocess.Popen([python_path, script_path])
+        self._log_proc = subprocess.Popen(
+            [python_path, script_path, "--tab", tab]
+        )
 
     def _find_python(self):
         for p in [
@@ -767,7 +801,7 @@ class AppController(NSObject):
         self._quitting = True
         self.toggle_item.setEnabled_(False)
         self.toggle_item.setTitle_("正在退出...")
-        self.status_item.setTitle_("正在退出...")
+        self._set_status_title("正在退出...")
 
         def _cleanup_then_terminate():
             try:
@@ -1004,7 +1038,7 @@ class AppController(NSObject):
                         return
                     _protocol_name, latency, failure_reason = result
                     if latency is not None:
-                        self.status_item.setTitle_(
+                        self._set_status_title(
                             self._status_title_connected(f"{latency}ms")
                         )
                     else:
@@ -1014,8 +1048,8 @@ class AppController(NSObject):
                             "reconnecting": "重试中...",
                         }
                         suffix = reason_map.get(failure_reason)
-                        self.status_item.setTitle_(
-                            self._status_title_interrupted(suffix)
+                        self._set_status_title(
+                            self._status_title_interrupted(suffix), interrupted=True
                         )
 
                 self._run_on_main(_update)
@@ -1114,7 +1148,7 @@ class AppController(NSObject):
         self._edr_blocked = True
         def _update():
             if self.connected:
-                self.status_item.setTitle_("请求被安全软件拦截，请加白名单")
+                self._set_status_title("请求被安全软件拦截，请加白名单", interrupted=True)
         self._run_on_main(_update)
 
     def _on_edr_recovered(self):
@@ -1122,7 +1156,7 @@ class AppController(NSObject):
         self._edr_blocked = False
         def _update():
             if self.connected:
-                self.status_item.setTitle_(self._status_title_connected())
+                self._set_status_title(self._status_title_connected())
         self._run_on_main(_update)
 
     def _show_notification(self, title, subtitle, message):
