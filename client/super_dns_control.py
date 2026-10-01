@@ -17,20 +17,34 @@ def domains_file_path(home=None):
 
 
 def ensure_domains_file(home=None):
+    """确保 domains 文件所在目录存在。
+
+    只处理「目录不存在」的情况，不在已有文件上做 touch：touch 会以写方式
+    打开文件，而 domains 可能属于 root（super-dns 以 root 运行时会创建它），
+    普通用户对它会得到 EACCES —— 这曾使纯读取操作也失败。
+    """
     path = domains_file_path(home)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.touch(exist_ok=True)
+    if not path.exists():
+        path.touch()
     return path
 
 
 def read_domains_file(home=None):
-    path = ensure_domains_file(home)
-    return path.read_text()
+    """读取 domains 文件。文件不存在时自动创建空文件；已存在时只读不写。"""
+    return ensure_domains_file(home).read_text()
 
 
 def write_domains_file(content, home=None):
+    """写入 domains 文件，失败时给出包含路径的可读报错。"""
     path = ensure_domains_file(home)
-    path.write_text(content)
+    try:
+        path.write_text(content)
+    except PermissionError as e:
+        raise PermissionError(
+            f"无法写入 {path}：{e.strerror or '权限不足'}。"
+            f"该文件可能属于其他用户（如 root），请使用 sudo 修改属主后重试。"
+        ) from e
     return path
 
 
