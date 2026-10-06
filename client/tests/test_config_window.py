@@ -293,11 +293,11 @@ def test_config_window_cert_binding_layout_uses_compact_checkbox_rows():
     assert "self._reset_pin_btn.setHidden_(True)" in text
 
 
-def test_config_window_cert_binding_stays_visible_but_disabled_for_http():
+def test_config_window_cert_binding_available_for_tls_socks5_and_http():
     source = os.path.join(os.path.dirname(__file__), "..", "config_window.py")
     text = open(source).read()
 
-    assert 'supported = self._selected_protocol() == "socks5" and self._tls_enabled()' in text
+    assert 'supported = self._selected_protocol() in ("socks5", "http") and self._tls_enabled()' in text
     assert "self._cert_bind_cb.setHidden_(False)" in text
     assert "self._cert_bind_label.setHidden_(False)" in text
     assert "self._cert_bind_cb.setEnabled_(supported)" in text

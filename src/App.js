@@ -726,7 +726,7 @@ function App() {
         <div className="config-section tab-content">
           <h2>HTTP/Socks5 端口设置</h2>
           <div className="setting-row">
-            <label>HTTP 代理端口:</label>
+            <label>内网HTTP代理端口:</label>
             <input
               type="number"
               value={config.proxy_port}
@@ -734,7 +734,7 @@ function App() {
             />
           </div>
           <div className="setting-row">
-            <label>Socks5 代理端口:</label>
+            <label>公网Socks/Http代理端口:</label>
             <input
               type="number"
               value={config.socks5_port}
@@ -742,14 +742,17 @@ function App() {
             />
           </div>
           <div className="setting-row">
-            <label>Socks5 启用 TLS:</label>
+            <label>公网代理启用 TLS:</label>
             <select
               value={config.socks5_tls || "1"}
-              onChange={(e) => setConfig({...config, socks5_tls: e.target.value})}
+              disabled
             >
               <option value="1">开启（加密传输）</option>
               <option value="0">关闭（纯 TCP）</option>
             </select>
+          </div>
+          <div className="help-text" style={{ marginTop: '-8px', marginBottom: '8px' }}>
+            公网代理端口强制启用 TLS，不可修改；SOCKS5 与 HTTP CONNECT 共用此端口
           </div>
 
           <div className="setting-row">
@@ -1196,10 +1199,10 @@ function App() {
             )}
           </p>
           <p>
-            <b>HTTP 代理端口：</b><span>{config.proxy_port}</span> &nbsp;<span>开启</span>
+            <b>内网HTTP代理端口：</b><span>{config.proxy_port}</span> &nbsp;<span>开启</span>
           </p>
           <p>
-            <b>Socks5{
+            <b>公网Socks/Http{
               (config.socks5_tls || "1") === "1" ? "（Over TLS）" : "（纯 TCP）"
             }代理端口：</b><span>{config.socks5_port}</span> &nbsp;
             <span>{

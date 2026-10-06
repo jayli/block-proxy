@@ -174,7 +174,7 @@ def test_non_tls_socks_and_http_do_not_mark_closed_entries_as_tombstones():
     async def scenario():
         for config in (
             {"protocol": "socks5", "tls": False},
-            {"protocol": "http", "tls": True},
+            {"protocol": "http", "tls": False},
         ):
             pool = proxy_core.UpstreamPool(config, None)
             reader, writer = FakeReader(eof=True), FakeWriter()

@@ -380,7 +380,7 @@ class ConfigWindowController(NSObject):
     def _refresh_cert_bind_ui(self):
         if not hasattr(self, "_cert_bind_cb"):
             return
-        supported = self._selected_protocol() == "socks5" and self._tls_enabled()
+        supported = self._selected_protocol() in ("socks5", "http") and self._tls_enabled()
         self._cert_bind_cb.setHidden_(False)
         self._cert_bind_label.setHidden_(False)
         self._cert_bind_cb.setEnabled_(supported)

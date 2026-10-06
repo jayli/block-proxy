@@ -13,8 +13,9 @@ Block-Proxy 是一个基于 MITM 的代理过滤工具，用于家长控制、�
 - [HTTP 代理使用](#http-代理使用)
   - [设备端设置代理](#设备端设置代理)
   - [代理认证](#代理认证)
-- [SOCKS5 over TLS 代理](#socks5-over-tls-代理)
+- [公网代理（SOCKS5 / HTTP over TLS）](#公网代理sockS5--http-over-tls)
   - [服务端开启 TLS](#服务端开启-tls)
+  - [HTTP CONNECT over TLS](#http-connect-over-tls)
   - [关闭 TLS（纯 TCP）](#关闭-tls纯-tcp)
 - [HTTPS MITM 解密](#https-mitm-解密)
   - [开启 MITM](#开启-mitm)
@@ -54,7 +55,7 @@ Block-Proxy 服务端部署在路由器或服务器上，客户端设备配置�
 
 启动后默认端口：
 - HTTP 代理：`8001`
-- SOCKS5（可选 打开TLS）：`8002`
+- SOCKS5（可选 打开TLS）/ HTTP CONNECT over TLS：`8002`
 - 双向隧道（可选）：`8003`
 - Web 管理界面：`8004`
 
@@ -156,8 +157,8 @@ pm2 start server/start.js --name "block-proxy" -- --pubkey /root/block-proxy/yui
 
 | 端口 | 用途 | 说明 |
 |------|------|------|
-| 8001 | HTTP 代理 | 默认打开，MITM 代理入口，设备 Wi-Fi 代理填写此端口 |
-| 8002 | SOCKS5 over TLS | 可选，TLS 加密的 SOCKS5 代理，macOS 客户端远程连接用 |
+| 8001 | 内网 HTTP 代理 | 默认打开，MITM 代理入口，设备 Wi-Fi 代理填写此端口 |
+| 8002 | 公网 SOCKS5 / HTTP over TLS | 可选，TLS 加密的公网代理端口，同一端口同时接受 SOCKS5 与 HTTP CONNECT，macOS 客户端远程连接用 |
 | 8003 | 双向隧道 | 可选，NAT 穿透隧道服务端口，Android/macOS 客户端连接用 |
 | 8004 | Web 管理界面 | 可选，浏览器打开配置拦截规则和查看状态 |
 
@@ -195,27 +196,41 @@ pm2 start server/start.js --name "block-proxy" -- --pubkey /root/block-proxy/yui
 
 ---
 
-## SOCKS5 over TLS 代理
+## 公网代理（SOCKS5 / HTTP over TLS）
 
-SOCKS5 over TLS 将 SOCKS5 协议承载在 TLS 加密连接上，适合在公网环境下安全使用（如 macOS 客户端在公司或外出时连回家中代理）。需要客户端支持 socks 套 tls才可以（因为我用的是自签证书，需要客户端勾选“AllowInsecure/允许不安全”），通常 xray、v2rayU 等工具支持。[block-proxy 客户端](https://github.com/jayli/block-proxy/releases)也支持。
+8002 是面向公网的代理端口，强制 TLS 加密。同一个端口上按首字节自动区分协议：`0x05` 走 SOCKS5，HTTP 方法名走 HTTP CONNECT。适合在公网环境下安全使用（如 macOS 客户端在公司或外出时连回家中代理）。需要客户端支持 socks/http 套 tls 才可以（因为我用的是自签证书，需要客户端勾选“AllowInsecure/允许不安全”），通常 xray、v2rayU 等工具支持。[block-proxy 客户端](https://github.com/jayli/block-proxy/releases)也支持。
 
 ### 服务端开启 TLS
 
 在管理界面 Tab 1 中：
-1. 确保 SOCKS5 端口已配置（默认 8002）
-2. 将"启用 TLS"设为「开启（加密传输）」
+1. 确保公网代理端口已配置（默认 8002）
+2. “公网代理启用 TLS”已固定为开启且不可修改（服务端仍按 `config.json` 的 `socks5_tls` 读取）
 
 **数据流向：**
 
 ```
-客户端 → TLS 加密连接 → SOCKS5(8002) → CONNECT 隧道 → HTTP 代理(8001) → 目标服务器
+客户端 → TLS 加密连接 → SOCKS5/HTTP CONNECT(8002) → CONNECT 隧道 → HTTP 代理(8001) → 目标服务器
 ```
 
 SOCKS5 还支持 UDP over TCP（通过自定义帧协议在 TLS 隧道中承载 UDP 流量），可用于游戏、语音等 UDP 应用代理。
 
+### HTTP CONNECT over TLS
+
+8002 端口同时提供 HTTPS 代理（HTTP over TLS）能力：客户端先与 8002 建立 TLS 连接，再在隧道内发送 `CONNECT host:port HTTP/1.1`。
+
+- 认证：与 SOCKS5 共用 `auth_username` / `auth_password`。用户名留空则不校验；否则要求 `Proxy-Authorization: Basic`，失败返回 `407`。凭据在 8002 侧校验后不会透传给下游。
+- 拦截/MITM/访问日志：与 SOCKS5 一致，流量统一转给 8001 处理，因此域名拦截、URL 重写、MITM 解密全部生效。
+- 不支持：明文绝对 URI 请求（如 `GET http://example.com/`）返回 `501`，请一律使用 CONNECT；MAC 定向拦截同样不适用（同 SOCKS5，来源 IP 为服务端本机）。
+
+命令行验证（自签证书需 `--proxy-insecure`）：
+
+```bash
+curl -x https://user:pass@<服务器IP>:8002 --proxy-insecure -k https://example.com
+```
+
 ### 关闭 TLS（纯 TCP）
 
-在内网环境或不需要加密时，在管理界面将 TLS 设为「关闭（纯 TCP）」。此时客户端使用普通 SOCKS5 TCP 连接即可。
+管理界面已不允许关闭公网代理的 TLS。仅当手动把 `config.json` 的 `socks5_tls` 改为 `"0"` 时，8002 才会退回纯 TCP（同时接受明文 SOCKS5 与明文 HTTP CONNECT），不建议在公网环境下使用。
 
 ---
 
@@ -368,10 +383,11 @@ Block-Proxy 提供 macOS 客户端 **BlockProxyClient**，用于在 Mac 上连�
 
 | 配置项 | 说明 |
 |--------|------|
+| 协议 | `socks5`（SOCKS5）/ `http`（HTTP CONNECT）/ `隧道(双向)` |
 | 服务器地址 | 代理服务端的 IP 或域名 |
-| 端口 | 服务端 SOCKS5 端口（默认 8002） |
+| 端口 | 服务端公网代理端口（默认 8002，SOCKS5 与 HTTP 共用） |
 | 用户名 / 密码 | 与服务端代理认证一致 |
-| TLS | 是否启用 TLS 加密（需与服务端一致） |
+| TLS | 是否启用 TLS 加密（需与服务端一致；socks5 与 http 协议均支持） |
 | Allow Insecure | 是否允许自签名证书（服务端使用自签名证书时需勾选） |
 | 本地 SOCKS5 端口 | 本地监听的 SOCKS5 端口（默认 1080） |
 | 本地 HTTP 端口 | 本地监听的 HTTP 代理端口（默认 1087） |
@@ -468,8 +484,8 @@ A: 关闭 MITM（`enable_mitm: "0"`）即可。域名级拦截基于 CONNECT 阶
 
 A: 检查：
 1. 服务端 `enable_socks5` 是否为「开启」
-2. 防火墙是否开放了 SOCKS5 端口（默认 8002）
-3. 客户端 TLS 设置与服务端是否一致（都开或都关）
+2. 防火墙是否开放了公网代理端口（默认 8002）
+3. 客户端协议与 TLS 设置与服务端是否一致（服务端 8002 强制 TLS，客户端需勾选 TLS）
 4. 用户名密码是否正确
 5. 如果是自签名证书，是否勾选了"Allow Insecure"
 

@@ -86,7 +86,7 @@ def test_connect_upstream_socks5_uses_doh_ip_for_node_connection_but_keeps_sni(m
     assert calls[0][1]["server_hostname"] == "buffer.fun"
 
 
-def test_connect_upstream_http_uses_doh_ip_and_plain_tcp(monkeypatch):
+def test_connect_upstream_http_uses_doh_ip_and_tls_when_enabled(monkeypatch):
     calls = []
     writer = FakeWriter()
     reader = FakeReader([
@@ -121,8 +121,8 @@ def test_connect_upstream_http_uses_doh_ip_and_plain_tcp(monkeypatch):
     asyncio.run(proxy_core.connect_upstream_http(config, "target.example", 443, ssl_ctx=object()))
 
     assert calls[0][0][:2] == ("198.51.100.8", 8002)
-    assert calls[0][1].get("ssl") is None
-    assert calls[0][1].get("server_hostname") is None
+    assert calls[0][1].get("ssl") is not None
+    assert calls[0][1].get("server_hostname") == "buffer.fun"
     assert writer.writes[0].startswith(b"CONNECT target.example:443 HTTP/1.1\r\n")
 
 
@@ -166,7 +166,7 @@ def test_connect_upstream_retries_fresh_connection_after_stale_pool_entry(monkey
     assert pc._upstream_pool.created == 1
 
 
-def test_http_upstream_can_use_plain_tcp_pool_when_tls_flag_is_dirty(monkeypatch):
+def test_http_upstream_uses_pool_handshake(monkeypatch):
     writer = FakeWriter()
     reader = FakeReader([
         b"HTTP/1.1 200 OK\r\n",

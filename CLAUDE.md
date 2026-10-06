@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (and other agents via the AGENTS.md s
 - `npm run start` / `npm run express` – 后端 + 代理（生产）；`npm run proxy` / `npm run socks5` – 仅代理 / 仅 SOCKS5
 
 ### Testing
-- `npm run test:proxy-core` – proxy-core 连接测试（无需代理服务）；`npm run test:proxy` – 代理连通性/性能/吞吐量测试（需先启动代理）
+- `npm run test:proxy-core` – proxy-core 连接测试（无需代理服务）；`npm run test:proxy` – 代理连通性/性能/吞吐量测试（需先启动代理）；`npm run test:public-proxy` – 8002 公网代理协议分发测试（SOCKS5 / HTTP CONNECT over TLS）
 - `npm run test:registry` / `npm run test:mitm-runtime` – MITM 规则注册 / 运行时测试
 - `npm run test:access-logger` – 访问日志单元测试 + 与真实代理钩子的集成测试
 - `npm run test:android` – Android phone flavor 单元测试；`npm run test:android:emulator` – 仪器化测试
@@ -45,8 +45,8 @@ MITM proxy for parental control & ad blocking. Node.js + React + proxy-core (Any
 ### Ports
 | 端口 | 用途 |
 | --- | --- |
-| 8001 | HTTP proxy (mandatory, proxy-core) |
-| 8002 | SOCKS5 over TLS (optional) |
+| 8001 | 内网 HTTP proxy (mandatory, proxy-core) |
+| 8002 | 公网代理 SOCKS5 / HTTP CONNECT over TLS (optional, 同端口按首字节分发) |
 | 8003 | Tunnel server (reverse tunnel, HTTP/2 + allowHTTP1) |
 | 8004 | Express admin API |
 | 3000 | React dev server (dev only) |
@@ -57,7 +57,7 @@ MITM proxy for parental control & ad blocking. Node.js + React + proxy-core (Any
 - **Dev**: `npm run dev` → full stack with dev flag
 
 ### Request Flow
-Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 (8002) → TLS 认证 → CONNECT → 8001；Tunnel xhttp (8003) → 8001
+Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 / HTTP CONNECT (8002, TLS) → 认证 → CONNECT → 8001；Tunnel xhttp (8003) → 8001
 
 ### Core Components
 - **Proxy** (`/proxy/`) – `proxy.js` 入口, `attacker.js` 拦截判断, `domain.js` host 匹配, `fs.js` config 读写备份, `scan.js` 每 2h ARP 扫描, `mitm/rule.js` 规则 + 响应修改器(YouTube 去广告/有道 VIP), `http.js` HTTP 助手, `monitor.js` 系统指标, `operator.js` 管理路由, `wanip.js` 公网 IP, `access-logger.js` 访问日志(按 MAC 记录被监控设备访问其拦截域名), `fd-diagnostics.js` fd/TCP 诊断; `mitm/` 另含 `registry.js`(规则注册), `persistentStore.js`, `uaFilter.js`, `ydcd/`, `youtube/`
@@ -65,7 +65,7 @@ Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 (8002) 
   - 证书存储: `~/.anyproxy` → 项目本地 `certificates/`；`X-Tunnel-Relay: 1` 头注入 tunnel CONNECT 响应
   - ECONNRESET/EPIPE 自动重试一次 (GET/HEAD/OPTIONS)；keep-alive `maxRequestsPerSocket: 50` 防 gRPC RST_STREAM；流式响应阈值 20MB (无 responseRules 时 64KB)
   - 剥离 MITM 响应中的 `Alt-Svc` 头，防止客户端学到 h3/QUIC 入口绕过 TCP 代理
-- **SOCKS5** (`/socks5/`) – SOCKS5 over TLS + UDP over TCP(自定义帧): `server.js`, `start.js`, `test_tls_reuse.js`; 客户端 `client/proxy_core.py` (asyncio 实现)
+- **SOCKS5** (`/socks5/`) – 8002 公网代理端口，SOCKS5 over TLS + UDP over TCP(自定义帧) + HTTP CONNECT over TLS: `server.js`(含 `createPublicProxyHandler` 首字节协议分发、`createHttpConnectHandler` HTTP CONNECT 隧道), `start.js`, `test_tls_reuse.js`; 客户端 `client/proxy_core.py` (asyncio 实现)
 - **Tunnel** (`/tunnel/`) – xhttp 传输协议（HTTP POST 上行 + SSE 下行）: `server.js`(HTTP/2 入口), `xhttpHandler.js`(核心处理器), `uploadQueue.js`(上行帧重排序), `protocol.js`(帧编解码), `manager.js`(连接生命周期), `sseControl.js`(旧 SSE 适配), `disguiseResponse.js`(HTTPS 伪装)
 - **Server** (`/server/`) – Express API (8004), 托管 React build, token cookie 认证: `start.js`, `express.js`, `timestampConsole.js`, `util.js`
 - **Frontend** (`/src/`) – CRA + CRACO 管理界面, `App.js` 主组件
@@ -157,7 +157,7 @@ Kotlin + Jetpack Compose + VpnService + tun2socks (JNI) + xhttp 传输。v0.1.6 
 ## 重要约束 (Important Notes)
 
 - **Testing 陷阱**: 经代理请求 `127.0.0.1` 会被 AnyProxy 拦截返回管理页, Mock Server 需绑 `0.0.0.0` 并经 LAN IP 访问
-- SOCKS5 不支持 MAC 定向拦截；未装证书时设 `enable_mitm`="0" 切纯隧道模式；iOS Safari 带认证代理不能与网关 IP 相同
+- SOCKS5 与 8002 的 HTTP CONNECT 均不支持 MAC 定向拦截（来源 IP 为服务端本机）；未装证书时设 `enable_mitm`="0" 切纯隧道模式；iOS Safari 带认证代理不能与网关 IP 相同
 - 路由表每 2h 刷新；`config_backup.json` 备份配置（`npm run rm_bkconfig` 删除）
 - Android 仪器化测试: `npm run test:android:emulator` 会自动 unset 代理环境变量, 避免测试流量走代理
 - **Android 构建顺序**: 改 native C 后先 `android:native:build` 再 `android:build`；`utlsws` AAR 用 `native/utlsws/build-aar.sh`（gomobile）单独构建

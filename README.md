@@ -4,7 +4,7 @@
 
 > Socks5/HTTP 代理 + 反向隧道工具，支持 MITM 和二次开发。用于家庭网关限制小朋友上网，域名/地址/设备拦截，以及内网穿透场景。
 
-- HTTP 代理 + Socks5（可开启 TLS）代理 + 隧道代理
+- HTTP 代理 + Socks5/HTTP over TLS 公网代理 + 隧道代理
 - 域名拦截、URL 正则匹配、MAC 地址定向拦截
 - 按时间段和星期拦截
 - [macOS 客户端](https://github.com/jayli/block-proxy/releases)，支持 SOCKS5/HTTP/隧道三种协议，内置 geosite/geoip 分流引擎
@@ -58,7 +58,7 @@ pm2 start block-proxy --interpreter bash
 | 端口 | 说明 | 可否关闭 |
 |:----:|:----|:------:|
 | 8001 | HTTP 代理端口 | 不可 |
-| 8002 | Socks5 over TLS 代理端口 | 可 |
+| 8002 | Socks5 / HTTP over TLS 公网代理端口 | 可 |
 | 8003 | 隧道代理端口（TLS） | 可 |
 | 8004 | 后台配置面板 | 可 |
 
@@ -93,7 +93,7 @@ npm run proxy     # 仅启动代理，不开后台面板
 | 协议 | 说明 |
 |:----:|:----|
 | SOCKS5 | SOCKS5 over TLS，连接服务端 8002 端口 |
-| HTTP | HTTP 代理直连服务端 8001 端口 |
+| HTTP | HTTP 代理直连服务端 8001 端口；也可选 TLS 模式连接 8002 公网代理端口（HTTP CONNECT over TLS） |
 | 隧道 | 隧道代理 |
 
 

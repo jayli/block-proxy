@@ -366,10 +366,15 @@ async def connect_upstream_socks5(
     return reader, writer
 
 
-async def connect_upstream_http(server_config, dest_addr, dest_port, ssl_ctx=None):
+async def connect_upstream_http(
+    server_config, dest_addr, dest_port, ssl_ctx=None, verify_cert_pin=None
+):
+    use_tls = server_config["tls"]
     reader, writer = await open_node_connection(
-        server_config, use_tls=False, timeout=CONNECT_TIMEOUT
+        server_config, use_tls=use_tls, ssl_ctx=ssl_ctx, timeout=CONNECT_TIMEOUT
     )
+    if verify_cert_pin and use_tls:
+        verify_cert_pin(writer.get_extra_info("ssl_object"))
     _set_nodelay(writer)
 
     try:
@@ -701,12 +706,12 @@ class UpstreamPool:
             _, writer = entry
             _close_writer_force(writer)
 
-    def _tracks_tls_socks_preconnects(self):
+    def _tracks_tls_preconnects(self):
         protocol = self._server_config.get("protocol", "socks5")
-        return protocol == "socks5" and bool(self._server_config.get("tls"))
+        return protocol in ("socks5", "http") and bool(self._server_config.get("tls"))
 
     async def _mark_closed_preconnects(self):
-        if not self._tracks_tls_socks_preconnects():
+        if not self._tracks_tls_preconnects():
             return
 
         entries = []
@@ -731,7 +736,7 @@ class UpstreamPool:
                 self._pool.put_nowait(entry)
 
         for writer in stale_writers:
-            logger.debug("discarding closed TLS SOCKS preconnect")
+            logger.debug("discarding closed TLS preconnect")
             await _close_writer(writer)
 
     async def _maintain(self):
@@ -747,7 +752,7 @@ class UpstreamPool:
 
     async def create_connection(self):
         protocol = self._server_config.get("protocol", "socks5")
-        use_tls = self._server_config["tls"] if protocol == "socks5" else False
+        use_tls = bool(self._server_config["tls"]) if protocol in ("socks5", "http") else False
         reader, writer = await open_node_connection(
             self._server_config,
             use_tls=use_tls,
@@ -1122,7 +1127,7 @@ class ProxyCore:
                 timeout=5,
             )
 
-            if protocol == "socks5" and use_tls:
+            if protocol in ("socks5", "http") and use_tls:
                 self._verify_cert_pin(writer.get_extra_info("ssl_object"))
 
             if protocol == "http":
@@ -1623,7 +1628,9 @@ class ProxyCore:
                     dest_addr, dest_port, _http_connect_handshake
                 )
             return await connect_upstream_http(
-                self._server_config, dest_addr, dest_port, ssl_ctx=self._ssl_ctx
+                self._server_config, dest_addr, dest_port,
+                ssl_ctx=self._ssl_ctx,
+                verify_cert_pin=self._verify_cert_pin,
             )
         if self._upstream_pool:
             return await self._connect_with_pool(

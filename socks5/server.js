@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const _fs = require('../proxy/fs.js');
 const domain = require('../proxy/domain.js');
+const attacker = require('../proxy/attacker.js');
 const { pipeline } = require('stream');
 const fdDiagnostics = require('../proxy/fd-diagnostics');
 
@@ -18,6 +19,7 @@ const crtFile = path.join(__dirname, '../cert/socks5_tls.crt');
 const ticketKeyPath = path.join(__dirname, './ticket-keys.bin');
 const DEFAULT_MAX_TCP_CONNECTS = 200;
 const SOCKS5_HANDSHAKE_TIMEOUT_MS = 15_000;
+const HTTP_MAX_HEAD_BYTES = 64 * 1024;
 const TCP_CONNECT_STATS_LOG_INTERVAL_MS = 5 * 60_000;
 const PROC_SELF_FD_PATH = '/proc/self/fd';
 
@@ -29,13 +31,13 @@ function getOpenFdCount() {
   }
 }
 
-function getRemotePeer(socket) {
+function getRemoteIp(socket) {
   const address = socket.remoteAddress || 'unknown';
-  const port = socket.remotePort || 0;
-  const normalizedAddress = address.startsWith('::ffff:')
-    ? address.slice('::ffff:'.length)
-    : address;
-  return `${normalizedAddress}:${port}`;
+  return address.startsWith('::ffff:') ? address.slice('::ffff:'.length) : address;
+}
+
+function getRemotePeer(socket) {
+  return `${getRemoteIp(socket)}:${socket.remotePort || 0}`;
 }
 
 function initTicketKeyFile() {
@@ -155,6 +157,10 @@ function createConnectionHandler(options) {
   const fdCountProvider = options.fdCountProvider || getOpenFdCount;
   const fdDiagnosticsProvider = options.fdDiagnosticsProvider || null;
   const logger = options.logger || console;
+  // 默认复用 proxy/attacker.js 的全局 IP 限频状态（与 8001、HTTP CONNECT 路径共享）；测试可注入
+  const attackerModule = options.attacker || attacker;
+  // 未配置用户名时不做认证，也不参与限频（与 8001/HTTP 路径语义一致）
+  const authRequired = authCredentials.username !== undefined && authCredentials.username !== '';
   let handshakingSockets = 0;
   let activeUdpAssociations = 0;
   let activeTcpConnects = 0;
@@ -369,6 +375,21 @@ function createConnectionHandler(options) {
   }
 
   return async (socket) => {
+    const clientIp = getRemoteIp(socket);
+
+    // 错误监听必须先于任何 destroy() 挂载：公网端口上对端随时可能 RST，
+    // 无监听器的 'error' 事件会直接抛成未捕获异常并终止进程。
+    socket.on('error', (err) => {
+      logger.warn('Client socket error (ignored):', err.message);
+    });
+
+    // 被拉黑的 IP 在握手前直接断开，不消耗握手与认证开销
+    if (authRequired && attackerModule.isBadGuy(clientIp)) {
+      logger.warn(`[🚫]>> 拦截 badguy ${clientIp} (SOCKS5)`);
+      socket.destroy();
+      return;
+    }
+
     let handshaking = true;
     handshakingSockets++;
     const finishHandshake = () => {
@@ -378,10 +399,6 @@ function createConnectionHandler(options) {
     };
     socket.once('close', finishHandshake);
     socket.setKeepAlive(true, 60000);
-
-    socket.on('error', (err) => {
-      logger.warn('Client socket error (ignored):', err.message);
-    });
 
     try {
       const authMethodsBuf = await readOnceWithTimeout(socket, handshakeTimeoutMs, 'SOCKS5 method negotiation');
@@ -433,11 +450,14 @@ function createConnectionHandler(options) {
         const password = authData.slice(2 + ulen + 1, 2 + ulen + 1 + plen).toString();
 
         if (username !== authCredentials.username || password !== authCredentials.password) {
+          logger.warn(`SOCKS5 auth failed remote=${getRemotePeer(socket)}`);
+          attackerModule.countIPAccess(clientIp);
           socket.write(Buffer.from([0x01, 0xff]));
           socket.destroy();
           return;
         }
         socket.write(Buffer.from([0x01, 0x00]));
+        attackerModule.setGoodGuy(clientIp);
       }
 
       const requestBuf = await readOnceWithTimeout(socket, handshakeTimeoutMs, 'SOCKS5 request');
@@ -474,6 +494,269 @@ function createConnectionHandler(options) {
   };
 }
 
+// 解析 CONNECT 目标：host:port / [ipv6]:port / host（缺省 443）
+function parseConnectTarget(target) {
+  let host;
+  let portText;
+  if (target.startsWith('[')) {
+    const close = target.indexOf(']');
+    if (close === -1) return null;
+    host = target.slice(1, close);
+    const after = target.slice(close + 1);
+    if (after === '') portText = '443';
+    else if (after.startsWith(':')) portText = after.slice(1);
+    else return null;
+  } else {
+    const idx = target.lastIndexOf(':');
+    if (idx === -1) {
+      host = target;
+      portText = '443';
+    } else {
+      host = target.slice(0, idx);
+      portText = target.slice(idx + 1);
+    }
+  }
+  if (!host) return null;
+  const port = Number(portText);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+  return { host, port };
+}
+
+// 公网 HTTP 代理（over TLS）处理器：仅支持 CONNECT 隧道。
+// 认证语义与 SOCKS5/8001 一致：auth_username 为空则放行，否则要求
+// Proxy-Authorization: Basic 与配置完全匹配。认证在 8002 侧完成，
+// 转发给下游 8001 时剥离凭据（8001 对 127.0.0.1 来源免认证，与 SOCKS5 路径一致）。
+function createHttpConnectHandler(options) {
+  const downstreamProxyPort = options.downstreamProxyPort;
+  const downstreamProxyHost = options.downstreamProxyHost || DOWNSTREAM_HTTP_PROXY_HOST;
+  const authCredentials = options.authCredentials || {};
+  const handshakeTimeoutMs = options.handshakeTimeoutMs || SOCKS5_HANDSHAKE_TIMEOUT_MS;
+  const maxTcpConnects = Number.isFinite(options.maxTcpConnects)
+    ? options.maxTcpConnects
+    : DEFAULT_MAX_TCP_CONNECTS;
+  const logger = options.logger || console;
+  // 默认复用 proxy/attacker.js 的全局 IP 限频状态（与 8001 共享）；测试可注入
+  const attackerModule = options.attacker || attacker;
+
+  let activeTunnels = 0;
+
+  // 与 8001 checkProxyAuth 一致：未配置用户名则不做认证，也不参与限频
+  const authRequired = authCredentials.username !== undefined && authCredentials.username !== '';
+
+  function checkProxyAuth(headers) {
+    const expectedUser = authCredentials.username;
+    const expectedPass = authCredentials.password;
+    if (expectedUser === undefined || expectedUser === '') return true;
+    const authHeader = headers['proxy-authorization'];
+    if (!authHeader || !authHeader.startsWith('Basic ')) return false;
+    let decoded;
+    try {
+      decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf8');
+    } catch (e) {
+      return false;
+    }
+    const sep = decoded.indexOf(':');
+    if (sep === -1) return false;
+    return decoded.slice(0, sep) === expectedUser && decoded.slice(sep + 1) === expectedPass;
+  }
+
+  function sendError(socket, statusLine) {
+    if (socket.destroyed) return;
+    const challenge = statusLine.startsWith('407')
+      ? 'Proxy-Authenticate: Basic realm="BlockProxy"\r\n'
+      : '';
+    socket.write(
+      `HTTP/1.1 ${statusLine}\r\n${challenge}Content-Length: 0\r\nConnection: close\r\n\r\n`,
+      () => socket.destroy()
+    );
+  }
+
+  return async (socket, firstChunk) => {
+    socket.setKeepAlive(true, 60000);
+    socket.on('error', (err) => {
+      logger.warn('Public HTTP proxy client socket error (ignored):', err.message);
+    });
+
+    // 1. 读取完整请求头（限制大小与超时，防公网扫描器灌数据）
+    let buffer = firstChunk || Buffer.alloc(0);
+    let headEnd = buffer.indexOf('\r\n\r\n');
+    while (headEnd === -1) {
+      if (buffer.length > HTTP_MAX_HEAD_BYTES) {
+        sendError(socket, '431 Request Header Fields Too Large');
+        return;
+      }
+      let chunk;
+      try {
+        chunk = await readOnceWithTimeout(socket, handshakeTimeoutMs, 'HTTP proxy request head');
+      } catch (err) {
+        logger.warn(`HTTP proxy session closed during setup: ${err.message} remote=${getRemotePeer(socket)}`);
+        socket.destroy();
+        return;
+      }
+      buffer = Buffer.concat([buffer, chunk]);
+      headEnd = buffer.indexOf('\r\n\r\n');
+    }
+    if (headEnd > HTTP_MAX_HEAD_BYTES) {
+      sendError(socket, '431 Request Header Fields Too Large');
+      return;
+    }
+    const headText = buffer.slice(0, headEnd).toString('latin1');
+    const rest = buffer.slice(headEnd + 4);
+
+    // 2. 解析请求行
+    const lines = headText.split('\r\n');
+    const parts = lines[0].split(' ');
+    if (parts.length !== 3 || !/^HTTP\/1\.[01]$/.test(parts[2]) || !/^[A-Z]+$/.test(parts[0])) {
+      sendError(socket, '400 Bad Request');
+      return;
+    }
+    const method = parts[0];
+    if (method !== 'CONNECT') {
+      sendError(socket, '501 Not Implemented');
+      return;
+    }
+    const parsedTarget = parseConnectTarget(parts[1]);
+    if (!parsedTarget) {
+      sendError(socket, '400 Bad Request');
+      return;
+    }
+    const { host: targetHost, port: targetPort } = parsedTarget;
+
+    // 3. 认证（与 SOCKS5 相同的凭据与语义）+ attacker 限频（与 8001 同源）
+    const headers = {};
+    for (let i = 1; i < lines.length; i++) {
+      const idx = lines[i].indexOf(':');
+      if (idx === -1) continue;
+      headers[lines[i].slice(0, idx).trim().toLowerCase()] = lines[i].slice(idx + 1).trim();
+    }
+    const clientIp = getRemoteIp(socket);
+    if (authRequired) {
+      if (attackerModule.isBadGuy(clientIp)) {
+        logger.warn(`[🚫]>> 拦截 badguy ${clientIp} (HTTP proxy)`);
+        sendError(socket, '407 Proxy Authentication Required');
+        return;
+      }
+      if (!checkProxyAuth(headers)) {
+        logger.warn(`HTTP proxy auth failed remote=${getRemotePeer(socket)} target=${targetHost}:${targetPort}`);
+        attackerModule.countIPAccess(clientIp);
+        sendError(socket, '407 Proxy Authentication Required');
+        return;
+      }
+      attackerModule.setGoodGuy(clientIp);
+    }
+    // 4. 并发上限
+    if (activeTunnels >= maxTcpConnects) {
+      logger.warn(`HTTP CONNECT rejected: too many concurrent connections (${activeTunnels}/${maxTcpConnects})`);
+      sendError(socket, '503 Service Unavailable');
+      return;
+    }
+
+    // 5. 经下游 HTTP 代理建立隧道（与 SOCKS5 TCP CONNECT 同路径，保留拦截/MITM 能力）
+    activeTunnels++;
+    let cleaned = false;
+    let proxySocket = null;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      activeTunnels--;
+      if (proxySocket && !proxySocket.destroyed) proxySocket.destroy();
+      // 下游先关闭时客户端 socket 可能半关闭滞留 fd，双向兜底销毁（同 SOCKS5 路径）
+      if (socket && !socket.destroyed) socket.destroy();
+    };
+
+    socket.setTimeout(120_000);
+    socket.on('timeout', () => socket.destroy());
+
+    proxySocket = net.connect(downstreamProxyPort, downstreamProxyHost, () => {
+      proxySocket.write(`CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n\r\n`);
+
+      const chunks = [];
+      let totalLen = 0;
+      const onProxyData = (chunk) => {
+        if (socket.destroyed || proxySocket.destroyed) return;
+        chunks.push(chunk);
+        totalLen += chunk.length;
+        if (totalLen > HTTP_MAX_HEAD_BYTES) {
+          cleanup();
+          return;
+        }
+        const buf = Buffer.concat(chunks, totalLen);
+        const end = buf.indexOf('\r\n\r\n');
+        if (end === -1) return;
+        proxySocket.removeListener('data', onProxyData);
+
+        const statusLine = buf.slice(0, buf.indexOf('\r\n')).toString('latin1');
+        if (!/^HTTP\/1\.[01] 2\d\d/.test(statusLine)) {
+          // 下游拒绝（如 502/407）：原样回传状态行后关闭
+          socket.write(buf.slice(0, end + 4), () => socket.destroy());
+          proxySocket.destroy();
+          return;
+        }
+
+        socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        const downstreamLeftover = buf.slice(end + 4);
+        if (downstreamLeftover.length > 0) socket.write(downstreamLeftover);
+        if (rest.length > 0) proxySocket.write(rest);
+        socket.pipe(proxySocket);
+        proxySocket.pipe(socket);
+      };
+      proxySocket.on('data', onProxyData);
+    });
+
+    proxySocket.setTimeout(120_000);
+    proxySocket.on('timeout', () => proxySocket.destroy());
+    proxySocket.on('error', (err) => {
+      logger.warn(`Public HTTP proxy upstream error: ${err.message}`);
+      if (!socket.destroyed) {
+        sendError(socket, '502 Bad Gateway');
+      }
+    });
+    proxySocket.on('close', cleanup);
+    socket.on('error', () => proxySocket.destroy());
+    socket.on('close', cleanup);
+  };
+}
+
+// 8002 公网代理端口分发器：TLS 解密后按首字节区分协议。
+// 0x05 → SOCKS5；ASCII 大写字母（HTTP 方法名）→ HTTP CONNECT。
+function createPublicProxyHandler(options) {
+  const socks5Handler = createConnectionHandler(options);
+  const httpHandler = createHttpConnectHandler(options);
+  const handshakeTimeoutMs = options.handshakeTimeoutMs || SOCKS5_HANDSHAKE_TIMEOUT_MS;
+  const logger = options.logger || console;
+
+  return (socket) => {
+    let detected = false;
+    const onEarlyError = (err) => {
+      if (!detected) {
+        logger.warn(`Public proxy connection error during detection: ${err.message} remote=${getRemotePeer(socket)}`);
+      }
+    };
+    socket.on('error', onEarlyError);
+
+    readOnceWithTimeout(socket, handshakeTimeoutMs, 'public proxy protocol detection')
+      .then((chunk) => {
+        detected = true;
+        socket.removeListener('error', onEarlyError);
+        if (chunk[0] === 0x05) {
+          // 把已读出的首包塞回流内，交给原 SOCKS5 处理器（行为不变）
+          socket.pause();
+          socket.unshift(chunk);
+          socks5Handler(socket);
+          socket.resume();
+        } else {
+          httpHandler(socket, chunk);
+        }
+      })
+      .catch((err) => {
+        detected = true;
+        socket.removeListener('error', onEarlyError);
+        logger.warn(`Public proxy protocol detection failed: ${err.message} remote=${getRemotePeer(socket)}`);
+        socket.destroy();
+      });
+  };
+}
+
 async function init() {
   try {
     // 确保 ECC P-256 临时 TLS 证书存在（首次启动自动生成，之后跳过）
@@ -506,7 +789,7 @@ async function init() {
       password: loadedConfig.auth_password,
     };
 
-    const protectedConnectionHandler = createConnectionHandler({
+    const protectedConnectionHandler = createPublicProxyHandler({
       downstreamProxyPort: DOWNSTREAM_HTTP_PROXY_PORT,
       downstreamProxyHost: DOWNSTREAM_HTTP_PROXY_HOST,
       authCredentials: AUTH_CREDENTIALS,
@@ -543,15 +826,23 @@ async function init() {
       console.error('SOCKS5 server error:', err);
     });
 
+    // 独立运行（npm run socks5）时 proxy.js 的清理定时器不在，这里兜底：
+    // 每 2 分钟清理 attacker 中超过 10 分钟无活动的 IP，防止公网端口上 Map 无界增长。
+    // 全栈模式下与 proxy.js 的定时器重复调用是幂等的。
+    const attackerCleanupTimer = setInterval(() => {
+      attacker.cleanupInactiveIPs();
+    }, 2 * 60 * 1000);
+    attackerCleanupTimer.unref?.();
+
     // 启动监听
     const tlsLabel = enableTls ? ' (over TLS)' : ' (纯 TCP)';
     server.listen(LISTEN_PORT, () => {
       var localIp = domain.getLocalIp();
-      console.log(`✅ \x1b[32mSOCKS5${tlsLabel} 服务启动，IP ${localIp}, 端口 ${LISTEN_PORT}\x1b[0m`);
+      console.log(`✅ \x1b[32mSOCKS5/HTTP${tlsLabel} 公网代理服务启动，IP ${localIp}, 端口 ${LISTEN_PORT}\x1b[0m`);
       if (enableTls) {
         console.log(`🔒 传输加密和认证基于 TLS`);
       }
-      console.log(`➡️  TCP → 流量转发至 HTTP 代理 → ${DOWNSTREAM_HTTP_PROXY_HOST}:${DOWNSTREAM_HTTP_PROXY_PORT}`);
+      console.log(`➡️  SOCKS5 TCP / HTTP CONNECT → 流量转发至 HTTP 代理 → ${DOWNSTREAM_HTTP_PROXY_HOST}:${DOWNSTREAM_HTTP_PROXY_PORT}`);
       console.log(`➡️  UDP → 直接发起请求`);
     });
   } catch (err) {
@@ -563,6 +854,9 @@ async function init() {
 module.exports.init = init;
 module.exports._test = {
   createConnectionHandler,
+  createHttpConnectHandler,
+  createPublicProxyHandler,
+  parseConnectTarget,
   DEFAULT_MAX_TCP_CONNECTS,
   SOCKS5_HANDSHAKE_TIMEOUT_MS,
   getOpenFdCount,
