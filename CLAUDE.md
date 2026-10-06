@@ -16,13 +16,13 @@ This file provides guidance to Claude Code (and other agents via the AGENTS.md s
 - `npm run test:android` – Android phone flavor 单元测试；`npm run test:android:emulator` – 仪器化测试
 - 单类测试: `cd android-client && ./gradlew :app:testPhoneDebugUnitTest --tests '*ClassName'`
 - `npm run test` – React 前端测试 (react-scripts test)
-- 其他单测脚本见 `test/` 与 `tunnel/test/` 目录（证书生命周期、隧道集成、配置校验、fd 诊断、socks5 限制等）
+- 其他单测脚本见 `test/` 与 `tunnel/test/` 目录（证书生命周期、隧道集成、配置校验、fd 诊断、socks5 限制等）；这些是 `node:test` 文件，用 `node --test <file>` 跑（如 `node --test tunnel/test/protocol.test.js`）
 
 ### Utilities
 - `npm run rm_bkconfig` – 删除备份配置；`npm run gen-icons` / `npm run watch:icons` – 生成/监听客户端图标
 
 ### macOS Client (`/client/`)
-- `npm run client:build` – 构建客户端（自动检测架构, 输出 `client/dist/`）；`bash build.sh` – Nuitka 构建 .app（`dist/BlockProxyClient.app` + `BlockProxyClient-macos-<arch>.zip`）
+- `npm run client:build` – 构建客户端（自动检测架构, 输出 `client/dist/`）；`bash build.sh` – Nuitka 构建 .app（`dist/BlockProxyClient.app` + `BlockProxyClient-macos-<arch>.zip`）；前置: `fileicon`（brew install fileicon）
 - `python main.py` – 直接运行（开发模式）；`cd client && pytest tests/` – 单元测试；删除 `icons/app.icns` 后 `build.sh` 可强制重建应用图标
 
 ### Android (`/android-client/`)
@@ -72,7 +72,7 @@ Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 / HTTP 
 - **CLI** (`/bin/start.js`) – 全局入口, 失败自动重启, 退出清理全局配置
 - **Certs** (`/cert/`) – `rootCA.key` + `rootCA.crt`, 运行时同步到 `certificates/`
 - **Config** (`config.json`) – 运行时配置（见下）；**Test Suite** (`/test/`) – `run.js` 一键测试(自动启动 Mock Server), `proxy-tests.js`, `proxy-core-connect-tests.js` 及隧道/MITM/fd/socks5 单测
-- **Docs** (`/docs/`) – `tunnel-testing.md`, `android-client-deployment.md`, `ios-client-deployment.md`, `plans/` 与 `superpowers/{specs,plans}/`(设计与实施记录, 命名 `YYYY-MM-DD-<主题>-design/implementation.md`)
+- **Docs** (`/docs/`) – `tunnel-testing.md`, `android-client-deployment.md`, `ios-client-deployment.md`, `plans/` 与 `superpowers/{specs,plans}/`(设计与实施记录, 命名 `YYYY-MM-DD-<主题>-design/implementation.md`)；根目录 `Useage.md` 为完整用户手册（服务端部署/证书安装/客户端使用）
 
 ### Config (`config.json`)
 
@@ -112,11 +112,12 @@ Pure Python（PyObjC UI + asyncio proxy core），Nuitka 编译原生二进制�
 ```
 main.py (入口, 单实例, 崩溃重启) → app.py (PyObjC 状态栏)
   ├── proxy_core.py (asyncio SOCKS5/HTTP + UDP over TCP) / tunnel_client.py (xhttp 隧道 + 自动重连) / health_policy.py (健康检查重启窗口守卫)
+  ├── node_connect.py (节点连接: DoH 解析 → 多 IP 尝试 → TLS SNI 被安全软件拦截时降级不发 SNI, cert pin TOFU)
   ├── routing.py / geodata_loader.py / proto_parser.py (geosite/geoip 分流) / doh_resolver.py (DoH 解析节点)
   ├── super_dns_control.py / super_dns_window.py (Super DNS 域名管理)
   ├── config.py (~/Library/Application Support/BlockProxyClient/) + config_window.py / routing_window.py / log_window.py (PyObjC 独立进程)
   ├── autostart.py (LaunchAgent) / logger.py (访问/崩溃日志) / system_proxy.py (networksetup)
-  └── traffic_stats.py / traffic_view.py / setup.py / requirements.txt / watch-icons.js / scripts/ / geodata/
+  └── traffic_stats.py / traffic_view.py / requirements.txt / watch-icons.js / scripts/ / geodata/ / tests/
 ```
 
 功能/约束要点:
@@ -127,6 +128,8 @@ main.py (入口, 单实例, 崩溃重启) → app.py (PyObjC 状态栏)
 - 窗口为独立进程（Nuitka 编译后 `sys.executable` 非 Python 解释器, 用 `subprocess.Popen` + 系统 Python）
 - 系统唤醒恢复: socket 探测端口存活 + 隧道线程状态恢复, 等 3s 网络稳定后重试
 - Nuitka 构建后处理: `build.sh` 自动重命名可执行文件、修正 Info.plist (CFBundleExecutable, LSUIElement)；状态栏图标始终 `setTemplate_(True)`（单色黑+alpha, 系统按浅/深色模式自动反白, 兼容 Tahoe Liquid Glass）
+- **build.sh 模块清单**: `--include-data-files` 逐个列出顶层 .py（编译后窗口子进程用系统 Python 读同级源码），新增顶层模块必须同步加入，否则编译产物运行时才报 ModuleNotFoundError；`tests/test_build_script.py` 强制遍历校验
+- **版本号三处同步**: `client/VERSION`、`client/build.sh`（`VERSION=`）、`client/app.py`（`版本：vX.Y.Z`）
 
 ## Android Client (`/android-client/`)
 
@@ -172,4 +175,5 @@ Kotlin + Jetpack Compose + VpnService + tun2socks (JNI) + xhttp 传输。v0.1.6 
 ## Project Rules
 
 - `config.json` 是运行时配置（非源码），由 `proxy/fs.js` 管理，不追踪 git 变更
+- 提交信息用 Conventional Commits + 中文描述（如 `feat(client): ...` / `fix(proxy-core): ...`），跟随 git log 现有风格
 - 代码修改后等用户验证确认再提交，不自动 git add/commit/push
