@@ -9,6 +9,7 @@ const net = require('net');
 const os = require('os');
 const domain = require('../proxy/domain.js');
 const tempCredentials = require('../proxy/temp-credentials.js');
+const authBypassHosts = require('../proxy/auth-bypass-hosts.js');
 const { exec, execSync } = require('child_process');
 const LocalProxy = require('../proxy/proxy');
 
@@ -440,6 +441,36 @@ app.post('/api/temp-credentials/revoke', (req, res) => {
   }
 });
 
+// 认证豁免白名单：命中名单的 host 在 8001 内网 HTTP 代理上免代理认证（不回 407）。
+// 存于仓库根目录 auth_bypass_hosts.json（随 git 提交），proxy.js 在 loadConfig 时读取，
+// 因此改完需重启代理才生效。8002 公网代理有独立认证逻辑，不受本名单影响。
+app.get('/api/auth-bypass-hosts', (req, res) => {
+  try {
+    res.status(200).json(authBypassHosts.read());
+  } catch (error) {
+    res.status(500).json({ error: '读取认证豁免白名单失败: ' + error.message });
+  }
+});
+
+app.post('/api/auth-bypass-hosts', (req, res) => {
+  let body = '';
+  req.on('data', chunk => { body += chunk.toString(); });
+  req.on('end', () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(body);
+    } catch (err) {
+      return res.status(400).json({ error: '请求格式错误：不是有效的 JSON' });
+    }
+    try {
+      const hosts = authBypassHosts.write(parsed.hosts);
+      res.status(200).json({ hosts, message: '认证豁免白名单已保存，重启代理后生效' });
+    } catch (err) {
+      res.status(400).json({ error: '保存失败: ' + err.message });
+    }
+  });
+});
+
 // post /proxy/https://www.baidu.com/...
 app.use(/\/proxy\/*/, async (req, res) => {
   try {
@@ -547,5 +578,6 @@ module.exports = {
   },
   _test: {
     validateImportedConfig,
+    app
   }
 };

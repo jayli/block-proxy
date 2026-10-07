@@ -94,6 +94,10 @@ function App() {
   const [tempCred, setTempCred] = useState(null);
   const [tempCredLoading, setTempCredLoading] = useState(false);
   const [nowTick, setNowTick] = useState(Date.now());
+  // 认证豁免白名单（auth_bypass_hosts.json，仅 8001 生效，重启代理后生效）
+  const [bypassHosts, setBypassHosts] = useState([]);
+  const [newBypassHost, setNewBypassHost] = useState('');
+  const [bypassLoading, setBypassLoading] = useState(false);
 
   // 检查登录状态
   useEffect(() => {
@@ -154,6 +158,7 @@ function App() {
       fetchTimeZone();
       fetchRuleModules();
       fetchTempCredential();
+      fetchBypassHosts();
     }
 
     // 清理定时器
@@ -235,6 +240,61 @@ function App() {
   };
 
   // ===== 临时代理凭据（后台生成，固定 7 天有效，仅 8001/8002 生效）=====
+  const fetchBypassHosts = async () => {
+    try {
+      const response = await fetch('/api/auth-bypass-hosts');
+      if (handle401(response)) return;
+      if (response.ok) {
+        const data = await response.json();
+        setBypassHosts(Array.isArray(data.hosts) ? data.hosts : []);
+      } else {
+        showToast('获取认证豁免白名单失败', 'error');
+      }
+    } catch (error) {
+      showToast('网络错误: ' + error.message, 'error');
+    }
+  };
+
+  const handleSaveBypassHosts = async () => {
+    setBypassLoading(true);
+    try {
+      const response = await fetch('/api/auth-bypass-hosts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hosts: bypassHosts })
+      });
+      if (handle401(response)) return;
+      if (response.ok) {
+        const data = await response.json();
+        setBypassHosts(Array.isArray(data.hosts) ? data.hosts : bypassHosts);
+        showToast('白名单已保存，重启代理后生效', 'success');
+      } else {
+        const data = await response.json().catch(() => ({}));
+        showToast('保存失败: ' + (data.error || ''), 'error');
+      }
+    } catch (error) {
+      showToast('网络错误: ' + error.message, 'error');
+    } finally {
+      setBypassLoading(false);
+    }
+  };
+
+  const addBypassHost = () => {
+    const host = newBypassHost.trim().toLowerCase();
+    if (!host) return;
+    if (/\s/.test(host) || host.includes('://') || host.includes('*')) {
+      showToast('域名格式不合法', 'error');
+      return;
+    }
+    if (bypassHosts.includes(host)) {
+      showToast('该域名已在白名单中', 'error');
+      setNewBypassHost('');
+      return;
+    }
+    setBypassHosts([...bypassHosts, host]);
+    setNewBypassHost('');
+  };
+
   const fetchTempCredential = async () => {
     try {
       const response = await fetch('/api/temp-credentials/latest');
@@ -808,6 +868,12 @@ function App() {
           >
             隧道配置
           </button>
+          <button
+            className={`tab-btn ${activeTab === 4 ? 'active' : ''}`}
+            onClick={() => setActiveTab(4)}
+          >
+            认证豁免白名单
+          </button>
         </div>
 
         {/* Tab 0: HTTP/Socks5 端口设置 */}
@@ -1257,6 +1323,79 @@ function App() {
               className="save-btn"
             >
               {loading ? '保存中...' : '保存配置'}
+            </button>
+            <button
+              onClick={handleRestartProxy}
+              disabled={loading}
+              className="restart-btn"
+            >
+              {loading ? '重启中...' : '重启代理'}
+            </button>
+          </div>
+        </div>
+        )}
+
+        {/* Tab 4: 认证豁免白名单 */}
+        {activeTab === 4 && (
+        <div className="config-section tab-content">
+          <h2>认证豁免白名单</h2>
+          <div className="help-text" style={{ marginBottom: '12px' }}>
+            命中名单的域名免代理认证（不回 407），用于那些收到 407 后不会带凭据重试、直接失败的 app
+            （如 E听说中学、小红书、知乎）。仅对 8001 内网 HTTP 代理生效；保存后需重启代理。
+          </div>
+          <div className="setting-row full-width">
+            <label>豁免域名列表:</label>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                <input
+                  type="text"
+                  value={newBypassHost}
+                  onChange={(e) => setNewBypassHost(e.target.value)}
+                  placeholder="输入域名，例如: example.com（支持 example.com:443）"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      addBypassHost();
+                    }
+                  }}
+                  style={{ flex: 1, padding: '10px 14px', border: '1.5px solid var(--input-border)', borderRadius: 'var(--radius-sm)', fontSize: '14px', background: 'var(--input-bg)', color: 'var(--gray-800)' }}
+                />
+                <button
+                  onClick={addBypassHost}
+                  className="save-btn"
+                  style={{ flex: 'none', width: 'auto', padding: '10px 20px' }}
+                >
+                  添加
+                </button>
+              </div>
+              {bypassHosts.length > 0 ? (
+                <ul className="ip-list">
+                  {bypassHosts.map((host, index) => (
+                    <li key={index} className="ip-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>{host}</span>
+                      <button
+                        onClick={() => {
+                          setBypassHosts(bypassHosts.filter((_, i) => i !== index));
+                        }}
+                        className="refresh-btn"
+                        style={{ flex: 'none', width: 'auto', padding: '4px 12px', fontSize: '12px', marginLeft: '12px' }}
+                      >
+                        删除
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="empty-hint">暂无豁免域名</p>
+              )}
+            </div>
+          </div>
+          <div className="setting-row actions">
+            <button
+              onClick={handleSaveBypassHosts}
+              disabled={bypassLoading}
+              className="save-btn"
+            >
+              {bypassLoading ? '保存中...' : '保存白名单'}
             </button>
             <button
               onClick={handleRestartProxy}

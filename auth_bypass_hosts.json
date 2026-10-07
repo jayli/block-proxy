@@ -1,0 +1,28 @@
+{
+  "hosts": [
+    "googlevideo.com",
+    "dns.weixin.qq.com.cn",
+    "weixin.qq.com",
+    "xiaohongshu.com:443",
+    "xiaohongshu.com",
+    "xhscdn.com",
+    "zhihu.com:443",
+    "zhimg.com",
+    "zhihu.com",
+    "globalsign.com",
+    "quark.cn",
+    "qianwen.com",
+    "uc.cn",
+    "ucweb.com",
+    "uc.cmd",
+    "alibabausercontent.com",
+    "taobao.com",
+    "sm.cn",
+    "zaodian.com",
+    "amap.com",
+    "alipay.com",
+    "aliyuncs.com",
+    "ets100.com",
+    "eduaiplat.com"
+  ]
+}

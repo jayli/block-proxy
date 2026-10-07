@@ -29,6 +29,7 @@ const wanip = require('./wanip.js');
 const operator = require("./operator.js");
 const accessLogger = require("./access-logger.js");
 const tempCredentials = require("./temp-credentials.js");
+const authBypassHosts = require("./auth-bypass-hosts.js");
 const mitmRegistry = require("./mitm/registry.js");
 const TunnelServer = require('../tunnel/server');
 const TunnelManager = require('../tunnel/manager');
@@ -111,6 +112,9 @@ var filtered_mitm_domains = [
   ...uaFilter.filtered_mitm_domains
 ];
 
+// 认证豁免白名单（auth_bypass_hosts.json），loadConfig 时刷新，重启代理生效
+var authPassHosts = [];
+
 // 从 registry 获取已启用的规则列表
 function getEnabledMitmRules() {
   return ruleRegistry.getEnabledRules();
@@ -125,34 +129,9 @@ function isBuiltinYoutubeMitmEnabled() {
 // host 可能携带端口：a.com:443
 function authPass(protocol, host, url) {
   // console.log("url:", host, url);
+  // 白名单来自 auth_bypass_hosts.json（8004 后台可编辑），重启代理生效
   const passHosts = [
-    "googlevideo.com", // Toutube 视频流
-    "dns.weixin.qq.com.cn", // 微信的 dns 预解析
-    "weixin.qq.com",
-    // xiaohongshu.com:443，小红书App和知乎 App 里发起带端口的请求，收到 407 后第二次
-    "xiaohongshu.com:443",
-    "xiaohongshu.com",
-    "xhscdn.com",
-    "zhihu.com:443",
-    "zhimg.com",
-    "zhihu.com",
-    //-----千问客户端
-    "globalsign.com",
-    "quark.cn",
-    "qianwen.com",
-    "uc.cn",
-    "ucweb.com",
-    "uc.cmd",
-    "alibabausercontent.com",
-    "taobao.com",
-    "sm.cn",
-    "zaodian.com",
-    "amap.com",
-    "alipay.com",
-    "aliyuncs.com",
-    //-----E听说中学：app 自有网络栈收到 407 后不带凭据重试，直接失败
-    "ets100.com",
-    "eduaiplat.com",
+    ...authPassHosts,
     ...filtered_mitm_domains
   ];
   //  基于 http 传输的流
@@ -301,6 +280,8 @@ async function loadConfig() {
   };
 
   try {
+    // 认证豁免白名单：与 config.json 是否存在无关，每次启动/重启都刷新
+    authPassHosts = authBypassHosts.read().hosts;
     if (fs.existsSync(configPath)) {
       const loadedConfig = await _fs.readConfig();
       
@@ -2135,6 +2116,10 @@ module.exports._test = {
     auth_username = username;
     auth_password = password;
   },
+  setAuthPassHostsForTest(nextHosts) {
+    authPassHosts = Array.isArray(nextHosts) ? nextHosts : [];
+  },
+  authPass,
   getResponseRules,
   shouldMitm,
   shouldBypassByUa(headers, host) {
