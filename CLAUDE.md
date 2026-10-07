@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (and other agents via the AGENTS.md s
 - `npm run test:registry` / `npm run test:mitm-runtime` – MITM 规则注册 / 运行时测试
 - `npm run test:access-logger` – 访问日志单元测试 + 与真实代理钩子的集成测试
 - `npm run test:temp-credentials` – 临时代理凭据单元测试（生成/过期/撤销/20 条裁剪）
-- `npm run test:auth-bypass` – 认证豁免白名单单元测试（读写/归一化/fail-closed/loadConfig 刷新）
+- `npm run test:auth-bypass` – 认证豁免白名单单元测试（内置只读/临时读写/合并去重/fail-closed/loadConfig 刷新）
 - `npm run test:android` – Android phone flavor 单元测试；`npm run test:android:emulator` – 仪器化测试
 - 单类测试: `cd android-client && ./gradlew :app:testPhoneDebugUnitTest --tests '*ClassName'`
 - `npm run test` – React 前端测试 (react-scripts test)
@@ -62,7 +62,7 @@ MITM proxy for parental control & ad blocking. Node.js + React + proxy-core (Any
 Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 / HTTP CONNECT (8002, TLS) → 认证 → CONNECT → 8001；Tunnel xhttp (8003) → 8001
 
 ### Core Components
-- **Proxy** (`/proxy/`) – `proxy.js` 入口, `attacker.js` 拦截判断, `domain.js` host 匹配, `fs.js` config 读写备份, `scan.js` 每 2h ARP 扫描, `mitm/rule.js` 规则 + 响应修改器(YouTube 去广告/有道 VIP), `http.js` HTTP 助手, `monitor.js` 系统指标, `operator.js` 管理路由, `wanip.js` 公网 IP, `access-logger.js` 访问日志(按 MAC 记录被监控设备访问其拦截域名), `temp-credentials.js` 临时代理凭据(7 天有效, 仅 8001/8002), `auth-bypass-hosts.js` 认证豁免白名单(读写 auth_bypass_hosts.json, 仅 8001), `fd-diagnostics.js` fd/TCP 诊断; `mitm/` 另含 `registry.js`(规则注册), `persistentStore.js`, `uaFilter.js`, `ydcd/`, `youtube/`
+- **Proxy** (`/proxy/`) – `proxy.js` 入口, `attacker.js` 拦截判断, `domain.js` host 匹配, `fs.js` config 读写备份, `scan.js` 每 2h ARP 扫描, `mitm/rule.js` 规则 + 响应修改器(YouTube 去广告/有道 VIP), `http.js` HTTP 助手, `monitor.js` 系统指标, `operator.js` 管理路由, `wanip.js` 公网 IP, `access-logger.js` 访问日志(按 MAC 记录被监控设备访问其拦截域名), `temp-credentials.js` 临时代理凭据(7 天有效, 仅 8001/8002), `auth-bypass-hosts.js` 认证豁免白名单(内置 auth_bypass_hosts.json 只读 + 临时 temp_auth_bypass_hosts.json 可增删, 仅 8001), `fd-diagnostics.js` fd/TCP 诊断; `mitm/` 另含 `registry.js`(规则注册), `persistentStore.js`, `uaFilter.js`, `ydcd/`, `youtube/`
 - **Proxy-Core** (`/proxy/proxy-core/`) – AnyProxy fork 本地模块（非 npm 依赖）: `proxy-server.js`(入口), `index.js`, `request-handler.js`(HTTP/S/WS 转发核心, 1126 行), `https-server-mgr.js`(SNI+IP HTTPS, LRU 1000), `cert-lifecycle.js`(预热/并发去重/健康检查), `cert-mgr.js`, `util.js`, `log.js`, `rule-default.js`, `request-error-handler.js`(内联错误页), `ws-server-mgr.js`(WS 服务器工厂)
   - 证书存储: `~/.anyproxy` → 项目本地 `certificates/`；`X-Tunnel-Relay: 1` 头注入 tunnel CONNECT 响应
   - ECONNRESET/EPIPE 自动重试一次 (GET/HEAD/OPTIONS)；keep-alive `maxRequestsPerSocket: 50` 防 gRPC RST_STREAM；流式响应阈值 20MB (无 responseRules 时 64KB)
@@ -82,7 +82,7 @@ Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 / HTTP 
 - 端口/开关: `proxy_port`, `socks5_port`, `express_port`, `enable_express`, `enable_socks5`, `enable_tunnel`, `enable_mitm`/`mitm_debug_log`/`socks5_tls`("0"/"1")
 - 认证: `auth_username`/`auth_password`（代理/SOCKS5/隧道共用）, `login_username`/`login_password`（管理面板登录，两者独立）
 - 临时凭据: 不在 `config.json` 里，存于根目录 `temp_credentials.json`（已 gitignore）—— 8004 后台按钮生成，固定 7 天有效，最多保留最新 20 组，作为 `auth_username`/`auth_password` 的平替；**仅 8001 内网 HTTP 与 8002 公网 SOCKS5/HTTP CONNECT 生效，隧道 8003 不接入**（客户端 App 用不了）；由 `proxy/temp-credentials.js` 管理，认证时按 mtime 缓存读盘
-- 认证豁免白名单: 存于根目录 `auth_bypass_hosts.json`（**随 git 提交**，区别于 temp_credentials）—— 结构 `{"hosts": [...]}`，命中名单的 host 免代理认证（不回 407），用于收到 407 后不带凭据重试就直接失败的 app（E听说/小红书/知乎等）；8004 后台「认证豁免白名单」tab 可增删；由 `proxy/auth-bypass-hosts.js` 管理（fail-closed：文件缺失/损坏按空名单），`proxy/proxy.js` 在 `loadConfig()` 时读入 `authPassHosts`，**重启代理才生效**；**仅 8001 内网 HTTP 代理生效**（8002 公网代理有独立认证逻辑，不读本名单）
+- 认证豁免白名单: 分两份——内置 `auth_bypass_hosts.json`（**随 git 提交**，后台只展示不可改）+ 临时 `temp_auth_bypass_hosts.json`（已 gitignore，8004 后台「认证豁免白名单」tab 可自由增删）；结构均为 `{"hosts": [...]}`，两者合并去重后生效（内置优先）；命中名单的 host 免代理认证（不回 407），用于收到 407 后不带凭据重试就直接失败的 app（E听说/小红书/知乎等）；由 `proxy/auth-bypass-hosts.js` 管理（fail-closed：文件缺失/损坏按空名单；临时文件不存在不告警），`proxy/proxy.js` 在 `loadConfig()` 时读入 `authPassHosts`，**重启代理才生效**；**仅 8001 内网 HTTP 代理生效**（8002 公网代理有独立认证逻辑，不读本名单）
 - 拦截/设备: `block_hosts[]`, `devices[]`, `rule_modules{}`
 - 访问日志: `access_log: { enabled("0"/"1"), dir(默认 logs/access), max_total_bytes(默认 50MB), flush_interval_ms(默认 1000) }` —— 记录 `block_hosts` 中按 `filter_mac` 配置的设备访问其对应拦截域名的请求(时间/IP/MAC/协议/方法/域名/path)，按天分片滚动，总量超限删最旧分片；请求路径仅内存入队，磁盘 IO 全在异步 flush
 - 隧道: `tunnel_port`, `tunnel_domains[]`, `tunnel_xhttp_base_path`("/xhttp"), `tunnel_sse_path`("/api/v1/events"), `tunnel_sse_keepalive_min_ms`/`max_ms`(20000/25000), `tunnel_silent_idle_timeout`(3000), `tunnel_rotation_drain_timeout`(10), `tunnel_rotation_drain_idle_timeout`(20), `tunnel_padding: { enabled, probability, min_bytes, max_bytes }`(默认 false)

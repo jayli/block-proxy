@@ -112,7 +112,8 @@ var filtered_mitm_domains = [
   ...uaFilter.filtered_mitm_domains
 ];
 
-// 认证豁免白名单（auth_bypass_hosts.json），loadConfig 时刷新，重启代理生效
+// 认证豁免白名单（内置 auth_bypass_hosts.json + 临时 temp_auth_bypass_hosts.json），
+// loadConfig 时刷新，重启代理生效
 var authPassHosts = [];
 
 // 从 registry 获取已启用的规则列表
@@ -129,7 +130,7 @@ function isBuiltinYoutubeMitmEnabled() {
 // host 可能携带端口：a.com:443
 function authPass(protocol, host, url) {
   // console.log("url:", host, url);
-  // 白名单来自 auth_bypass_hosts.json（8004 后台可编辑），重启代理生效
+  // 白名单来自内置 + 临时两份 json（8004 后台可编辑临时那份），重启代理生效
   const passHosts = [
     ...authPassHosts,
     ...filtered_mitm_domains
@@ -281,7 +282,7 @@ async function loadConfig() {
 
   try {
     // 认证豁免白名单：与 config.json 是否存在无关，每次启动/重启都刷新
-    authPassHosts = authBypassHosts.read().hosts;
+    authPassHosts = authBypassHosts.readAll().hosts;
     if (fs.existsSync(configPath)) {
       const loadedConfig = await _fs.readConfig();
       

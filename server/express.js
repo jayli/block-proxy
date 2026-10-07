@@ -442,16 +442,18 @@ app.post('/api/temp-credentials/revoke', (req, res) => {
 });
 
 // 认证豁免白名单：命中名单的 host 在 8001 内网 HTTP 代理上免代理认证（不回 407）。
-// 存于仓库根目录 auth_bypass_hosts.json（随 git 提交），proxy.js 在 loadConfig 时读取，
-// 因此改完需重启代理才生效。8002 公网代理有独立认证逻辑，不受本名单影响。
+// 分两份：内置 auth_bypass_hosts.json（随 git 提交，只读展示）+ 临时 temp_auth_bypass_hosts.json
+// （已 gitignore，可增删）。proxy.js 在 loadConfig 时读取合并后的名单，改完需重启代理生效。
+// 8002 公网代理有独立认证逻辑，不受本名单影响。
 app.get('/api/auth-bypass-hosts', (req, res) => {
   try {
-    res.status(200).json(authBypassHosts.read());
+    res.status(200).json(authBypassHosts.readAll());
   } catch (error) {
     res.status(500).json({ error: '读取认证豁免白名单失败: ' + error.message });
   }
 });
 
+// 只写临时名单；内置名单不可通过 API 修改
 app.post('/api/auth-bypass-hosts', (req, res) => {
   let body = '';
   req.on('data', chunk => { body += chunk.toString(); });
@@ -463,8 +465,8 @@ app.post('/api/auth-bypass-hosts', (req, res) => {
       return res.status(400).json({ error: '请求格式错误：不是有效的 JSON' });
     }
     try {
-      const hosts = authBypassHosts.write(parsed.hosts);
-      res.status(200).json({ hosts, message: '认证豁免白名单已保存，重启代理后生效' });
+      const hosts = authBypassHosts.writeTemp(parsed.hosts);
+      res.status(200).json({ hosts, message: '临时白名单已保存，重启代理后生效' });
     } catch (err) {
       res.status(400).json({ error: '保存失败: ' + err.message });
     }

@@ -94,7 +94,8 @@ function App() {
   const [tempCred, setTempCred] = useState(null);
   const [tempCredLoading, setTempCredLoading] = useState(false);
   const [nowTick, setNowTick] = useState(Date.now());
-  // 认证豁免白名单（auth_bypass_hosts.json，仅 8001 生效，重启代理后生效）
+  // 认证豁免白名单：内置（只读展示）+ 临时（可增删），仅 8001 生效，重启代理后生效
+  const [builtinBypassHosts, setBuiltinBypassHosts] = useState([]);
   const [bypassHosts, setBypassHosts] = useState([]);
   const [newBypassHost, setNewBypassHost] = useState('');
   const [bypassLoading, setBypassLoading] = useState(false);
@@ -246,7 +247,8 @@ function App() {
       if (handle401(response)) return;
       if (response.ok) {
         const data = await response.json();
-        setBypassHosts(Array.isArray(data.hosts) ? data.hosts : []);
+        setBuiltinBypassHosts(Array.isArray(data.builtin) ? data.builtin : []);
+        setBypassHosts(Array.isArray(data.temp) ? data.temp : []);
       } else {
         showToast('获取认证豁免白名单失败', 'error');
       }
@@ -267,7 +269,7 @@ function App() {
       if (response.ok) {
         const data = await response.json();
         setBypassHosts(Array.isArray(data.hosts) ? data.hosts : bypassHosts);
-        showToast('白名单已保存，重启代理后生效', 'success');
+        showToast('临时白名单已保存，重启代理后生效', 'success');
       } else {
         const data = await response.json().catch(() => ({}));
         showToast('保存失败: ' + (data.error || ''), 'error');
@@ -286,8 +288,13 @@ function App() {
       showToast('域名格式不合法', 'error');
       return;
     }
+    if (builtinBypassHosts.includes(host)) {
+      showToast('该域名已在内置白名单中，无需重复添加', 'error');
+      setNewBypassHost('');
+      return;
+    }
     if (bypassHosts.includes(host)) {
-      showToast('该域名已在白名单中', 'error');
+      showToast('该域名已在临时白名单中', 'error');
       setNewBypassHost('');
       return;
     }
@@ -1343,8 +1350,30 @@ function App() {
             命中名单的域名免代理认证（不回 407），用于那些收到 407 后不会带凭据重试、直接失败的 app
             （如 E听说中学、小红书、知乎）。仅对 8001 内网 HTTP 代理生效；保存后需重启代理。
           </div>
+
           <div className="setting-row full-width">
-            <label>豁免域名列表:</label>
+            <label>内置白名单（只读）:</label>
+            <div style={{ flex: 1 }}>
+              {builtinBypassHosts.length > 0 ? (
+                <ul className="ip-list">
+                  {builtinBypassHosts.map((host, index) => (
+                    <li key={index} className="ip-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>{host}</span>
+                      <span style={{ flex: 'none', fontSize: '12px', marginLeft: '12px', color: 'var(--gray-500, #888)' }}>内置</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="empty-hint">内置白名单为空</p>
+              )}
+              <div className="help-text" style={{ marginTop: '8px' }}>
+                随程序发布，不可在后台修改；需调整请修改 auth_bypass_hosts.json 后升级。
+              </div>
+            </div>
+          </div>
+
+          <div className="setting-row full-width">
+            <label>临时白名单（可增删）:</label>
             <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
                 <input
@@ -1385,8 +1414,11 @@ function App() {
                   ))}
                 </ul>
               ) : (
-                <p className="empty-hint">暂无豁免域名</p>
+                <p className="empty-hint">暂无临时豁免域名</p>
               )}
+              <div className="help-text" style={{ marginTop: '8px' }}>
+                存于 temp_auth_bypass_hosts.json（不随仓库提交），与内置名单合并生效。
+              </div>
             </div>
           </div>
           <div className="setting-row actions">
@@ -1395,7 +1427,7 @@ function App() {
               disabled={bypassLoading}
               className="save-btn"
             >
-              {bypassLoading ? '保存中...' : '保存白名单'}
+              {bypassLoading ? '保存中...' : '保存临时白名单'}
             </button>
             <button
               onClick={handleRestartProxy}

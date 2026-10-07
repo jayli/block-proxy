@@ -6,9 +6,12 @@
 // 生效范围：仅 8001 内网 HTTP 代理（proxy/proxy.js 的 authPass）。8002 公网代理有独立
 // 认证逻辑，不读本名单。
 //
-// 落盘约定：
-//   - 文件 auth_bypass_hosts.json 位于仓库根目录，随仓库提交（区别于 temp_credentials.json）
-//   - 结构 { "hosts": ["a.com", "b.com:443", ...] }
+// 两份名单：
+//   - 内置 auth_bypass_hosts.json：随仓库提交、随 npm 包分发，8004 后台只展示不可改，
+//     调整需改代码发版。结构 { "hosts": [...] }
+//   - 临时 temp_auth_bypass_hosts.json：已 gitignore，8004 后台可自由增删，用于现场
+//     快速放行某个 app。结构同上
+//   两者合并去重后生效（内置优先）。
 //
 // 生效时机：proxy.js 在 loadConfig()（启动 / 重启代理）时读取一次，改完需重启代理生效。
 //
@@ -18,10 +21,13 @@
 const fsSync = require('fs');
 const path = require('path');
 
-const DEFAULT_FILE_PATH = path.join(__dirname, '../auth_bypass_hosts.json');
+const DEFAULT_BUILTIN_FILE_PATH = path.join(__dirname, '../auth_bypass_hosts.json');
+const DEFAULT_TEMP_FILE_PATH = path.join(__dirname, '../temp_auth_bypass_hosts.json');
 
-var filePath = DEFAULT_FILE_PATH;
-var readErrorLogged = false;
+var builtinFilePath = DEFAULT_BUILTIN_FILE_PATH;
+var tempFilePath = DEFAULT_TEMP_FILE_PATH;
+// 按文件路径记录「已打印过读取告警」，避免热路径上刷屏
+var readErrorLogged = new Set();
 
 // 归一化单个 host：trim + 转小写；非法项返回 null
 // 允许 "example.com" 与 "example.com:443" 两种形态（authPass 按 endsWith 匹配）
@@ -51,39 +57,72 @@ function normalizeList(raw) {
   return out;
 }
 
-// 读取白名单。文件缺失 / 损坏均返回 { hosts: [] }（fail-closed）
-function read() {
+// 读单个名单文件。缺失 / 损坏均返回 []（fail-closed）
+function readList(file, label) {
   let content;
   try {
-    content = fsSync.readFileSync(filePath, 'utf8');
+    content = fsSync.readFileSync(file, 'utf8');
   } catch (e) {
     if (e.code === 'ENOENT') {
-      if (!readErrorLogged) {
-        readErrorLogged = true;
-        console.warn('[AuthBypassHosts] 白名单文件不存在，按空名单处理:', filePath);
+      // 临时名单从未创建过是正常状态，不打印告警
+      if (label !== '临时') {
+        if (!readErrorLogged.has(file)) {
+          readErrorLogged.add(file);
+          console.warn(`[AuthBypassHosts] ${label}白名单文件不存在，按空名单处理:`, file);
+        }
       }
-    } else if (!readErrorLogged) {
-      readErrorLogged = true;
-      console.error('[AuthBypassHosts] 读取白名单文件失败，按空名单处理:', e.message);
+    } else if (!readErrorLogged.has(file)) {
+      readErrorLogged.add(file);
+      console.error(`[AuthBypassHosts] 读取${label}白名单文件失败，按空名单处理:`, e.message);
     }
-    return { hosts: [] };
+    return [];
   }
 
   try {
     const parsed = JSON.parse(content);
-    readErrorLogged = false;
-    return { hosts: normalizeList(parsed) };
+    readErrorLogged.delete(file);
+    return normalizeList(parsed);
   } catch (e) {
-    if (!readErrorLogged) {
-      readErrorLogged = true;
-      console.error('[AuthBypassHosts] 白名单文件 JSON 解析失败，按空名单处理:', e.message);
+    if (!readErrorLogged.has(file)) {
+      readErrorLogged.add(file);
+      console.error(`[AuthBypassHosts] ${label}白名单文件 JSON 解析失败，按空名单处理:`, e.message);
     }
-    return { hosts: [] };
+    return [];
   }
 }
 
-// 整表写入白名单。非法项抛错（由调用方转成 400），合法项去重后落盘
-function write(hosts) {
+// 内置名单（只读）
+function readBuiltin() {
+  return readList(builtinFilePath, '内置');
+}
+
+// 临时名单（可写）
+function readTemp() {
+  return readList(tempFilePath, '临时');
+}
+
+// 合并两份名单：内置优先，临时项去重后追加
+function readAll() {
+  const builtin = readBuiltin();
+  const temp = readTemp();
+  const seen = new Set(builtin);
+  const merged = builtin.slice();
+  for (const host of temp) {
+    if (seen.has(host)) continue;
+    seen.add(host);
+    merged.push(host);
+  }
+  return { builtin, temp, hosts: merged };
+}
+
+// 兼容旧调用：返回合并后的名单
+function read() {
+  return { hosts: readAll().hosts };
+}
+
+// 整表写入临时名单。非法项抛错（由调用方转成 400），合法项去重后落盘。
+// 内置名单不提供写入接口。
+function writeTemp(hosts) {
   if (!Array.isArray(hosts)) {
     throw new Error('hosts 必须是数组');
   }
@@ -92,26 +131,32 @@ function write(hosts) {
     throw new Error('包含非法域名项: ' + invalid.map((h) => JSON.stringify(h)).join(', '));
   }
   const normalized = normalizeList(hosts);
-  fsSync.writeFileSync(filePath, JSON.stringify({ hosts: normalized }, null, 2) + '\n', 'utf8');
-  readErrorLogged = false;
+  fsSync.writeFileSync(tempFilePath, JSON.stringify({ hosts: normalized }, null, 2) + '\n', 'utf8');
+  readErrorLogged.delete(tempFilePath);
   return normalized;
 }
 
-// 测试用：切换存储文件并重置日志去重标记
+// 测试用：切换存储文件并重置告警去重标记
 function configure(options = {}) {
-  if (options.filePath !== undefined) filePath = options.filePath;
-  readErrorLogged = false;
+  if (options.builtinFilePath !== undefined) builtinFilePath = options.builtinFilePath;
+  if (options.tempFilePath !== undefined) tempFilePath = options.tempFilePath;
+  // 兼容旧签名
+  if (options.filePath !== undefined) tempFilePath = options.filePath;
+  readErrorLogged = new Set();
 }
 
-function getFilePath() {
-  return filePath;
+function getFilePaths() {
+  return { builtin: builtinFilePath, temp: tempFilePath };
 }
 
 module.exports = {
   read,
-  write,
+  readAll,
+  readBuiltin,
+  readTemp,
+  writeTemp,
   normalizeHost,
   normalizeList,
   configure,
-  getFilePath
+  getFilePaths
 };
