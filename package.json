@@ -66,6 +66,7 @@
     "test:access-logger": "node test/access-logger-tests.js && node test/access-logger-integration-tests.js",
     "test:temp-credentials": "node test/temp-credentials-tests.js",
     "test:auth-bypass": "node test/auth-bypass-hosts-tests.js",
+    "test:lan-scan": "node test/lan-scan-tests.js",
     "eject": "react-scripts eject"
   },
   "devDependencies": {

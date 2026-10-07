@@ -8,6 +8,7 @@ const { start } = require('repl');
 const net = require('net');
 const scanNetwork = require("./scan").scanNetwork;
 const setScanStatus = require("./scan").setScanStatus;
+const lanScan = require("./lan-scan");
 const util = require('util');
 const zlib = require('zlib');
 const _util = require('../server/util.js');
@@ -1954,57 +1955,43 @@ function delay(ms) {
 var LocalProxy = {
   updateDevices: async function() {
     var configData = await loadConfig();
-    var oldRouterMap = configData.devices || []; // 确保旧路由表是数组
-    var newRouterMap = []
+    var oldRouterMap = Array.isArray(configData.devices) ? configData.devices : [];
+    var newRouterMap = [];
     try {
       newRouterMap = await scanNetwork();
     } catch (e) {
-      newRouterMap = [];
+      // 扫描失败时保留旧表，避免一次网络抖动把路由表清空
+      console.error(`更新路由表失败，保留原有 ${oldRouterMap.length} 条设备记录: ${e.message}`);
       setScanStatus("0");
+      return oldRouterMap;
     }
 
-    var mergedRouterMap = [];
-    // 把新的路由表中变更和新增的部分增补到 oldRouterMap 中
-    // 形成新的 mergedRouterMap
-    
-    // 创建一个以IP为键的映射表，用于快速查找现有设备
-    const oldDeviceMap = {};
-    oldRouterMap.forEach(device => {
-      oldDeviceMap[device.ip] = device;
+    // 全量替换：本轮扫到的设备就是新路由表，离线/换 IP 的旧记录不再保留
+    const { devices: replaceRouterMap, added, updated, removed, changed } = lanScan.diffDeviceTables(oldRouterMap, newRouterMap);
+
+    added.forEach(device => {
+      console.log(`新增设备: ${device.ip} (${device.mac})`);
     });
-    
-    // 初始化合并后的设备列表为旧设备列表
-    mergedRouterMap = [...oldRouterMap];
-    
-    // 处理每一个新扫描到的设备
-    newRouterMap.forEach(newDevice => {
-      const existingDevice = oldDeviceMap[newDevice.ip];
-      
-      // 如果这是一个新设备（IP不存在于旧列表中）
-      if (!existingDevice) {
-        mergedRouterMap.push(newDevice);
-        console.log(`新增设备: ${newDevice.ip} (${newDevice.mac})`);
-      } 
-      // 如果设备已存在但MAC地址发生了变化
-      else if (existingDevice.mac !== newDevice.mac) {
-        // 找到该设备在合并列表中的索引
-        const index = mergedRouterMap.findIndex(device => device.ip === newDevice.ip);
-        // 更新设备信息
-        mergedRouterMap[index] = newDevice;
-        console.log(`更新设备: ${newDevice.ip} (${existingDevice.mac} -> ${newDevice.mac})`);
-      }
+    updated.forEach(item => {
+      console.log(`更新设备: ${item.ip} (${item.from} -> ${item.to})`);
+    });
+    removed.forEach(device => {
+      console.log(`移除离线设备: ${device.ip} (${device.mac})`);
     });
 
-    _fs.writeConfig({
-      ...configData,
-      devices: mergedRouterMap
-    });
-    // fs.writeFileSync(configPath, JSON.stringify({
-    // }, null, 2));
-    devices = mergedRouterMap;
+    devices = replaceRouterMap;
     // IP→MAC 映射变了，同步给访问日志，否则新设备/换 IP 的设备记不到
     accessLogger.setDevices(devices);
+
+    // 路由表没变化就不写盘，避免每 2 小时留下一次无意义的 config 写入
+    if (changed || !lanScan.deviceTablesEqual(oldRouterMap, replaceRouterMap)) {
+      _fs.writeConfig({
+        ...configData,
+        devices: replaceRouterMap
+      });
+    }
     console.log('Devices updated!');
+    return replaceRouterMap;
   },
   start: async function(callback) {
     // 每次启动时都重新加载配置并重建规则注册表
