@@ -64,6 +64,7 @@
     "test:registry": "node test/mitm-registry-tests.js",
     "test:mitm-runtime": "node test/mitm-runtime-tests.js",
     "test:access-logger": "node test/access-logger-tests.js && node test/access-logger-integration-tests.js",
+    "test:temp-credentials": "node test/temp-credentials-tests.js",
     "eject": "react-scripts eject"
   },
   "devDependencies": {

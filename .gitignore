@@ -15,6 +15,7 @@ cams-config/*
 # Runtime config and data (generated at runtime)
 config.json
 config_backup.json
+temp_credentials.json
 proxy/mitm/persistentStore.json
 
 # Access logs (rolling daily shards, generated at runtime)

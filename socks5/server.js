@@ -8,6 +8,7 @@ const fs = require('fs');
 const _fs = require('../proxy/fs.js');
 const domain = require('../proxy/domain.js');
 const attacker = require('../proxy/attacker.js');
+const tempCredentials = require('../proxy/temp-credentials.js');
 const { pipeline } = require('stream');
 const fdDiagnostics = require('../proxy/fd-diagnostics');
 
@@ -450,11 +451,14 @@ function createConnectionHandler(options) {
         const password = authData.slice(2 + ulen + 1, 2 + ulen + 1 + plen).toString();
 
         if (username !== authCredentials.username || password !== authCredentials.password) {
-          logger.warn(`SOCKS5 auth failed remote=${getRemotePeer(socket)}`);
-          attackerModule.countIPAccess(clientIp);
-          socket.write(Buffer.from([0x01, 0xff]));
-          socket.destroy();
-          return;
+          // 主凭据不匹配时，再查后台生成的临时凭据（仅 8001/8002，隧道不接入）
+          if (!tempCredentials.isValid(username, password)) {
+            logger.warn(`SOCKS5 auth failed remote=${getRemotePeer(socket)}`);
+            attackerModule.countIPAccess(clientIp);
+            socket.write(Buffer.from([0x01, 0xff]));
+            socket.destroy();
+            return;
+          }
         }
         socket.write(Buffer.from([0x01, 0x00]));
         attackerModule.setGoodGuy(clientIp);
@@ -557,7 +561,11 @@ function createHttpConnectHandler(options) {
     }
     const sep = decoded.indexOf(':');
     if (sep === -1) return false;
-    return decoded.slice(0, sep) === expectedUser && decoded.slice(sep + 1) === expectedPass;
+    const user = decoded.slice(0, sep);
+    const pass = decoded.slice(sep + 1);
+    if (user === expectedUser && pass === expectedPass) return true;
+    // 主凭据不匹配时，再查后台生成的临时凭据（仅 8001/8002，隧道不接入）
+    return tempCredentials.isValid(user, pass);
   }
 
   function sendError(socket, statusLine) {

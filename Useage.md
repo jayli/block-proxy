@@ -13,6 +13,7 @@ Block-Proxy 是一个基于 MITM 的代理过滤工具，用于家长控制、�
 - [HTTP 代理使用](#http-代理使用)
   - [设备端设置代理](#设备端设置代理)
   - [代理认证](#代理认证)
+  - [临时代理凭据](#临时代理凭据)
 - [公网代理（SOCKS5 / HTTP over TLS）](#公网代理sockS5--http-over-tls)
   - [服务端开启 TLS](#服务端开启-tls)
   - [HTTP CONNECT over TLS](#http-connect-over-tls)
@@ -188,6 +189,15 @@ pm2 start server/start.js --name "block-proxy" -- --pubkey /root/block-proxy/yui
 ### 代理认证
 
 在管理界面设置代理用户名和密码后，客户端连接时需提供对应凭证。留空则不认证。
+
+#### 临时代理凭据
+
+在管理界面「客户端代理设置」区块可一键生成临时用户名/密码，作为上方代理用户名/密码的平替：
+
+- 固定有效期 **7 天**，到期自动失效；也可点击「立即撤销」提前作废
+- 凭据存于服务端根目录 `temp_credentials.json`（已加入 `.gitignore`，不随仓库提交），最多保留最新 20 组
+- **生效范围**：仅 8001 内网 HTTP 代理、8002 公网 SOCKS5 与 HTTP CONNECT over TLS；**隧道 8003 不接入**，macOS/Android 客户端无法使用临时凭据
+- 重新生成不会使旧的未过期凭据失效；界面上只显示最新一组及其剩余有效期
 
 > **注意**：iOS Safari 限制——如果代理地址与网关 IP 相同（即 block-proxy 部署在网关上），则不能同时启用认证，否则 iOS 设备无法使用代理。有两个办法：
 >

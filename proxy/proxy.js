@@ -28,6 +28,7 @@ const domain = require('./domain.js');
 const wanip = require('./wanip.js');
 const operator = require("./operator.js");
 const accessLogger = require("./access-logger.js");
+const tempCredentials = require("./temp-credentials.js");
 const mitmRegistry = require("./mitm/registry.js");
 const TunnelServer = require('../tunnel/server');
 const TunnelManager = require('../tunnel/manager');
@@ -1566,7 +1567,10 @@ function getAnyProxyOptions() {
 
         const [user, pass] = decoded.split(':');
         if (user !== expectedUser || pass !== expectedPass) {
-          return this.sendAuthRequired();
+          // 主凭据不匹配时，再查后台生成的临时凭据（仅 8001/8002，隧道不接入）
+          if (!tempCredentials.isValid(user, pass)) {
+            return this.sendAuthRequired();
+          }
         }
 
         attacker.setGoodGuy(sourceIp);
@@ -2114,6 +2118,10 @@ module.exports._test = {
   },
   setEnableMitmForTest(nextValue) {
     enable_mitm = nextValue;
+  },
+  setAuthCredentialsForTest(username, password) {
+    auth_username = username;
+    auth_password = password;
   },
   getResponseRules,
   shouldMitm,

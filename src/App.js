@@ -90,10 +90,20 @@ function App() {
   const [ruleModules, setRuleModules] = useState([]);
   const [activeTab, setActiveTab] = useState(0);
   const fileInputRef = useRef(null);
+  // 临时代理凭据（后台按钮生成，固定 7 天有效，仅 8001/8002 生效）
+  const [tempCred, setTempCred] = useState(null);
+  const [tempCredLoading, setTempCredLoading] = useState(false);
+  const [nowTick, setNowTick] = useState(Date.now());
 
   // 检查登录状态
   useEffect(() => {
     checkAuth();
+  }, []);
+
+  // 临时凭据倒计时：每分钟刷新一次本地时钟
+  useEffect(() => {
+    const timer = setInterval(() => setNowTick(Date.now()), 60000);
+    return () => clearInterval(timer);
   }, []);
 
   const checkAuth = async () => {
@@ -143,6 +153,7 @@ function App() {
       fetchServerIPs();
       fetchTimeZone();
       fetchRuleModules();
+      fetchTempCredential();
     }
 
     // 清理定时器
@@ -222,6 +233,84 @@ function App() {
       showToast('获取 Rule 逻辑失败: ' + error.message, 'error');
     }
   };
+
+  // ===== 临时代理凭据（后台生成，固定 7 天有效，仅 8001/8002 生效）=====
+  const fetchTempCredential = async () => {
+    try {
+      const response = await fetch('/api/temp-credentials/latest');
+      if (handle401(response)) return;
+      if (response.ok) {
+        setTempCred(await response.json());
+      }
+    } catch (error) {
+      // 静默失败，不阻塞主界面
+    }
+  };
+
+  const handleGenerateTempCredential = async () => {
+    setTempCredLoading(true);
+    try {
+      const response = await fetch('/api/temp-credentials/generate', { method: 'POST' });
+      if (handle401(response)) return;
+      if (response.ok) {
+        setTempCred(await response.json());
+        showToast('已生成临时凭据，有效期 7 天', 'success');
+      } else {
+        const data = await response.json().catch(() => ({}));
+        showToast('生成失败: ' + (data.error || ''), 'error');
+      }
+    } catch (error) {
+      showToast('网络错误: ' + error.message, 'error');
+    } finally {
+      setTempCredLoading(false);
+    }
+  };
+
+  const handleRevokeTempCredential = async () => {
+    setTempCredLoading(true);
+    try {
+      const response = await fetch('/api/temp-credentials/revoke', { method: 'POST' });
+      if (handle401(response)) return;
+      if (response.ok) {
+        setTempCred(await response.json());
+        showToast('已撤销临时凭据', 'success');
+      } else {
+        const data = await response.json().catch(() => ({}));
+        showToast('撤销失败: ' + (data.error || ''), 'error');
+      }
+    } catch (error) {
+      showToast('网络错误: ' + error.message, 'error');
+    } finally {
+      setTempCredLoading(false);
+    }
+  };
+
+  // 剩余时间格式化：X 天 X 小时 X 分
+  const formatRemaining = (ms) => {
+    if (!ms || ms <= 0) return '已到期';
+    const totalMinutes = Math.floor(ms / 60000);
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const minutes = totalMinutes % 60;
+    if (days > 0) return `${days} 天 ${hours} 小时`;
+    if (hours > 0) return `${hours} 小时 ${minutes} 分`;
+    return `${minutes} 分钟`;
+  };
+
+  const formatExpiresAt = (iso) => {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  // 本地每分钟走一次时钟，让「剩余时间」自动递减并在到期时翻为已过期
+  const tempCredRemaining = tempCred && tempCred.expires_at
+    ? Date.parse(tempCred.expires_at) - nowTick
+    : 0;
+  const tempCredStatus = tempCred && !tempCred.revoked && tempCred.expires_at && tempCredRemaining <= 0
+    ? 'expired'
+    : (tempCred ? tempCred.status : 'none');
 
   const updateRuleModuleEnabled = (id, enabled) => {
     setRuleModules(ruleModules.map((rule) => (
@@ -1237,6 +1326,50 @@ function App() {
               config.auth_password
             )}
           </p>
+          <div className="temp-cred-box">
+            <div className="temp-cred-header">
+              <b>临时代理凭据</b>
+              <span className={`temp-cred-badge ${tempCredStatus}`}>
+                {tempCredStatus === 'active' ? `生效中 · 剩余 ${formatRemaining(tempCredRemaining)}`
+                  : tempCredStatus === 'expired' ? '已过期'
+                  : tempCredStatus === 'revoked' ? '已撤销'
+                  : '未生成'}
+              </span>
+            </div>
+            {tempCred && tempCredStatus !== 'none' ? (
+              <>
+                <p><b>用户名</b>：{tempCred.username}</p>
+                <p><b>密码</b>：{tempCred.password}</p>
+                <p className="temp-cred-meta">
+                  到期时间：{formatExpiresAt(tempCred.expires_at)}
+                  {tempCredStatus === 'active' && `（剩余 ${formatRemaining(tempCredRemaining)}）`}
+                </p>
+              </>
+            ) : (
+              <p className="temp-cred-meta">尚未生成临时凭据</p>
+            )}
+            <div className="temp-cred-actions">
+              <button
+                onClick={handleGenerateTempCredential}
+                disabled={tempCredLoading}
+                className="temp-cred-btn generate"
+              >
+                {tempCredLoading ? '处理中...' : '生成临时凭据（7 天有效）'}
+              </button>
+              {tempCredStatus === 'active' && (
+                <button
+                  onClick={handleRevokeTempCredential}
+                  disabled={tempCredLoading}
+                  className="temp-cred-btn revoke"
+                >
+                  立即撤销
+                </button>
+              )}
+            </div>
+            <p className="help-text temp-cred-help">
+              临时凭据是上方用户名/密码的平替，仅对 8001 内网 HTTP 代理与 8002 公网 SOCKS5/HTTP 代理生效，不适用于隧道 8003（客户端 App 无法使用）；重新生成不会使旧的未过期凭据失效，最多保留最新 20 组。
+            </p>
+          </div>
           <p>
             <span>
               扫码安装证书：

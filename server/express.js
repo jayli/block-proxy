@@ -8,6 +8,7 @@ const util = require('./util');
 const net = require('net');
 const os = require('os');
 const domain = require('../proxy/domain.js');
+const tempCredentials = require('../proxy/temp-credentials.js');
 const { exec, execSync } = require('child_process');
 const LocalProxy = require('../proxy/proxy');
 
@@ -411,6 +412,31 @@ app.post('/api/restart', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to restart proxy: ' + error.message });
+  }
+});
+
+// 临时代理凭据：后台按钮生成，固定 7 天有效期，仅对 8001/8002 生效（隧道不接入）
+app.post('/api/temp-credentials/generate', (req, res) => {
+  try {
+    res.status(200).json(tempCredentials.generate());
+  } catch (error) {
+    res.status(500).json({ error: '生成临时凭据失败: ' + error.message });
+  }
+});
+
+app.get('/api/temp-credentials/latest', (req, res) => {
+  try {
+    res.status(200).json(tempCredentials.getLatest());
+  } catch (error) {
+    res.status(500).json({ error: '读取临时凭据失败: ' + error.message });
+  }
+});
+
+app.post('/api/temp-credentials/revoke', (req, res) => {
+  try {
+    res.status(200).json(tempCredentials.revokeLatest());
+  } catch (error) {
+    res.status(500).json({ error: '撤销临时凭据失败: ' + error.message });
   }
 });
 

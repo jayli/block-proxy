@@ -575,6 +575,98 @@ input[type="time"]:focus {
   margin-top: -4px;
 }
 
+/* ===== 临时代理凭据 ===== */
+.temp-cred-box {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.temp-cred-box p {
+  margin: 6px 0;
+}
+
+.temp-cred-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.temp-cred-badge {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--gray-200);
+  color: var(--gray-500);
+}
+
+.temp-cred-badge.active {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--success);
+}
+
+.temp-cred-badge.expired,
+.temp-cred-badge.revoked {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--danger);
+}
+
+.temp-cred-meta {
+  font-size: 12px;
+  color: var(--gray-400);
+}
+
+.temp-cred-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.temp-cred-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all var(--transition);
+}
+
+.temp-cred-btn.generate {
+  background: var(--primary);
+  color: #0a0d14;
+}
+
+.temp-cred-btn.generate:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.temp-cred-btn.revoke {
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+.temp-cred-btn.revoke:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.temp-cred-btn:disabled {
+  background: var(--gray-300);
+  color: var(--gray-500);
+  border-color: transparent;
+  cursor: not-allowed;
+}
+
+.temp-cred-help {
+  margin-left: 0;
+  margin-top: 12px;
+}
+
 /* ===== 操作按钮行 ===== */
 .actions {
   display: flex;
