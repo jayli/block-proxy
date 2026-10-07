@@ -8,6 +8,10 @@ const path = require('path');
 const tls = require('tls');
 const { test } = require('node:test');
 const certLifecycle = require('../../proxy/proxy-core/cert-lifecycle');
+// 根证书不随代码提交，缺失时先生成（全新克隆也能跑）
+const { ensureTestRootCA } = require('../helpers/ensure-root-ca');
+
+ensureTestRootCA();
 
 test('node-easy-cert path creates RSA 2048 leaf signed by fixed rootCA', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cert-lifecycle-smoke-'));

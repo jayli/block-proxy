@@ -14,6 +14,10 @@ const ProxyServer = require('../proxy/proxy-core/proxy-server');
 const RequestHandler = require('../proxy/proxy-core/request-handler');
 const util = require('../proxy/proxy-core/util');
 const LocalProxy = require('../proxy/proxy');
+// 根证书不随代码提交，缺失时先生成（全新克隆也能跑）
+const { ensureTestRootCA } = require('./helpers/ensure-root-ca');
+
+ensureTestRootCA();
 
 class FakeClientSocket extends Duplex {
   constructor() {

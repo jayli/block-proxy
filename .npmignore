@@ -24,6 +24,10 @@ certificates/
 cert/socks5_tls.key
 cert/socks5_tls.crt
 
+# MITM 根证书私钥（本地生成，绝不发布；泄露即可伪造任意站点）
+cert/rootCA.key
+cert/rootCA.crt
+
 # Build / CI
 Dockerfile
 docker-compose*
@@ -34,6 +38,7 @@ docker-compose*
 .agents/
 .claude/
 skills-lock.json
+.pi/
 
 # Build tools config (build/ already contains compiled output)
 craco.config.js

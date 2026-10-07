@@ -27,6 +27,10 @@ cert/socks5_tls.crt
 cert/tunnel_tls.key
 cert/tunnel_tls.crt
 
+# MITM 根证书（服务器本地生成与保存，绝不提交；泄露即可伪造任意站点）
+cert/rootCA.key
+cert/rootCA.crt
+
 # yui.cool 证书（私钥绝对不能提交）
 cert/yui_cool/privkey.pem
 
@@ -35,6 +39,7 @@ cert/yui_cool/privkey.pem
 
 # misc
 .codex/
+.pi/
 .DS_Store
 .env.local
 .env.development.local

@@ -8,6 +8,10 @@ const tls = require('tls');
 const { X509Certificate } = require('crypto');
 
 const certLifecycle = require('../proxy/proxy-core/cert-lifecycle');
+// 根证书不随代码提交，缺失时先生成（全新克隆也能跑）
+const { ensureTestRootCA } = require('./helpers/ensure-root-ca');
+
+ensureTestRootCA();
 
 async function run() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cert-lifecycle-'));

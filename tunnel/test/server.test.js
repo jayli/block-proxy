@@ -7,6 +7,10 @@ const path = require('path');
 const crypto = require('crypto');
 const TunnelServer = require('../server');
 const { FRAME_TYPES, encodeFrame, decodeFrame } = require('../protocol');
+// 根证书不随代码提交，缺失时先生成（全新克隆也能跑）
+const { ensureTestRootCA } = require('../../test/helpers/ensure-root-ca');
+
+ensureTestRootCA();
 
 let portCounter = 18004 + (process.pid % 1000);
 function nextPort() { return portCounter++; }

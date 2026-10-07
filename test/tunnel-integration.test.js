@@ -8,6 +8,10 @@ const crypto = require('crypto');
 const TunnelServer = require('../tunnel/server');
 const TunnelManager = require('../tunnel/manager');
 const { FRAME_TYPES, encodeFrame, decodeFrame } = require('../tunnel/protocol');
+// 根证书不随代码提交，缺失时先生成（全新克隆也能跑）
+const { ensureTestRootCA } = require('./helpers/ensure-root-ca');
+
+ensureTestRootCA();
 
 const PORT = 28004;
 const cert = fs.readFileSync(path.join(__dirname, '../cert/rootCA.crt'));

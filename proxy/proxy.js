@@ -728,7 +728,16 @@ async function runHealthCheckAndPrewarm(config = { block_hosts: blockHosts }) {
   }
 }
 
-function startProxyServer() {
+async function startProxyServer() {
+  // 本地根证书不随代码提交，缺失时先自动生成一对新的，再同步到 certificates/
+  try {
+    const { ensureRootCA: ensureLocalRootCA } = require('../cert/generator');
+    await ensureLocalRootCA();
+  } catch (e) {
+    // 生成失败不阻断启动：下面会回退到 certificates/ 中已有的根证书
+    console.error('[Cert] 本地根证书生成失败（将回退到 certificates/ 中已有证书）:', e.message);
+  }
+
   ensureRootCA();
   initCertLifecycle();
   // Check if root CA is needed
@@ -2024,12 +2033,12 @@ var LocalProxy = {
       proxyServerInstance = null;
       await delay(1000);
       console.log('重新启动代理服务器');
-      startProxyServer();
+      await startProxyServer();
       if (typeof callback === 'function') {
         callback();
       }
     } else {
-      startProxyServer();
+      await startProxyServer();
       if (typeof callback === 'function') {
         callback();
       }
