@@ -150,6 +150,9 @@ function authPass(protocol, host, url) {
     "amap.com",
     "alipay.com",
     "aliyuncs.com",
+    //-----E听说中学：app 自有网络栈收到 407 后不带凭据重试，直接失败
+    "ets100.com",
+    "eduaiplat.com",
     ...filtered_mitm_domains
   ];
   //  基于 http 传输的流
