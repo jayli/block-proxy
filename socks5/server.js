@@ -415,14 +415,29 @@ function createConnectionHandler(options) {
         return;
       }
 
+      // 配置了主凭据时只接受用户名/密码认证（0x02）；客户端不提 0x02 一律回 0xff
+      // 并断开，绝不能回 0x00/0xff 之后继续读 CONNECT/UDP 请求（否则认证被绕过）。
+      // 未配置主凭据时保持原有语义：0x02 优先（后台生成的临时凭据以此连接），
+      // 其次才是 0x00 免认证。
       let method = 0xff;
-      for (let i = 0; i < nmethods; i++) {
-        const m = authMethodsBuf[2 + i];
-        if (m === 0x02) method = 0x02;
-        if (m === 0x00 && method === 0xff) method = 0x00;
+      if (authRequired) {
+        for (let i = 0; i < nmethods; i++) {
+          if (authMethodsBuf[2 + i] === 0x02) { method = 0x02; break; }
+        }
+      } else {
+        for (let i = 0; i < nmethods; i++) {
+          const m = authMethodsBuf[2 + i];
+          if (m === 0x02) method = 0x02;
+          if (m === 0x00 && method === 0xff) method = 0x00;
+        }
       }
 
       socket.write(Buffer.from([0x05, method]));
+
+      if (method === 0xff) {
+        socket.destroy();
+        return;
+      }
 
       if (method === 0x02) {
         const authData = await readOnceWithTimeout(socket, handshakeTimeoutMs, 'SOCKS5 authentication');
