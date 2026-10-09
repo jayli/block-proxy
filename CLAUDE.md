@@ -6,11 +6,11 @@ This file provides guidance to Claude Code (and other agents via the AGENTS.md s
 
 ### Development
 - `pnpm i` – 安装依赖 (pnpm preferred)
-- `npm run dev` – 开发模式（`BLOCK_PROXY_DEV=1`, Express + proxy + SOCKS5 + tunnel）；`npm run craco` – React dev server (3000, `/api` → 8004)
+- `npm run dev` – 即 `BLOCK_PROXY_DEV=1 npm run express`：全栈（Express + proxy + SOCKS5 + tunnel），且 Express 启动后会自动 spawn `npm run craco`（React dev server :3000, `/api` → 8004），无需另开终端；该变量只在 `server/express.js` 里读取
 - `npm run start` / `npm run express` – 后端 + 代理（生产）；`npm run proxy` / `npm run socks5` – 仅代理 / 仅 SOCKS5
 
 ### Testing
-- `npm run test:proxy-core` – proxy-core 连接测试（无需代理服务）；`npm run test:proxy` – 代理连通性/性能/吞吐量测试（需先启动代理）；`npm run test:public-proxy` – 8002 公网代理协议分发测试（SOCKS5 / HTTP CONNECT over TLS）
+- `npm run test:proxy-core` – proxy-core 连接测试（无需代理服务）；`npm run test:proxy` – 代理连通性/性能/吞吐量测试（即 `node test/run.js`，默认连 127.0.0.1:8001/8002、认证 admin/admin，需先启动代理；加 `-- --auto-start` 自动拉起、`-- --skip-external` 跳过外网站点）；`npm run test:public-proxy` – 8002 公网代理协议分发测试（SOCKS5 / HTTP CONNECT over TLS）
 - `npm run test:registry` / `npm run test:mitm-runtime` – MITM 规则注册 / 运行时测试
 - `npm run test:access-logger` – 访问日志单元测试 + 与真实代理钩子的集成测试
 - `npm run test:temp-credentials` – 临时代理凭据单元测试（生成/过期/撤销/20 条裁剪）
@@ -19,7 +19,7 @@ This file provides guidance to Claude Code (and other agents via the AGENTS.md s
 - `npm run test:android` – Android phone flavor 单元测试；`npm run test:android:emulator` – 仪器化测试
 - 单类测试: `cd android-client && ./gradlew :app:testPhoneDebugUnitTest --tests '*ClassName'`
 - `npm run test` – React 前端测试 (react-scripts test)
-- 其他单测脚本见 `test/` 与 `tunnel/test/` 目录（证书生命周期、隧道集成、配置校验、fd 诊断、socks5 限制等）；这些是 `node:test` 文件，用 `node --test <file>` 跑（如 `node --test tunnel/test/protocol.test.js`）
+- 其余单测按文件名后缀分两种风格，别混用：`*.test.js`（`tunnel/test/*`、`test/tunnel-integration.test.js`、`test/timestamp-console.test.js`）是 `node:test`，用 `node --test <file>` 跑（如 `node --test tunnel/test/protocol.test.js`）；`test/*-tests.js` 是自带断言的普通 Node 脚本，直接 `node test/<file>.js`（没有 npm 脚本的有 `fd-diagnostics-` / `proxy-core-cert-lifecycle-` / `server-config-validation-` / `socks5-server-limits-tests.js`）；`socks5-server-limits-tests.js` 偶发未捕获的 `read ECONNRESET` 导致退出码 1（2026-10-09 实测 10 次里 2 次，疑似服务端销毁连接的竞态下测试客户端 socket 没挂 `error` 监听），重跑即过，别当成自己改动引入的回归
 
 ### Utilities
 - `npm run rm_bkconfig` – 删除备份配置；`npm run gen-icons` / `npm run watch:icons` – 生成/监听客户端图标
@@ -37,7 +37,7 @@ This file provides guidance to Claude Code (and other agents via the AGENTS.md s
 - **构建前提**: SDK 35, minSdk 23, targetSdk 35；首次需 `git submodule update --init --recursive` 后 `android:native:build`
 
 ### Build & Deploy
-- `npm run build` – React frontend → `/build/`
+- `npm run build` – React frontend → `/build/`（会先删 `config_backup.json`）。**`build/` 被 git 跟踪**：Express 直接托管它，npm 包只发 `build/` 不发 `src/`，所以改了 `src/` 要重新 build 并把 `build/` 一并提交（近期后台界面相关提交都带着 `build/`）
 - `npm run docker:build` / `docker:build:arm` – 单架构镜像；`docker:push` – amd64+arm64 双架构推送 ACR（另有 `docker:push:amd64` / `docker:push:arm64`）
 - `block-proxy` / `block-proxy -c rule.js` – 全局 CLI（失败自动重启, 3s delay, max 10000）；`block-proxy --pubkey <path> --privkey <path>` – 指定隧道 TLS 证书
 
@@ -73,13 +73,13 @@ Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 / HTTP 
 - **Server** (`/server/`) – Express API (8004), 托管 React build, token cookie 认证: `start.js`, `express.js`, `timestampConsole.js`, `util.js`
 - **Frontend** (`/src/`) – CRA + CRACO 管理界面, `App.js` 主组件
 - **CLI** (`/bin/start.js`) – 全局入口, 失败自动重启, 退出清理全局配置
-- **Certs** (`/cert/`) – `rootCA.key` + `rootCA.crt`, 运行时同步到 `certificates/`
+- **Certs** (`/cert/`) – MITM 根证书 `rootCA.key`/`rootCA.crt` **不进 git、不进 npm 包**，由本机生成：`startProxyServer()` 先调 `cert/generator.js#ensureRootCA()`（缺失或残缺就重新生成一对，30 年 RSA-2048，私钥 0600），再由 `proxy.js#ensureRootCA()` 按 SHA-256 指纹同步到 `certificates/`（根证书变了会清空已签发的域名证书缓存）；也可手动 `node cert/generator.js`，全新克隆里的测试靠 `test/helpers/ensure-root-ca.js` 补齐。Docker 镜像不内置根证书，要跨容器重建保留同一把 CA 须挂载 `/app/cert`。隧道 TLS 默认复用 `cert/socks5_tls.{crt,key}`（缺失时 `ensureTempCert` 自签 ECC P-256）
 - **Config** (`config.json`) – 运行时配置（见下）；**Test Suite** (`/test/`) – `run.js` 一键测试(自动启动 Mock Server), `proxy-tests.js`, `proxy-core-connect-tests.js` 及隧道/MITM/fd/socks5 单测
 - **Docs** (`/docs/`) – `tunnel-testing.md`, `android-client-deployment.md`, `ios-client-deployment.md`, `plans/` 与 `superpowers/{specs,plans}/`(设计与实施记录, 命名 `YYYY-MM-DD-<主题>-design/implementation.md`)；根目录 `Useage.md` 为完整用户手册（服务端部署/证书安装/客户端使用）
 
 ### Config (`config.json`)
 
-运行时配置，由 `proxy/fs.js` 读写并备份到 `config_backup.json`:
+运行时配置，由 `proxy/fs.js` 读写并备份到 `config_backup.json`；本地没有 `config.json`（已 gitignore）时由 `proxy/proxy.js#loadConfig()` 按默认值写出。新增配置项：默认值与读取逻辑改 `loadConfig()`（默认对象 + 已有配置分支 + 无配置文件分支），**必填**项还要登记到 `server/express.js` 的 `REQUIRED_FIELDS`（配置导入校验，老配置缺字段在 `validateImportedConfig()` 里补默认值；`access_log`/`tunnel_padding`/`mitm_debug_log` 等可选项不在其中）。`block-proxy -c rule.js` 的规则路径经 `config.json` 的 `config_file` 字段（`fs.setGlobalConfigFile`）传给子进程，`proxy.js#loadGlobalConfigFile()` 读取后立即清除（一次性消费，只留在内存的 `cliRulePath`），CLI 退出时也会兜底清除:
 - 端口/开关: `proxy_port`, `socks5_port`, `express_port`, `enable_express`, `enable_socks5`, `enable_tunnel`, `enable_mitm`/`mitm_debug_log`/`socks5_tls`("0"/"1")
 - 认证: `auth_username`/`auth_password`（代理/SOCKS5/隧道共用）, `login_username`/`login_password`（管理面板登录，两者独立）
 - 临时凭据: 不在 `config.json` 里，存于根目录 `temp_credentials.json`（已 gitignore）—— 8004 后台按钮生成，固定 7 天有效，最多保留最新 20 组，作为 `auth_username`/`auth_password` 的平替；**仅 8001 内网 HTTP 与 8002 公网 SOCKS5/HTTP CONNECT 生效，隧道 8003 不接入**（客户端 App 用不了）；由 `proxy/temp-credentials.js` 管理，认证时按 mtime 缓存读盘
@@ -92,7 +92,9 @@ Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 / HTTP 
 
 ### MITM 规则系统
 
-Host-based 拦截（regex + 时间段 + 周几 + MAC，MAC 仅 HTTP 代理）。规则回调 `beforeSendRequest` / `beforeSendResponse` `(url, request, response)`；自定义规则编辑 `proxy/mitm/rule.js` 或 `block-proxy -c rule.js`。规则结构: `{ filter_host, filter_match_rule, filter_start_time, filter_end_time, filter_weekday, filter_mac }`
+两套互相独立的机制，别混用字段：
+- **拦截规则**：`config.json` 的 `block_hosts[]`（后台 UI 维护，`src/App.js`），条目 `{ filter_host, filter_match_rule, filter_start_time, filter_end_time, filter_weekday, filter_mac }`，由 `proxy.js#shouldBlockHost()` 判定（host 子串 + URL 正则 + 时间段 + 周几 + MAC，MAC 仅 HTTP 代理）。
+- **MITM 改写规则**（回调式）：规则组 `{ 组名: [ { type: 'beforeSendRequest'|'beforeSendResponse', host, regexp, callback(url, request, response) } ] }`（也可写成 `{ name, description, rules }`），范例见 `example/rule.js`；`callback` 返回含 `response` 的对象，不处理就原样返回原 response。`proxy/mitm/registry.js` 合并三个来源，**同名组后者覆盖前者**：内置 `proxy/mitm/rule.js` < CLI `block-proxy -c rule.js` < Docker 挂载的 `config/rule.js`；单个组可由 `config.rule_modules["<source>:<组名>"] = false` 关闭（如 `builtin:Youtube`）；每次启动/重启代理前 `rebuildRuleRegistry()` 重建。HTTPS 要客户端装了根证书且 `enable_mitm`="1" 才会被解密并进入回调，明文 HTTP 不受影响。
 
 ### Tunnel 协议要点
 
@@ -108,7 +110,7 @@ Host-based 拦截（regex + 时间段 + 周几 + MAC，MAC 仅 HTTP 代理）。
 
 ### 部署与环境
 
-OpenWRT `--network=host` | Docker Node 18 Alpine 多阶段构建（npmmirror 源）；运行时依赖在 `dependencies`, 仅 `@craco/craco` 在 `devDependencies`；生产/开发模式由 `BLOCK_PROXY_DEV` 控制
+OpenWRT `--network=host` | Docker Node 18 Alpine 多阶段构建（npmmirror 源）；运行时依赖在 `dependencies`, 仅 `@craco/craco` 在 `devDependencies`
 
 ## macOS Client (`/client/`)
 
@@ -172,6 +174,7 @@ Kotlin + Jetpack Compose + VpnService + tun2socks (JNI) + xhttp 传输。v0.1.6 
 - **Android 发布**: `npm run android:release:upload -- <tag>` 自动构建 phone debug APK 上传；勿上传未签名 release APK
 - ACR 推送前先 `docker login --username=hi50078584@aliyun.com crpi-x1zji86f6jpcd7t1.cn-hangzhou.personal.cr.aliyuncs.com`
 - CLI 自定义证书: `block-proxy --pubkey/--privkey <path>`（`TUNNEL_PUBKEY`/`TUNNEL_PRIVKEY` 环境变量）；链式代理经 `chain_proxy_*` 配置全部流量转上游
+- **非本项目 / 不在本仓库的内容**: iOS 客户端源码不在本仓库（`docs/ios-client-deployment.md`、`docs/superpowers/*/2026-07-03-ios-client-*`、`.npmignore` 里的 `ios-client/` 都是遗留，本仓库 git 历史里没有该目录）；`litellm_custom_provider/` 是与代理无关的独立 Python LiteLLM provider，改代理时忽略；`tools/tcpdump/output.pcap` 是约 9.5MB 的样例抓包（勿整个读入，分析走 `pcap-analyse` skill），`tools/speed_test.sh` 经本地 SOCKS5 `127.0.0.1:1081` 测速
 
 ## Project Skills (`.claude/skills/`)
 
