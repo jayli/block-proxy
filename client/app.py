@@ -1044,6 +1044,7 @@ class AppController(NSObject):
                     else:
                         reason_map = {
                             "auth_failed": "鉴权失败",
+                            "edr_blocked": "EDR 拦截",
                             "unreachable": "请求被安全软件拦截" if self._edr_blocked else "节点不通",
                             "reconnecting": "重试中...",
                         }

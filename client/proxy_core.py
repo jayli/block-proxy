@@ -183,55 +183,103 @@ def _force_close_rst(writer):
 
 class EdrBlockDetector:
     """Detects EDR/security software blocking outbound connections.
-    
-    EDR tools (e.g. AliEntSafe/oneagent) inject RST during TCP handshake
-    for processes with untrusted code signatures. This manifests as
-    ConnectionResetError on open_connection().
-    
-    Detection: N consecutive ConnectionResetError on outbound connects
-    within a time window → likely EDR blocking.
+
+    两种失败形状，可信度不同，分开处理：
+
+    - EBADF (errno 9)：socket fd 在 connect 过程中被本机置为无效。网络故障
+      作用在数据包上（SYN 无回应→超时、对端回 RST→拒绝、DNS 失败），
+      都不可能让本地的 fd 失效；能在 connect 半途作废 fd 的只有本机的
+      网络过滤扩展（如 AliEntSafe 的 networkFilter）。因此这是定性信号，
+      单次即认定，不需要累计阈值。
+    - ConnectionResetError：可能是 EDR 在 ClientHello 上注入 RST，也可能
+      是网络中间设备或对端真的 RST，形状有歧义，仍需窗口内连续多次才怀疑。
+
+    EDR 拦截是间歇性的（实测同一进程同一目标可在成功与 EBADF 之间反复，
+    且按进程/策略区分，同机其他进程可能完全正常），所以 EBADF 的判定按
+    时间衰减，不被无关的成功连接清除。
     """
 
-    THRESHOLD = 3          # consecutive resets to trigger
+    THRESHOLD = 3          # consecutive resets to trigger (ambiguous shape)
     WINDOW = 30            # seconds window for counting
     NOTIFY_COOLDOWN = 300  # seconds between notifications
+    EBADF_STICKY = 60      # seconds a conclusive EBADF verdict stays valid
 
     def __init__(self, on_blocked=None, on_recovered=None):
         self._on_blocked = on_blocked  # callback(dest_addr, dest_port)
         self._on_recovered = on_recovered  # callback() when blocking clears
         self._reset_times = []         # timestamps of recent resets
         self._last_notify = 0
-        self._notified = False
+        self._notified = False         # 歧义信号（reset）已触发且未恢复
+        self._block_notified = False   # 已向 UI 报过拦截（任一路径），等待恢复通知
+        self._badfd_at = None          # monotonic time of last conclusive EBADF
+
+    @property
+    def blocked(self):
+        """当前是否判定为 EDR 拦截（定性 EBADF 未过期，或歧义信号已触发）。"""
+        if (
+            self._badfd_at is not None
+            and time.monotonic() - self._badfd_at < self.EBADF_STICKY
+        ):
+            return True
+        return self._notified
 
     def record_reset(self, dest_addr, dest_port, errno_value=None):
         """Record an outbound connect failure (ConnectionResetError or EBADF)."""
-        import time
         now = time.monotonic()
+
+        if errno_value == errno.EBADF:
+            # 定性信号：单次即认定，并只在上一轮判定已过期时重新告警
+            expired = (
+                self._badfd_at is None
+                or now - self._badfd_at >= self.EBADF_STICKY
+            )
+            self._badfd_at = now
+            if expired:
+                self._notify(now, dest_addr, dest_port, "EBADF (fd invalidated locally)")
+            return
+
         self._reset_times.append(now)
         # Keep only resets within the window
         cutoff = now - self.WINDOW
         self._reset_times = [t for t in self._reset_times if t > cutoff]
-        cause = (
-            "ConnectionResetError" if errno_value is None else f"errno {errno_value}"
-        )
 
         if len(self._reset_times) >= self.THRESHOLD and not self._notified:
-            if now - self._last_notify > self.NOTIFY_COOLDOWN:
+            if self._notify(
+                now, dest_addr, dest_port,
+                f"{len(self._reset_times)} consecutive ConnectionResetError",
+            ):
                 self._notified = True
-                self._last_notify = now
-                logger.warning(
-                    "EDR blocking suspected: %d consecutive %s "
-                    "on outbound connects (last: %s:%s)",
-                    len(self._reset_times), cause, dest_addr, dest_port,
-                )
-                if self._on_blocked:
-                    self._on_blocked(dest_addr, dest_port)
+
+    def _notify(self, now, dest_addr, dest_port, cause):
+        """触发拦截告警，受 NOTIFY_COOLDOWN 限流。返回是否真的通知了。"""
+        if now - self._last_notify <= self.NOTIFY_COOLDOWN:
+            return False
+        self._last_notify = now
+        self._block_notified = True
+        logger.warning(
+            "EDR blocking suspected: %s on outbound connects (last: %s:%s)",
+            cause, dest_addr, dest_port,
+        )
+        if self._on_blocked:
+            self._on_blocked(dest_addr, dest_port)
+        return True
 
     def record_success(self):
-        """Record a successful outbound connect — resets the detector."""
+        """Record a successful outbound connect.
+
+        只清除有歧义的 ConnectionResetError 怀疑。EBADF 是定性信号，不被
+        无关的成功连接清除——EDR 按进程/行为间歇拦截时，直连成功与节点
+        EBADF 会同时存在，用成功去清判定正是把「EDR 拦截」误报成
+        「节点不通」的原因；它只按 EBADF_STICKY 时间衰减。
+
+        恢复通知则在「已报过拦截且当前不再判定为拦截」时发出，两条路径
+        共用，避免 EBADF 的 sticky UI 状态永远不清。
+        """
         self._reset_times.clear()
         if self._notified:
             self._notified = False
+        if self._block_notified and not self.blocked:
+            self._block_notified = False
             logger.info("EDR blocking no longer detected (connection succeeded)")
             if self._on_recovered:
                 self._on_recovered()
@@ -1142,7 +1190,18 @@ class ProxyCore:
         except CertPinMismatchError:
             return (None, "pin_mismatch")
         except (NodeUnreachableError, ConnectionRefusedError, ConnectionResetError,
-                OSError, asyncio.TimeoutError, TimeoutError):
+                OSError, asyncio.TimeoutError, TimeoutError) as exc:
+            # EBADF 是定性信号：网络故障造不出「本地 fd 失效」这个形状，
+            # 所以这是本机 EDR 拦截，不是节点真的不可达。
+            # （TimeoutError 是 OSError 子类但 errno 为 None，仍走 unreachable。）
+            if isinstance(exc, OSError) and exc.errno == errno.EBADF:
+                if self._edr_detector:
+                    self._edr_detector.record_reset(
+                        self._server_config.get("address", "?"),
+                        self._server_config.get("port", 0),
+                        errno_value=exc.errno,
+                    )
+                return (None, "edr_blocked")
             return (None, "unreachable")
         except Exception:
             return (None, "error")
