@@ -67,6 +67,10 @@ def is_private_ip(host):
         return False
 
 
+# 空闲回收阈值：语义是「整条连接两个方向都没有字节流动满这么久」，
+# 而不是「某个方向空闲这么久」（见 IdleDeadline）。LLM 流式响应这类
+# 单向长流的连接靠入向持续续命，不会因为出向长时间没数据被误杀。
+# 值上仍需有界：TCP 不通知对端死亡，靠它回收挂死连接。
 RELAY_IDLE_TIMEOUT = 300
 UDP_IDLE_TIMEOUT = 120
 LOCAL_PROXY_RECYCLE_INTERVAL = 7200
@@ -111,13 +115,67 @@ async def read_udp_frame(reader):
     return await reader.readexactly(length)
 
 
+class IdleDeadline:
+    """一条连接（两个方向）共享的空闲截止时间。
+
+    只有整条连接在两个方向上都持续没有字节流动才会到期。LLM 流式响应
+    这类“客户端发完请求后长时间只收不发”的流量，出向会长时间空闲，
+    但入向一直在流——按方向各自计时会误判为空闲并掐断连接
+    （详见 300s 硬墙问题的定位）。
+    """
+
+    __slots__ = ("timeout", "_deadline", "_fired")
+
+    def __init__(self, timeout):
+        self.timeout = timeout
+        self._deadline = time.monotonic() + self._base_timeout()
+        self._fired = False
+
+    def _base_timeout(self):
+        # timeout=None 表示不设上限（仅供需要显式关闭的场景），避免
+        # wait_for(inf) 被误读为“立即超时”。
+        return float("inf") if self.timeout is None else self.timeout
+
+    def touch(self):
+        self._deadline = time.monotonic() + self._base_timeout()
+
+    def remaining(self):
+        return max(0.0, self._deadline - time.monotonic())
+
+    def expire(self):
+        """认领到期：只有第一个调用者返回 True。
+
+        两个方向的 relay 都会从超时分支退出，共享同一个 deadline 时
+        必须去重，否则一次空闲会重复上报（计数翻倍、日志重复）。
+        """
+        if self._fired:
+            return False
+        self._fired = True
+        return True
+
+
 async def relay(reader, writer, route=None, direction=None, on_activity=None,
-                idle_timeout=RELAY_IDLE_TIMEOUT, on_idle_timeout=None):
+                idle_timeout=RELAY_IDLE_TIMEOUT, on_idle_timeout=None, idle=None):
+    # idle 由兄弟方向共享时，任一方向读到字节都会续命；不传则退化为
+    # 单向计时（旧的单方向语义）。
+    deadline = idle if idle is not None else IdleDeadline(idle_timeout)
+    timed_out = False
     try:
         while True:
-            data = await asyncio.wait_for(reader.read(65536), timeout=idle_timeout)
+            try:
+                data = await asyncio.wait_for(
+                    reader.read(65536), timeout=deadline.remaining()
+                )
+            except asyncio.TimeoutError:
+                # 到期瞬间兄弟方向可能刚续过命，重新看一次剩余时间，
+                # 避免把刚有流量的连接误判为空闲。
+                if deadline.remaining() > 0:
+                    continue
+                timed_out = True
+                break
             if not data:
                 break
+            deadline.touch()
             writer.write(data)
             if on_activity:
                 on_activity()
@@ -125,12 +183,11 @@ async def relay(reader, writer, route=None, direction=None, on_activity=None,
                 add_bytes(len(data), route, direction)
             if writer.transport.get_write_buffer_size() > 65536:
                 await writer.drain()
-    except asyncio.TimeoutError:
-        if on_idle_timeout:
-            on_idle_timeout()
     except (ConnectionResetError, BrokenPipeError, OSError):
         pass
     finally:
+        if timed_out and on_idle_timeout and deadline.expire():
+            on_idle_timeout()
         try:
             if writer.can_write_eof():
                 writer.write_eof()
@@ -599,6 +656,7 @@ class RuntimeMetrics:
         self.setup_timeout_rejects = 0
         self.total_ceiling_rejects = 0
         self.dns_idle_kills = 0
+        self.relay_idle_kills = 0
         self.edr_badfd = 0
         self.active_peak = 0
 
@@ -619,6 +677,9 @@ class RuntimeMetrics:
     def record_dns_idle_kill(self):
         self.dns_idle_kills += 1
 
+    def record_relay_idle_kill(self):
+        self.relay_idle_kills += 1
+
     def record_edr_badfd(self):
         self.edr_badfd += 1
 
@@ -637,6 +698,7 @@ class RuntimeMetrics:
             "setup_timeout_rejects": self.setup_timeout_rejects,
             "total_ceiling_rejects": self.total_ceiling_rejects,
             "dns_idle_kills": self.dns_idle_kills,
+            "relay_idle_kills": self.relay_idle_kills,
             "edr_badfd": self.edr_badfd,
             "active_peak": self.active_peak,
         }
@@ -1562,13 +1624,25 @@ class ProxyCore:
             return DNS_TCP_IDLE_TIMEOUT
         return RELAY_IDLE_TIMEOUT
 
-    def _on_relay_idle_timeout(self, port):
+    def _on_relay_idle_timeout(self, dest, port):
+        """空闲超时回收一条连接。
+
+        非 53 端口的超时以前完全静默（只有 DNS 计数），排障时无法从
+        日志看出连接被代理自己掐掉。现在两者都记：53 端口沿用
+        dns_idle_kills，其余计入 relay_idle_kills 并落一条 access log。
+        """
         try:
             port_int = int(port)
         except (TypeError, ValueError):
             port_int = 0
         if port_int == 53:
             self._metrics.record_dns_idle_kill()
+            return
+        self._metrics.record_relay_idle_kill()
+        access_logger.info(
+            "IDLE | %s:%d | relay-idle-kill | timeout=%ss",
+            dest, port_int, self._relay_idle_timeout(port_int),
+        )
 
     async def _diagnostics_loop(self):
         while True:
@@ -1590,7 +1664,7 @@ class ProxyCore:
         diagnostics_logger.info(
             "fd=%d active=%d active_peak=%d setup_wait_n=%d setup_wait_avg_ms=%d "
             "setup_wait_max_ms=%d setup_wait_slow=%d setup_timeout_rejects=%d "
-            "total_ceiling_rejects=%d dns_idle_kills=%d edr_badfd=%d "
+            "total_ceiling_rejects=%d dns_idle_kills=%d relay_idle_kills=%d edr_badfd=%d "
             "target_active=%d target_active_top=%s target_rejected_total=%d "
             "target_rejected_top=%s",
             self.fd_count(),
@@ -1603,6 +1677,7 @@ class ProxyCore:
             metrics["setup_timeout_rejects"],
             metrics["total_ceiling_rejects"],
             metrics["dns_idle_kills"],
+            metrics["relay_idle_kills"],
             metrics["edr_badfd"],
             admission["active_total"],
             active_top or "-",
@@ -1841,13 +1916,14 @@ class ProxyCore:
                     relay_started = True
 
                     idle_timeout = self._relay_idle_timeout(dest_port)
+                    idle = IdleDeadline(idle_timeout)
                     await asyncio.gather(
                         relay(client_reader, remote_writer, route, "outbound",
-                              self._mark_proxy_activity, idle_timeout=idle_timeout,
-                              on_idle_timeout=lambda: self._on_relay_idle_timeout(dest_port)),
+                              self._mark_proxy_activity, idle=idle,
+                              on_idle_timeout=lambda: self._on_relay_idle_timeout(dest_addr, dest_port)),
                         relay(remote_reader, client_writer, route, "inbound",
-                              self._mark_proxy_activity, idle_timeout=idle_timeout,
-                              on_idle_timeout=lambda: self._on_relay_idle_timeout(dest_port)),
+                              self._mark_proxy_activity, idle=idle,
+                              on_idle_timeout=lambda: self._on_relay_idle_timeout(dest_addr, dest_port)),
                     )
                 finally:
                     # 与 HTTP 分支同理：握手后客户端立即断开时兜底关闭 remote_writer
@@ -2045,13 +2121,14 @@ class ProxyCore:
                         relay_started = True
 
                         idle_timeout = self._relay_idle_timeout(port)
+                        idle = IdleDeadline(idle_timeout)
                         await asyncio.gather(
                             relay(client_reader, remote_writer, route, "outbound",
-                                  self._mark_proxy_activity, idle_timeout=idle_timeout,
-                                  on_idle_timeout=lambda: self._on_relay_idle_timeout(port)),
+                                  self._mark_proxy_activity, idle=idle,
+                                  on_idle_timeout=lambda: self._on_relay_idle_timeout(host, port)),
                             relay(remote_reader, client_writer, route, "inbound",
-                                  self._mark_proxy_activity, idle_timeout=idle_timeout,
-                                  on_idle_timeout=lambda: self._on_relay_idle_timeout(port)),
+                                  self._mark_proxy_activity, idle=idle,
+                                  on_idle_timeout=lambda: self._on_relay_idle_timeout(host, port)),
                         )
                     finally:
                         # 客户端在握手后立即断开（如探测连接）时，drain 抛异常
@@ -2138,13 +2215,14 @@ class ProxyCore:
                             relay_started = True
 
                             idle_timeout = self._relay_idle_timeout(port)
+                            idle = IdleDeadline(idle_timeout)
                             await asyncio.gather(
                                 relay(remote_reader, client_writer, route, "inbound",
-                                      self._mark_proxy_activity, idle_timeout=idle_timeout,
-                                      on_idle_timeout=lambda: self._on_relay_idle_timeout(port)),
+                                      self._mark_proxy_activity, idle=idle,
+                                      on_idle_timeout=lambda: self._on_relay_idle_timeout(host, port)),
                                 relay(client_reader, remote_writer, route, "outbound",
-                                      self._mark_proxy_activity, idle_timeout=idle_timeout,
-                                      on_idle_timeout=lambda: self._on_relay_idle_timeout(port)),
+                                      self._mark_proxy_activity, idle=idle,
+                                      on_idle_timeout=lambda: self._on_relay_idle_timeout(host, port)),
                             )
                         finally:
                             if not relay_started:
