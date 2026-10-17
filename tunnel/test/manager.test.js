@@ -329,3 +329,175 @@ describe('TunnelManager.forward', () => {
     streamB.destroy();
   });
 });
+
+describe('TunnelManager forward idle timeout', () => {
+  /**
+   * 构造一条已确认（CONNECT_OK）的 forward 连接。
+   *
+   * forward 方向由客户端发 CONNECT 发起：服务端先连本地 8001，收到
+   * "200 Connection Established" 后才开始计 idle。测试里替换 net.Socket
+   * 为假 socket，避免真的去连 8001（否则 ECONNREFUSED 会立刻清掉 entry）。
+   */
+  async function openForward(manager, server, { reqid = 0x8001 } = {}) {
+    manager.handleFrame(
+      { type: 0x01, reqid, atyp: 0x03, addr: 'api.example.com', port: 443 },
+      server._sessionA
+    );
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+
+    const entry = manager._activeRequests.get(reqid);
+    assert.ok(entry, 'forward entry should be registered');
+    entry._anyproxySocket.emit(
+      'data',
+      Buffer.from('HTTP/1.1 200 Connection Established\r\n\r\n')
+    );
+    await new Promise((r) => setImmediate(r));
+    assert.equal(entry.confirmed, true);
+    return { entry, sock: entry._anyproxySocket };
+  }
+
+  /**
+   * 用假 socket 替换 net.Socket，模拟本地 8001 通道。
+   * 返回恢复函数。
+   */
+  function installFakeSocket() {
+    const { EventEmitter } = require('node:events');
+    const net = require('net');
+    const original = net.Socket;
+
+    class FakeSocket extends EventEmitter {
+      constructor() {
+        super();
+        this.destroyed = false;
+        this.writes = [];
+        this._connected = false;
+      }
+      setNoDelay() {}
+      setKeepAlive() {}
+      connect(port, host, cb) {
+        this.port = port;
+        this.host = host;
+        this._connected = true;
+        setImmediate(cb);
+      }
+      write(chunk) {
+        this.writes.push(chunk);
+        return true;
+      }
+      destroy() {
+        if (this.destroyed) return;
+        this.destroyed = true;
+        this.emit('close');
+      }
+    }
+
+    net.Socket = FakeSocket;
+    return () => { net.Socket = original; };
+  }
+
+  function closeFrameCount(server) {
+    return server._sentFrames.filter((f) => f.frame && f.frame.type === 0x03).length;
+  }
+
+  it('uplink-only traffic keeps the connection alive (no false idle kill)', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'], now: Date.now() });
+    const restoreSocket = installFakeSocket();
+    t.after(restoreSocket);
+
+    const server = createMockServer();
+    // 不传 forwardIdleTimeoutMs：走默认 300s，确保该用例在旧实现上必然失败
+    // （旧构造函数本来就没有这个配置项，传了也不会生效）。
+    const manager = new TunnelManager(server, {
+      tunnel_domains: [],
+      proxy_port: 8001,
+    });
+    manager.setConnected(server._sessionA, true);
+
+    await openForward(manager, server);
+
+    // 客户端每 1s 上行一帧，本地 8001 全程不回包（覆盖 2 倍默认超时窗口）
+    for (let sec = 1; sec <= 660; sec++) {
+      t.mock.timers.tick(1000);
+      manager.handleFrame(
+        { type: 0x02, reqid: 0x8001, data: Buffer.alloc(256) },
+        server._sessionA
+      );
+    }
+
+    assert.equal(manager.getStatus().activeRequests, 1);
+    assert.equal(manager.getStatus().forwardConnections, 1);
+    assert.equal(closeFrameCount(server), 0);
+  });
+
+  it('downlink-only traffic keeps the connection alive', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'], now: Date.now() });
+    const restoreSocket = installFakeSocket();
+    t.after(restoreSocket);
+
+    const server = createMockServer();
+    const manager = new TunnelManager(server, {
+      tunnel_domains: [],
+      proxy_port: 8001,
+    });
+    manager.setConnected(server._sessionA, true);
+
+    const { sock } = await openForward(manager, server);
+
+    // 客户端发完 CONNECT 后不再上行，仅由 8001 持续回包（LLM 流式形态）
+    for (let sec = 1; sec <= 660; sec++) {
+      t.mock.timers.tick(1000);
+      sock.emit('data', Buffer.from('streaming-chunk'));
+    }
+
+    assert.equal(manager.getStatus().activeRequests, 1);
+    assert.equal(closeFrameCount(server), 0);
+  });
+
+  it('idle connection is reclaimed and client is told via CLOSE', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'], now: Date.now() });
+    const restoreSocket = installFakeSocket();
+    t.after(restoreSocket);
+
+    const server = createMockServer();
+    const manager = new TunnelManager(server, {
+      tunnel_domains: [],
+      proxy_port: 8001,
+      forwardIdleTimeoutMs: 5000,
+    });
+    manager.setConnected(server._sessionA, true);
+
+    await openForward(manager, server);
+
+    t.mock.timers.tick(5001);
+
+    assert.equal(manager.getStatus().activeRequests, 0);
+    assert.equal(manager.getStatus().forwardConnections, 0);
+    // 超时必须通知客户端，而不是静默销毁
+    assert.equal(closeFrameCount(server), 1);
+  });
+
+  it('idle timeout is configurable and 0 disables it', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'], now: Date.now() });
+    const restoreSocket = installFakeSocket();
+    t.after(restoreSocket);
+
+    const server = createMockServer();
+    const manager = new TunnelManager(server, {
+      tunnel_domains: [],
+      proxy_port: 8001,
+      forwardIdleTimeoutMs: 0,
+    });
+    manager.setConnected(server._sessionA, true);
+
+    await openForward(manager, server);
+    t.mock.timers.tick(3_600_000);
+
+    assert.equal(manager.getStatus().activeRequests, 1);
+    assert.equal(closeFrameCount(server), 0);
+  });
+
+  it('exposes FORWARD_IDLE_TIMEOUT for tests', () => {
+    assert.equal(TunnelManager._test.FORWARD_IDLE_TIMEOUT, 300 * 1000);
+  });
+});

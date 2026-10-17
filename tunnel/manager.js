@@ -40,6 +40,9 @@ class TunnelManager {
     this._reverseIdleTimeoutMs = Number.isFinite(config.reverseIdleTimeoutMs)
       ? config.reverseIdleTimeoutMs
       : REVERSE_IDLE_TIMEOUT;
+    this._forwardIdleTimeoutMs = Number.isFinite(config.forwardIdleTimeoutMs)
+      ? config.forwardIdleTimeoutMs
+      : FORWARD_IDLE_TIMEOUT;
     this._statsLogIntervalMs = Number.isFinite(config.statsLogIntervalMs)
       ? config.statsLogIntervalMs
       : TUNNEL_STATS_LOG_INTERVAL_MS;
@@ -202,7 +205,7 @@ class TunnelManager {
       case FRAME_TYPES.CONNECT_OK: {
         entry.lastActivityAt = Date.now();
         entry.confirmed = true;
-        if (entry.direction === 'reverse' && entry.resetIdleTimer) {
+        if (entry.resetIdleTimer) {
           entry.resetIdleTimer();
         }
         entry.stream.emit('tunnel-connect-ok');
@@ -211,7 +214,9 @@ class TunnelManager {
 
       case FRAME_TYPES.DATA: {
         entry.lastActivityAt = Date.now();
-        if (entry.direction === 'reverse' && entry.resetIdleTimer) {
+        // 向上游（客户端→服务端）的字节也算连接活动，否则单向长流会被
+        // 误判为空闲：例如客户端持续上传而目标迟迟不回包时，下行静默。
+        if (entry.resetIdleTimer) {
           entry.resetIdleTimer();
         }
         if (entry.direction === 'forward' && entry._anyproxySocket) {
@@ -303,13 +308,20 @@ class TunnelManager {
     entry.timeout = timeout;
 
     const resetIdleTimer = () => {
+      if (this._forwardIdleTimeoutMs <= 0) return;
       if (entry.idleTimer) clearTimeout(entry.idleTimer);
       entry.idleTimer = setTimeout(() => {
         console.log(`[Tunnel] Forward idle timeout ${targetHost}:${targetPort} (reqid=${reqid})`);
+        // 先通知客户端再收尾：否则客户端只能靠自己后续读写失败才发现
+        // 连接被服务端单方面拆掉，与 reverse 的超时行为对齐。
+        if (this._activeRequests.has(reqid)) {
+          this._sendCloseToClient(reqid, entry.sessionId);
+        }
         cleanup();
-      }, FORWARD_IDLE_TIMEOUT);
-      entry.idleTimer.unref();
+      }, this._forwardIdleTimeoutMs);
+      entry.idleTimer.unref?.();
     };
+    entry.resetIdleTimer = resetIdleTimer;
 
     anyproxySocket.connect(this._proxyPort, '127.0.0.1', () => {
       const connectReq = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n\r\n`;
@@ -404,7 +416,7 @@ class TunnelManager {
     const entry = this._activeRequests.get(reqid);
     if (!entry) return;
     entry.lastActivityAt = Date.now();
-    if (entry.direction === 'reverse' && entry.resetIdleTimer) {
+    if (entry.resetIdleTimer) {
       entry.resetIdleTimer();
     }
     for (let offset = 0; offset < data.length; offset += MAX_DATA_CHUNK) {
