@@ -266,6 +266,9 @@ async function loadConfig() {
     tunnel_silent_idle_timeout: 3000,
     tunnel_rotation_drain_timeout: 10,
     tunnel_rotation_drain_idle_timeout: 20,
+    // forward 空闲超时（毫秒）。0 或负数 = 关闭该超时。
+    // 注：0 是合法值，读取时不能用 `||` 兜底（会吞掉 0）。
+    tunnel_forward_idle_timeout_ms: 300000,
     tunnel_padding: { enabled: false },
     tunnel_domains: [],
     rule_modules: {},
@@ -380,6 +383,11 @@ async function loadConfig() {
       config.tunnel_silent_idle_timeout = loadedConfig.tunnel_silent_idle_timeout || 3000;
       config.tunnel_rotation_drain_timeout = loadedConfig.tunnel_rotation_drain_timeout || 10;
       config.tunnel_rotation_drain_idle_timeout = loadedConfig.tunnel_rotation_drain_idle_timeout || 20;
+      // 用 Number.isFinite 而非 `||`：0 表示关闭超时，不能被兜底成默认值。
+      // 未配置（undefined）时保持与改动前一致的 300s。
+      if (Number.isFinite(loadedConfig.tunnel_forward_idle_timeout_ms)) {
+        config.tunnel_forward_idle_timeout_ms = loadedConfig.tunnel_forward_idle_timeout_ms;
+      }
       config.tunnel_domains = loadedConfig.tunnel_domains || [];
 
       config.rule_modules = loadedConfig.rule_modules || {};
@@ -430,6 +438,7 @@ async function loadConfig() {
         tunnel_xhttp_base_path: "/xhttp",
         tunnel_rotation_drain_timeout: 10,
         tunnel_rotation_drain_idle_timeout: 20,
+        tunnel_forward_idle_timeout_ms: 300000,
         tunnel_padding: { enabled: false },
         tunnel_domains: [],
         rule_modules: {},
@@ -1444,6 +1453,9 @@ async function initTunnel(config) {
     tunnel_silent_idle_timeout: config.tunnel_silent_idle_timeout || 3000,
     tunnel_rotation_drain_timeout: config.tunnel_rotation_drain_timeout,
     tunnel_rotation_drain_idle_timeout: config.tunnel_rotation_drain_idle_timeout,
+    // 映射成 manager 认的键。值在这里已经归一（默认或用户配置），
+    // 直接传，不要再用 `||` 兜底，否则 0（关闭）会被吞掉。
+    forwardIdleTimeoutMs: config.tunnel_forward_idle_timeout_ms,
     paddingEnabled: tunnelPadding.enabled ?? false,
     paddingProbability: tunnelPadding.probability ?? 0.3,
     paddingMinBytes: tunnelPadding.min_bytes ?? 64,
