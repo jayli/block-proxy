@@ -16,7 +16,20 @@ access_logger = logging.getLogger("blockproxyclient.access")
 crash_logger = logging.getLogger("blockproxyclient.crash")
 diagnostics_logger = logging.getLogger("blockproxyclient.diagnostics")
 
+# 用普通模块 logger 的模块（与上面三个专用 logger 区分开）
+MODULE_LOGGERS = (
+    "proxy_core",
+    "app",
+    "tunnel_client",
+    "routing",
+    "system_proxy",
+    "node_connect",
+    "autostart",
+    "geodata_loader",
+)
+
 _crash_file = None
+_module_handler = None
 _initialized = False
 
 
@@ -55,6 +68,33 @@ def setup_logging(log_dir=None):
     )
     crash_logger.addHandler(crash_handler)
     crash_logger.setLevel(logging.WARNING)
+
+    # 模块 logger（proxy_core / app / tunnel_client / routing ...）共用
+    # 同一个 crash.log handler。这些模块用普通 getLogger(__name__) 而非
+    # 专用 logger，以前完全没 handler，端口漂移、recycle 卡死、stop
+    # 超时等排障关键告警一条都不落盘。
+    # 同一个 handler 对象被多个 logger 持有是安全的（每条记录只经由
+    # 实际发出它的那个 logger 到达 handler 一次）；用子集列表而不用
+    # 根 logger，避免把第三方库的噪声也写进 crash.log。
+    global _module_handler
+    if _module_handler is not None:
+        # 二次初始化：先摘掉上一轮挂的 handler，避免日志写多份
+        for _name in MODULE_LOGGERS:
+            _lg = logging.getLogger(_name)
+            if _module_handler in _lg.handlers:
+                _lg.removeHandler(_module_handler)
+        try:
+            _module_handler.close()
+        except Exception:
+            pass
+        _module_handler = None
+    _module_handler = crash_handler
+    for _name in MODULE_LOGGERS:
+        _module_logger = logging.getLogger(_name)
+        if crash_handler not in _module_logger.handlers:
+            _module_logger.addHandler(crash_handler)
+        _module_logger.setLevel(logging.INFO)
+        _module_logger.propagate = False
 
     # Diagnostics logger — 周期性的运行指标/异常打点
     diagnostics_handler = logging.handlers.RotatingFileHandler(

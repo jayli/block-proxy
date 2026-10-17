@@ -961,6 +961,8 @@ class ProxyCore:
         self._metrics = RuntimeMetrics()
         self._target_admission = TargetAdmission()
         self._diagnostics_task = None
+        # 端口冲突导致的漂移记录（None 表示按配置端口正常监听）
+        self._port_fallback = None
 
     def set_tunnel_client(self, tc):
         self._tunnel_client = tc
@@ -1047,6 +1049,9 @@ class ProxyCore:
         self._http_port = local["http_port"]
         self._proxy_private = local.get("proxy_private", False)
         self._udp_enabled = local.get("udp", True)
+        # 干净启动前先清掉上一轮的漂移标记，_start_local_proxy 命中
+        # EADDRINUSE 时再重新记录。
+        self._port_fallback = None
         self._build_ssl_context()
         self._edr_detector = EdrBlockDetector(
             on_blocked=self._on_edr_blocked,
@@ -1092,23 +1097,18 @@ class ProxyCore:
                     # 仅剩的安全网：僵尸锁等极端情况超时，强制关 socket
                     # 释放端口，保证 stop() 必然完成
                     logger.warning("proxy shutdown timed out, forcing close", exc_info=True)
-                    for sock in self._server_sockets:
-                        try:
-                            sock.close()
-                        except Exception:
-                            pass
-                    self._server_sockets = []
+                    self._close_listen_sockets()
                 finally:
                     # future 已 resolve（或已放弃等待），此时停 loop 不会再
                     # 吞掉任何回调；call_soon_threadsafe 保证线程安全
                     if loop.is_running():
                         loop.call_soon_threadsafe(loop.stop)
 
-                # 端口已释放，清空引用防止新 loop 误操作（跨 loop
-                # server 引用会抛 RuntimeError + EADDRINUSE 漂移）
+                # _server_sockets 必须留到线程真正退出后再清：下面
+                # thread.join() 超时分支还要靠它做最后一次强制关闭。
+                # 修复前这里无条件清空，那条兜底遍历的一直是空列表。
                 self._socks_server = None
                 self._http_server = None
-                self._server_sockets = []
 
             if thread:
                 # Wait for thread to exit with short timeout
@@ -1120,12 +1120,11 @@ class ProxyCore:
                         pass
                 elif loop:
                     # 线程未退出：强制关闭 server sockets 释放端口
-                    for sock in self._server_sockets:
-                        try:
-                            sock.close()
-                        except Exception:
-                            pass
+                    self._close_listen_sockets()
                     logger.warning("proxy thread did not exit in time, forced server socket close")
+            # 线程已退出（或已放弃等待），清空 socket 引用，防止新 loop
+            # 误操作（跨 loop server 引用会抛 RuntimeError + EADDRINUSE 漂移）
+            self._server_sockets = []
             self._loop = None
             self._thread = None
 
@@ -1408,6 +1407,11 @@ class ProxyCore:
                     # 每次重试从配置的原始端口开始偏移，防止漂移累积
                     self._socks_port = self._configured_socks_port + attempt + 1
                     self._http_port = self._configured_http_port + attempt + 1
+                    self._record_port_fallback(
+                        attempt + 1,
+                        self._configured_socks_port,
+                        self._configured_http_port,
+                    )
                 else:
                     raise
 
@@ -1487,18 +1491,78 @@ class ProxyCore:
                     transport.abort()
                 except (OSError, RuntimeError):
                     pass
+        # 先同步关 listen socket，再做任何 await。
+        # 端口释放只依赖 close()，而 recycle 外层 wait_for 会把协程在第一个
+        # await 点取消（现场：EDR 探测风暴下卡在 _upstream_pool.stop()）——
+        # 若 close() 排在 await 之后，旧 listener 就永久泄漏：内核继续完成
+        # 三次握手但无人 accept，accept 队列塞满后新连接一律 ETIMEDOUT。
+        self._close_listen_sockets()
         if self._upstream_pool:
-            await self._upstream_pool.stop()
-            self._upstream_pool = None
+            pool, self._upstream_pool = self._upstream_pool, None
+            try:
+                await pool.stop()
+            except (OSError, RuntimeError):
+                pass
         if self._socks_server:
-            self._socks_server.close()
             await self._close_server_limited(self._socks_server)
             self._socks_server = None
         if self._http_server:
-            self._http_server.close()
             await self._close_server_limited(self._http_server)
             self._http_server = None
         self._server_sockets = []
+
+    def _close_listen_sockets(self):
+        """幂等地同步关闭两个 listen server，释放端口。
+
+        server.close() 是同步的（只关 listen socket），对端的活跃连接由
+        各自 handler 收尾；因此这里不 await，取消/异常都不会漏关端口。
+        `_server_sockets` 里的 `asyncio.TransportSocket` 没有 `close()`，
+        且只在 server 对象已被丢弃（stop() 超时兜底）时才需要，故取底层
+        socket 关闭作为补充。
+        """
+        for server in (self._socks_server, self._http_server):
+            if not server:
+                continue
+            try:
+                server.close()
+            except (OSError, RuntimeError):
+                pass
+        for sock in self._server_sockets:
+            raw = getattr(sock, "_sock", sock)
+            try:
+                raw.close()
+            except (OSError, AttributeError):
+                pass
+
+    def _clear_port_fallback(self):
+        self._port_fallback = None
+
+    def _record_port_fallback(self, attempt, configured_socks, configured_http):
+        self._port_fallback = {
+            "attempt": attempt,
+            "configured_socks": configured_socks,
+            "configured_http": configured_http,
+            "socks": self._socks_port,
+            "http": self._http_port,
+        }
+        crash_logger.warning(
+            "local proxy ports %d/%d in use, fell back to %d/%d",
+            configured_socks, configured_http, self._socks_port, self._http_port,
+        )
+
+    @property
+    def port_fallback(self):
+        """端口冲突导致的漂移记录；None 表示按配置端口正常监听。"""
+        return self._port_fallback
+
+    def port_fallback_message(self):
+        info = self._port_fallback
+        if not info:
+            return None
+        return (
+            f"端口被占用，已改用 {info['socks']}/{info['http']} "
+            f"（配置为 {info['configured_socks']}/{info['configured_http']}）"
+        )
 
     def _mark_proxy_activity(self):
         self._last_proxy_activity = time.monotonic()

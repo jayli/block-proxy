@@ -275,6 +275,22 @@ class AppController(NSObject):
         base = f"{name} 已中断" if name.isascii() else f"{name}已中断"
         return f"{base} - {detail}" if detail else base
 
+    def _refresh_status_title(self):
+        """按当前 connected 状态与端口漂移情况重写状态栏标题。"""
+        if not self.connected:
+            return
+        fallback = self.proxy.port_fallback
+        if fallback:
+            self._set_status_title(
+                self._status_title_connected(
+                    f"端口 {fallback['socks']}/{fallback['http']}，"
+                    f"配置的 {fallback['configured_socks']}/{fallback['configured_http']} 被占用"
+                ),
+                interrupted=True,
+            )
+        else:
+            self._set_status_title(self._status_title_connected())
+
     def _routing_menu_title(self, routing_enabled):
         return "分流规则（已开启）..." if routing_enabled else "分流规则..."
 
@@ -347,6 +363,17 @@ class AppController(NSObject):
                         )
                     )
 
+            # 2.5 端口漂移必须让用户看见：配置的端口被占用时本地监听
+            # 已经静默改成 +1，任何写死配置端口的客户端（如网关）会
+            # 直接超时，而不是收到「端口被占用」的错误。
+            fallback_message = self.proxy.port_fallback_message()
+            if fallback_message:
+                self._run_on_main(
+                    lambda: self._show_notification(
+                        "BlockProxyClient", "本地代理端口已变更", fallback_message
+                    )
+                )
+
             # 3. 启动隧道客户端（独立于本地代理，失败不影响本地代理）
             if self._tunnel_enabled():
                 self._start_tunnel()
@@ -398,7 +425,9 @@ class AppController(NSObject):
         self._finish_connecting()
         self.connected = True
         self.toggle_item.setTitle_("关闭代理")
-        self._set_status_title(self._status_title_connected())
+        # 端口漂移时把真实端口写进状态栏：状态标题是用户唯一的
+        # 常驻可见反馈，只显示「已连接」会让配置端口的失效完全隐形。
+        self._refresh_status_title()
         self._update_status_item_visibility()
         self._update_icon()
 
@@ -997,6 +1026,16 @@ class AppController(NSObject):
                             )
                     restart_count = 0
                     crash_logger.warning("Proxy restarted successfully")
+                    # 重启后端口可能已漂移（这正是僵尸 listener 现场的形状）：
+                    # 提示用户 + 刷新状态栏，而不是默默把系统代理改到新端口。
+                    fallback_message = self.proxy.port_fallback_message()
+                    if fallback_message:
+                        self._run_on_main(
+                            lambda: self._show_notification(
+                                "BlockProxyClient", "本地代理端口已变更", fallback_message
+                            )
+                        )
+                        self._run_on_main(self._refresh_status_title)
                 except Exception as e:
                     crash_logger.warning(
                         "Proxy restart failed: %s", e, exc_info=True
