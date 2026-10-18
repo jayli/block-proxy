@@ -3,13 +3,14 @@ const path = require('path');
 const net = require('net');
 const dgram = require('dgram');
 const tls = require('tls');
+const http2 = require('http2');
 const crypto = require('crypto');
 const fs = require('fs');
 const _fs = require('../proxy/fs.js');
 const domain = require('../proxy/domain.js');
 const attacker = require('../proxy/attacker.js');
 const tempCredentials = require('../proxy/temp-credentials.js');
-const { pipeline } = require('stream');
+const { pipeline, Duplex } = require('stream');
 const fdDiagnostics = require('../proxy/fd-diagnostics');
 
 const { ensureTempCert } = require('../cert/generator');
@@ -101,6 +102,57 @@ function sendResponse(socket, status, atyp = 0x01, bindAddr = '0.0.0.0', bindPor
   resp.writeUInt16BE(bindPort, atyp === 0x01 ? 8 : (atyp === 0x03 ? 5 : 20));
   const len = atyp === 0x01 ? 10 : (atyp === 0x03 ? 5 + resp[4] + 2 : 22);
   socket.write(resp.slice(0, len));
+}
+
+// 读够 minBytes（或遇到 0x05）为止，全程用 readable 模式，中间字节不会丢。
+function readPrefixWithTimeout(socket, minBytes, timeoutMs, stage) {
+  return new Promise((resolve, reject) => {
+    let buffer = Buffer.alloc(0);
+    let timer = null;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      socket.removeListener('readable', onReadable);
+      socket.removeListener('end', onEnd);
+      socket.removeListener('close', onClose);
+      socket.removeListener('error', onError);
+    };
+    const finish = () => {
+      cleanup();
+      resolve(buffer);
+    };
+    const onReadable = () => {
+      let chunk = socket.read();
+      while (chunk !== null) {
+        buffer = Buffer.concat([buffer, chunk]);
+        chunk = socket.read();
+      }
+      if (buffer.length >= minBytes || (buffer.length > 0 && buffer[0] === 0x05)) finish();
+    };
+    const onEnd = () => {
+      cleanup();
+      reject(new Error(`${stage} ended`));
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error(`${stage} closed`));
+    };
+    const onError = (err) => {
+      cleanup();
+      reject(err);
+    };
+
+    timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`${stage} timeout`));
+    }, timeoutMs);
+    timer.unref?.();
+
+    socket.on('readable', onReadable);
+    socket.once('end', onEnd);
+    socket.once('close', onClose);
+    socket.once('error', onError);
+    onReadable();
+  });
 }
 
 function readOnceWithTimeout(socket, timeoutMs, stage) {
@@ -513,6 +565,93 @@ function createConnectionHandler(options) {
   };
 }
 
+// 把（可能已读掉首包的）TLS socket 包装成 http2 可用的 Duplex：
+// Node 的 http2 session 直接消费 socket._handle，JS 层 unshift 的首包会被
+// 绕过，所以这里把已读出的分片在新流的 _read 里重放。
+class PrefixedDuplex extends Duplex {
+  constructor(socket, prefix) {
+    super();
+    this._socket = socket;
+    this._prefix = prefix;
+    this._pushPrefix = prefix.length > 0;
+    this._pumping = false;
+    // 先暂停：前缀必须在任何后续字节之前进可读缓冲
+    socket.pause();
+    socket.on('error', (err) => this.destroy(err));
+    socket.on('close', () => {
+      if (!this.destroyed) this.destroy();
+    });
+    this.on('drain', () => socket.resume());
+  }
+
+  _startPumping() {
+    if (this._pumping) return;
+    this._pumping = true;
+    this._socket.on('data', (chunk) => {
+      if (!this.push(chunk)) this._socket.pause();
+    });
+    this._socket.on('end', () => this.push(null));
+  }
+
+  get remoteAddress() {
+    return this._socket.remoteAddress;
+  }
+
+  get remotePort() {
+    return this._socket.remotePort;
+  }
+
+  get encrypted() {
+    return this._socket.encrypted;
+  }
+
+  address() {
+    return this._socket.address();
+  }
+
+  setNoDelay(value) {
+    try { this._socket.setNoDelay(value); } catch (e) {}
+  }
+
+  setTimeout(ms, callback) {
+    try { this._socket.setTimeout(ms, callback); } catch (e) {}
+  }
+
+  _read() {
+    if (this._pushPrefix) {
+      this._pushPrefix = false;
+      this.push(this._prefix);
+    }
+    this._startPumping();
+    this._socket.resume();
+  }
+
+  _write(chunk, encoding, callback) {
+    this._socket.write(chunk, callback);
+  }
+
+  _final(callback) {
+    this._socket.end();
+    callback();
+  }
+
+  _destroy(err, callback) {
+    this._socket.destroy();
+    callback(err);
+  }
+}
+
+// 包装 Duplex 后 http2 session 的 socket 是 Node 的 JSStreamSocket（拿不到
+// remoteAddress），所以用 session → 真实 socket 的映射取客户端 IP。
+// 'session' 事件在 emit('connection') 内同步触发，h2PendingSocket 可靠对应。
+const h2SessionSockets = new WeakMap();
+let h2PendingSocket = null;
+
+function h2RealSocket(session) {
+  if (!session) return null;
+  return h2SessionSockets.get(session) || session.socket || null;
+}
+
 // 解析 CONNECT 目标：host:port / [ipv6]:port / host（缺省 443）
 function parseConnectTarget(target) {
   let host;
@@ -541,6 +680,29 @@ function parseConnectTarget(target) {
   return { host, port };
 }
 
+// 公网代理认证校验：未配置用户名则放行；命中主凭据或后台生成的临时凭据均可。
+// 8002 的 HTTP/1.1、HTTP/2 两条路径共用该语义。
+function checkProxyAuthCredentials(authCredentials, headers) {
+  const expectedUser = authCredentials.username;
+  const expectedPass = authCredentials.password;
+  if (expectedUser === undefined || expectedUser === '') return true;
+  const authHeader = headers['proxy-authorization'];
+  if (!authHeader || !authHeader.startsWith('Basic ')) return false;
+  let decoded;
+  try {
+    decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf8');
+  } catch (e) {
+    return false;
+  }
+  const sep = decoded.indexOf(':');
+  if (sep === -1) return false;
+  const user = decoded.slice(0, sep);
+  const pass = decoded.slice(sep + 1);
+  if (user === expectedUser && pass === expectedPass) return true;
+  // 主凭据不匹配时，再查后台生成的临时凭据（仅 8001/8002，隧道不接入）
+  return tempCredentials.isValid(user, pass);
+}
+
 // 公网 HTTP 代理（over TLS）处理器：仅支持 CONNECT 隧道。
 // 认证语义与 SOCKS5/8001 一致：auth_username 为空则放行，否则要求
 // Proxy-Authorization: Basic 与配置完全匹配。认证在 8002 侧完成，
@@ -563,24 +725,7 @@ function createHttpConnectHandler(options) {
   const authRequired = authCredentials.username !== undefined && authCredentials.username !== '';
 
   function checkProxyAuth(headers) {
-    const expectedUser = authCredentials.username;
-    const expectedPass = authCredentials.password;
-    if (expectedUser === undefined || expectedUser === '') return true;
-    const authHeader = headers['proxy-authorization'];
-    if (!authHeader || !authHeader.startsWith('Basic ')) return false;
-    let decoded;
-    try {
-      decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf8');
-    } catch (e) {
-      return false;
-    }
-    const sep = decoded.indexOf(':');
-    if (sep === -1) return false;
-    const user = decoded.slice(0, sep);
-    const pass = decoded.slice(sep + 1);
-    if (user === expectedUser && pass === expectedPass) return true;
-    // 主凭据不匹配时，再查后台生成的临时凭据（仅 8001/8002，隧道不接入）
-    return tempCredentials.isValid(user, pass);
+    return checkProxyAuthCredentials(authCredentials, headers);
   }
 
   function sendError(socket, statusLine) {
@@ -780,6 +925,236 @@ function createPublicProxyHandler(options) {
   };
 }
 
+// 8002 HTTP/2 处理器：ALPN 协商出 h2 后，同一条 TLS 连接上的每条 CONNECT 流
+// 对应一条独立隧道（下游仍是 8001 的 HTTP CONNECT，拦截/MITM 能力不变）。
+function createHttp2ConnectHandler(options) {
+  const downstreamProxyPort = options.downstreamProxyPort;
+  const downstreamProxyHost = options.downstreamProxyHost || DOWNSTREAM_HTTP_PROXY_HOST;
+  const authCredentials = options.authCredentials || {};
+  const maxTcpConnects = Number.isFinite(options.maxTcpConnects)
+    ? options.maxTcpConnects
+    : DEFAULT_MAX_TCP_CONNECTS;
+  const logger = options.logger || console;
+  // 默认复用 proxy/attacker.js 的全局 IP 限频状态（与 8001 共享）；测试可注入
+  const attackerModule = options.attacker || attacker;
+
+  const authRequired = authCredentials.username !== undefined && authCredentials.username !== '';
+
+  let activeTunnels = 0;
+  let activeSessions = 0;
+
+  function respond(stream, status, extraHeaders) {
+    if (!stream || stream.destroyed || stream.closed) return;
+    const headers = { ':status': status };
+    if (status === 407) headers['proxy-authenticate'] = 'Basic realm="BlockProxy"';
+    if (extraHeaders) Object.assign(headers, extraHeaders);
+    try {
+      stream.respond(headers);
+      stream.end();
+    } catch (e) {
+      // 对端已 RST_STREAM：respond 会抛，忽略
+    }
+  }
+
+  const h2Server = http2.createServer({
+    settings: { maxConcurrentStreams: maxTcpConnects },
+  });
+
+  h2Server.on('session', (session) => {
+    activeSessions++;
+    if (h2PendingSocket) h2SessionSockets.set(session, h2PendingSocket);
+    const clientSocket = h2RealSocket(session);
+    const remote = clientSocket ? getRemotePeer(clientSocket) : 'unknown';
+    logger.log(`[H2] session open remote=${remote} sessions=${activeSessions}`);
+    session.on('error', (err) => {
+      logger.warn(`[H2] session error remote=${remote}: ${err.message}`);
+    });
+    session.on('close', () => {
+      activeSessions--;
+      logger.log(`[H2] session closed remote=${remote} sessions=${activeSessions}`);
+    });
+  });
+
+  h2Server.on('sessionError', (err) => {
+    logger.warn(`[H2] session error: ${err.message}`);
+  });
+
+  h2Server.on('stream', (stream, headers) => {
+    // 每条流的错误都要有监听器：公网端口上对端随时可能 RST
+    stream.on('error', () => {});
+
+    if (headers[':method'] !== 'CONNECT') {
+      respond(stream, 501);
+      return;
+    }
+    const target = parseConnectTarget(headers[':authority'] || '');
+    if (!target) {
+      respond(stream, 400);
+      return;
+    }
+
+    const clientSocket = h2RealSocket(stream.session);
+    const clientIp = clientSocket ? getRemoteIp(clientSocket) : 'unknown';
+
+    if (authRequired) {
+      if (attackerModule.isBadGuy(clientIp)) {
+        logger.warn(`[🚫]>> 拦截 badguy ${clientIp} (HTTP/2 proxy)`);
+        respond(stream, 407);
+        try { stream.session.close(); } catch (e) {}
+        return;
+      }
+      if (!checkProxyAuthCredentials(authCredentials, headers)) {
+        logger.warn(`HTTP/2 proxy auth failed remote=${clientIp} target=${target.host}:${target.port}`);
+        attackerModule.countIPAccess(clientIp);
+        respond(stream, 407);
+        return;
+      }
+      attackerModule.setGoodGuy(clientIp);
+    }
+
+    if (activeTunnels >= maxTcpConnects) {
+      logger.warn(`HTTP/2 CONNECT rejected: too many concurrent connections (${activeTunnels}/${maxTcpConnects})`);
+      respond(stream, 503);
+      return;
+    }
+
+    activeTunnels++;
+    let cleaned = false;
+    let proxySocket = null;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      activeTunnels--;
+      if (proxySocket && !proxySocket.destroyed) proxySocket.destroy();
+    };
+    // 下游 RST 不会触发 pipe 的 end：不主动重置的话客户端既收不到数据也收不到
+    // EOF，只能等 relay 的空闲超时（5 分钟）。正常 FIN 时 writableEnded 已为
+    // true，此时不能补 RST，否则会截断客户端仍在发送的方向。
+    const tearDownStreamIfOpen = () => {
+      if (!stream || stream.destroyed || stream.closed || stream.writableEnded) return;
+      try {
+        stream.close(http2.constants.NGHTTP2_INTERNAL_ERROR);
+      } catch (e) {}
+    };
+
+    proxySocket = net.connect(downstreamProxyPort, downstreamProxyHost, () => {
+      proxySocket.write(`CONNECT ${target.host}:${target.port} HTTP/1.1\r\nHost: ${target.host}:${target.port}\r\n\r\n`);
+
+      const chunks = [];
+      let totalLen = 0;
+      const onProxyData = (chunk) => {
+        if (stream.destroyed || proxySocket.destroyed) return;
+        chunks.push(chunk);
+        totalLen += chunk.length;
+        if (totalLen > HTTP_MAX_HEAD_BYTES) {
+          respond(stream, 502);
+          cleanup();
+          return;
+        }
+        const buf = Buffer.concat(chunks, totalLen);
+        const end = buf.indexOf('\r\n\r\n');
+        if (end === -1) return;
+        proxySocket.removeListener('data', onProxyData);
+
+        const headText = buf.slice(0, end).toString('latin1');
+        const statusLine = headText.split('\r\n')[0];
+        const match = statusLine.match(/^HTTP\/1\.[01] (\d{3})/);
+        const status = match ? Number(match[1]) : 502;
+        if (status < 200 || status > 299) {
+          const challenge = /^proxy-authenticate:\s*(.+)$/im.exec(headText);
+          respond(stream, status, challenge ? { 'proxy-authenticate': challenge[1].trim() } : null);
+          cleanup();
+          return;
+        }
+
+        try {
+          stream.respond({ ':status': 200 });
+        } catch (e) {
+          // 流已被对端重置：不必再建隧道
+          cleanup();
+          return;
+        }
+        const leftover = buf.slice(end + 4);
+        if (leftover.length > 0) stream.write(leftover);
+        stream.pipe(proxySocket);
+        proxySocket.pipe(stream);
+      };
+      proxySocket.on('data', onProxyData);
+    });
+
+    proxySocket.on('error', (err) => {
+      logger.warn(`HTTP/2 proxy upstream error: ${err.message}`);
+      respond(stream, 502);
+      cleanup();
+      tearDownStreamIfOpen();
+    });
+    proxySocket.on('close', () => {
+      cleanup();
+      if (!proxySocket.readableEnded) tearDownStreamIfOpen();
+    });
+    stream.on('close', cleanup);
+  });
+
+  return h2Server;
+}
+
+// 8002 端口分发器：TLS ALPN 协商出 h2 时交给 HTTP/2 处理器，
+// 否则（含老客户端完全不发 ALPN）走原有首字节分发，行为不变。
+function createPublicProxyDispatcher(options) {
+  const fallback = createPublicProxyHandler(options);
+  const h2Server = options.enableH2 === false ? null : createHttp2ConnectHandler(options);
+  const handshakeTimeoutMs = options.handshakeTimeoutMs || SOCKS5_HANDSHAKE_TIMEOUT_MS;
+  const logger = options.logger || console;
+
+  // 只有真的发出 HTTP/2 连接前言的才交给 http2 解析。ALPN=h2 只证明客户端
+  // 支持 h2：xray/v2rayU 常把 h2 放进 ALPN 列表却仍说 SOCKS5/HTTP1.1，
+  // 直接按 ALPN 分发会把它们的握手字节灌进 h2 解析器（老版本能正常用）。
+  function dispatchH2ByFirstBytes(socket) {
+    const detect = async () => {
+      const buffer = await readPrefixWithTimeout(
+        socket, 4, handshakeTimeoutMs, 'ALPN h2 preface'
+      );
+      if (buffer[0] !== 0x05 && buffer.slice(0, 4).toString('latin1') === 'PRI ') {
+        const wrapped = new PrefixedDuplex(socket, buffer);
+        h2PendingSocket = socket;
+        try {
+          h2Server.emit('connection', wrapped);
+        } finally {
+          h2PendingSocket = null;
+        }
+      } else {
+        socket.unshift(buffer);
+        fallback(socket);
+        socket.resume();
+      }
+    };
+    detect().catch((err) => {
+      logger.warn(`Public HTTP/2 preface detection failed: ${err.message}`);
+      socket.destroy();
+    });
+  }
+
+  function handleConnection(socket) {
+    if (h2Server && socket.alpnProtocol === 'h2') {
+      socket.on('error', (err) => {
+        logger.warn(`Public HTTP/2 proxy socket error (ignored): ${err.message}`);
+      });
+      dispatchH2ByFirstBytes(socket);
+      return;
+    }
+    fallback(socket);
+  }
+
+  return {
+    h2Server,
+    handleConnection,
+    close() {
+      if (!h2Server) return;
+      try { h2Server.close(); } catch (e) {}
+    },
+  };
+}
+
 async function init() {
   try {
     // 确保 ECC P-256 临时 TLS 证书存在（首次启动自动生成，之后跳过）
@@ -812,7 +1187,7 @@ async function init() {
       password: loadedConfig.auth_password,
     };
 
-    const protectedConnectionHandler = createPublicProxyHandler({
+    const dispatcher = createPublicProxyDispatcher({
       downstreamProxyPort: DOWNSTREAM_HTTP_PROXY_PORT,
       downstreamProxyHost: DOWNSTREAM_HTTP_PROXY_HOST,
       authCredentials: AUTH_CREDENTIALS,
@@ -828,9 +1203,12 @@ async function init() {
         cert: TLS_CERT,
         minVersion: 'TLSv1.2',
         sessionTimeout: 300,
+        // 客户端提 h2 时同一条连接上复用多条 CONNECT 隧道；
+        // 不提 ALPN 的老客户端（SOCKS5 / HTTP1.1）仍走首字节分发。
+        ALPNProtocols: ['h2', 'http/1.1'],
         ticketKeys: ticketKeys
       };
-      server = tls.createServer(tlsOptions, protectedConnectionHandler);
+      server = tls.createServer(tlsOptions, dispatcher.handleConnection);
 
       server.on('clientError', (err, socket) => {
         console.warn('TLS client error during handshake:', err);
@@ -842,7 +1220,7 @@ async function init() {
         tlsSocket?.destroy();
       });
     } else {
-      server = net.createServer(protectedConnectionHandler);
+      server = net.createServer(dispatcher.handleConnection);
     }
 
     server.on('error', (err) => {
@@ -864,6 +1242,7 @@ async function init() {
       console.log(`✅ \x1b[32mSOCKS5/HTTP${tlsLabel} 公网代理服务启动，IP ${localIp}, 端口 ${LISTEN_PORT}\x1b[0m`);
       if (enableTls) {
         console.log(`🔒 传输加密和认证基于 TLS`);
+        console.log(`🔄 ALPN h2 复用已启用（同一条连接承载多条 CONNECT 隧道，未协商则回退 HTTP/1.1）`);
       }
       console.log(`➡️  SOCKS5 TCP / HTTP CONNECT → 流量转发至 HTTP 代理 → ${DOWNSTREAM_HTTP_PROXY_HOST}:${DOWNSTREAM_HTTP_PROXY_PORT}`);
       console.log(`➡️  UDP → 直接发起请求`);
@@ -878,7 +1257,10 @@ module.exports.init = init;
 module.exports._test = {
   createConnectionHandler,
   createHttpConnectHandler,
+  createHttp2ConnectHandler,
   createPublicProxyHandler,
+  createPublicProxyDispatcher,
+  checkProxyAuthCredentials,
   parseConnectTarget,
   DEFAULT_MAX_TCP_CONNECTS,
   SOCKS5_HANDSHAKE_TIMEOUT_MS,

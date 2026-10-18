@@ -15,6 +15,7 @@ logger = logging.getLogger("proxy_core")
 
 from logger import access_logger, crash_logger, diagnostics_logger
 from node_connect import open_node_connection
+from h2_upstream import H2UpstreamPool, H2_AVAILABLE
 from traffic_stats import add_bytes, flush as flush_stats, init_writer
 
 
@@ -793,6 +794,8 @@ class UpstreamPool:
         self._task = None
 
     async def start(self):
+        if self._task is not None:
+            return
         self._running = True
         self._task = asyncio.ensure_future(self._maintain())
 
@@ -945,6 +948,8 @@ class ProxyCore:
         self._on_edr_blocked = None
         self._on_edr_recovered = None
         self._upstream_pool = None
+        self._h2_pool = None
+        self._h2_ssl_ctx = None
         self._active_connections = 0
         self._last_proxy_activity = time.monotonic()
         self._recycle_task = None
@@ -1025,6 +1030,7 @@ class ProxyCore:
             self._cert_pin = ""
             self._cert_pin_mismatch_reported = False
             self._ssl_ctx = None
+            self._h2_ssl_ctx = None
             return
         self._cert_bind_enabled = bool(server.get("certBindEnabled", False))
         self._cert_pin = server.get("certPin", "") or ""
@@ -1034,6 +1040,16 @@ class ProxyCore:
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
         self._ssl_ctx = ctx
+        # h2 必须用独立的 SSLContext：基础上下文一旦宣告 ALPN，健康检查、
+        # 延迟探测等 HTTP/1.1 路径会被协商成 h2 而解析失败。
+        self._h2_ssl_ctx = None
+        if server.get("protocol") == "http" and H2_AVAILABLE:
+            h2_ctx = ssl.create_default_context()
+            if server["allowInsecure"]:
+                h2_ctx.check_hostname = False
+                h2_ctx.verify_mode = ssl.CERT_NONE
+            h2_ctx.set_alpn_protocols(["h2", "http/1.1"])
+            self._h2_ssl_ctx = h2_ctx
 
     def start(self, user_config, config_dir=None):
         if self._running:
@@ -1369,6 +1385,7 @@ class ProxyCore:
         self._http_server = None
         protocol = self._server_config.get("protocol", "socks5")
         self._upstream_pool = None
+        self._h2_pool = None
         max_attempts = 100
         for attempt in range(max_attempts):
             try:
@@ -1387,7 +1404,15 @@ class ProxyCore:
                         self._server_config, self._ssl_ctx,
                         verify_cert_pin=self._verify_cert_pin if self._cert_bind_enabled else None,
                     )
-                    await self._upstream_pool.start()
+                    if protocol == "http" and self._h2_ssl_ctx is not None:
+                        # HTTP/2 生效时不预连 HTTP/1.1 套接字：降级时才开始
+                        self._h2_pool = H2UpstreamPool(
+                            self._server_config, self._h2_ssl_ctx,
+                            verify_cert_pin=self._verify_cert_pin if self._cert_bind_enabled else None,
+                        )
+                        await self._h2_pool.start()
+                    else:
+                        await self._upstream_pool.start()
                 return
             except OSError as e:
                 if allow_port_retry and e.errno == 48 and attempt < max_attempts - 1:
@@ -1497,6 +1522,12 @@ class ProxyCore:
         # 若 close() 排在 await 之后，旧 listener 就永久泄漏：内核继续完成
         # 三次握手但无人 accept，accept 队列塞满后新连接一律 ETIMEDOUT。
         self._close_listen_sockets()
+        if self._h2_pool:
+            h2_pool, self._h2_pool = self._h2_pool, None
+            try:
+                await h2_pool.stop()
+            except (OSError, RuntimeError):
+                pass
         if self._upstream_pool:
             pool, self._upstream_pool = self._upstream_pool, None
             try:
@@ -1821,6 +1852,13 @@ class ProxyCore:
     async def _connect_upstream(self, dest_addr, dest_port):
         protocol = self._server_config.get("protocol", "socks5")
         if protocol == "http":
+            if self._h2_pool is not None and not self._h2_pool.disabled:
+                pair = await self._h2_pool.connect(dest_addr, dest_port)
+                if pair is not None:
+                    return pair
+                # 服务端没协商到 h2：本代配置内不再尝试，改用 HTTP/1.1 路径
+                if self._upstream_pool is not None:
+                    await self._upstream_pool.start()
             if self._upstream_pool:
                 return await self._connect_with_pool(
                     dest_addr, dest_port, _http_connect_handshake

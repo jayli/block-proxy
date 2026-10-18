@@ -208,7 +208,7 @@ pm2 start server/start.js --name "block-proxy" -- --pubkey /root/block-proxy/yui
 
 ## 公网代理（SOCKS5 / HTTP over TLS）
 
-8002 是面向公网的代理端口，强制 TLS 加密。同一个端口上按首字节自动区分协议：`0x05` 走 SOCKS5，HTTP 方法名走 HTTP CONNECT。适合在公网环境下安全使用（如 macOS 客户端在公司或外出时连回家中代理）。需要客户端支持 socks/http 套 tls 才可以（因为我用的是自签证书，需要客户端勾选“AllowInsecure/允许不安全”），通常 xray、v2rayU 等工具支持。[block-proxy 客户端](https://github.com/jayli/block-proxy/releases)也支持。
+8002 是面向公网的代理端口，强制 TLS 加密。同一个端口上按 ALPN/首字节自动区分协议：TLS 协商出 `h2` 时在同一连接上多路复用多条 HTTP/2 CONNECT 隧道；否则 `0x05` 走 SOCKS5，HTTP 方法名走 HTTP/1.1 CONNECT。适合在公网环境下安全使用（如 macOS 客户端在公司或外出时连回家中代理）。需要客户端支持 socks/http 套 tls 才可以（因为我用的是自签证书，需要客户端勾选“AllowInsecure/允许不安全”），通常 xray、v2rayU 等工具支持。[block-proxy 客户端](https://github.com/jayli/block-proxy/releases)也支持（升级到含 HTTP/2 支持的客户端版本后，`protocol=http` 会自动协商 HTTP/2，老版本客户端仍走 HTTP/1.1）。
 
 ### 服务端开启 TLS
 
@@ -219,7 +219,7 @@ pm2 start server/start.js --name "block-proxy" -- --pubkey /root/block-proxy/yui
 **数据流向：**
 
 ```
-客户端 → TLS 加密连接 → SOCKS5/HTTP CONNECT(8002) → CONNECT 隧道 → HTTP 代理(8001) → 目标服务器
+客户端 → TLS 加密连接（ALPN: h2 / http/1.1）→ SOCKS5 / HTTP CONNECT / HTTP/2 CONNECT(8002) → CONNECT 隧道 → HTTP 代理(8001) → 目标服务器
 ```
 
 SOCKS5 还支持 UDP over TCP（通过自定义帧协议在 TLS 隧道中承载 UDP 流量），可用于游戏、语音等 UDP 应用代理。
@@ -228,6 +228,23 @@ SOCKS5 还支持 UDP over TCP（通过自定义帧协议在 TLS 隧道中承载 
 
 8002 端口同时提供 HTTPS 代理（HTTP over TLS）能力：客户端先与 8002 建立 TLS 连接，再在隧道内发送 `CONNECT host:port HTTP/1.1`。
 
+#### HTTP/2 复用（自动协商）
+
+TLS 握手时服务端宣告 `h2` 与 `http/1.1`：
+
+- 客户端也支持 h2（ALPN 选出 `h2`）→ 一条 TLS 连接上并发多条 `CONNECT` 流，省掉每条连接重新握手的开销；每条流仍独立转给 8001，拦截/MITM/认证语义不变。
+- 客户端不发送 ALPN（老客户端、xray/v2rayU 等）→ 完全按原来的首字节分发，行为不变。
+- 服务端是老版本（没有 h2）→ 客户端自动降级回 HTTP/1.1，功能不受影响。
+
+标准 h2 客户端也可直接用，例如：
+
+```bash
+# HTTPS 目标：curl 会以 HTTP/2 CONNECT 流穿过 8002
+curl -x https://user:pass@<服务器IP>:8002 --proxy-insecure --proxy-http2 -k https://example.com
+```
+
+注意：h2 路径只承载 CONNECT 隧道（与 HTTP/1.1 一致）；明文绝对 URI 请求（如 `GET http://example.com/`）仍返回 `501`。
+
 - 认证：与 SOCKS5 共用 `auth_username` / `auth_password`。用户名留空则不校验；否则要求 `Proxy-Authorization: Basic`，失败返回 `407`。凭据在 8002 侧校验后不会透传给下游。
 - 拦截/MITM/访问日志：与 SOCKS5 一致，流量统一转给 8001 处理，因此域名拦截、URL 重写、MITM 解密全部生效。
 - 不支持：明文绝对 URI 请求（如 `GET http://example.com/`）返回 `501`，请一律使用 CONNECT；MAC 定向拦截同样不适用（同 SOCKS5，来源 IP 为服务端本机）。
@@ -235,7 +252,10 @@ SOCKS5 还支持 UDP over TCP（通过自定义帧协议在 TLS 隧道中承载 
 命令行验证（自签证书需 `--proxy-insecure`）：
 
 ```bash
+# HTTP/1.1 CONNECT（任意 curl 版本）
 curl -x https://user:pass@<服务器IP>:8002 --proxy-insecure -k https://example.com
+# HTTP/2 CONNECT（curl >= 8 且构建时带 HTTP/2 支持）
+curl -x https://user:pass@<服务器IP>:8002 --proxy-insecure --proxy-http2 -k https://example.com
 ```
 
 ### 关闭 TLS（纯 TCP）

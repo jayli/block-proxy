@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (and other agents via the AGENTS.md s
 - `npm run start` / `npm run express` – 后端 + 代理（生产）；`npm run proxy` / `npm run socks5` – 仅代理 / 仅 SOCKS5
 
 ### Testing
-- `npm run test:proxy-core` – proxy-core 连接测试（无需代理服务）；`npm run test:proxy` – 代理连通性/性能/吞吐量测试（即 `node test/run.js`，默认连 127.0.0.1:8001/8002、认证 admin/admin，需先启动代理；加 `-- --auto-start` 自动拉起、`-- --skip-external` 跳过外网站点）；`npm run test:public-proxy` – 8002 公网代理协议分发测试（SOCKS5 / HTTP CONNECT over TLS）
+- `npm run test:proxy-core` – proxy-core 连接测试（无需代理服务）；`npm run test:proxy` – 代理连通性/性能/吞吐量测试（即 `node test/run.js`，默认连 127.0.0.1:8001/8002、认证 admin/admin，需先启动代理；加 `-- --auto-start` 自动拉起、`-- --skip-external` 跳过外网站点）；`npm run test:public-proxy` – 8002 公网代理测试（`public-proxy-protocol-tests.js` 首字节分发 / SOCKS5 / HTTP CONNECT，`public-proxy-h2-tests.js` ALPN h2 多路复用与回退）
 - `npm run test:registry` / `npm run test:mitm-runtime` – MITM 规则注册 / 运行时测试
 - `npm run test:access-logger` – 访问日志单元测试 + 与真实代理钩子的集成测试
 - `npm run test:temp-credentials` – 临时代理凭据单元测试（生成/过期/撤销/20 条裁剪）
@@ -49,7 +49,7 @@ MITM proxy for parental control & ad blocking. Node.js + React + proxy-core (Any
 | 端口 | 用途 |
 | --- | --- |
 | 8001 | 内网 HTTP proxy (mandatory, proxy-core) |
-| 8002 | 公网代理 SOCKS5 / HTTP CONNECT over TLS (optional, 同端口按首字节分发) |
+| 8002 | 公网代理 SOCKS5 / HTTP CONNECT over TLS (optional；ALPN 协商出 h2 时同连接多路复用 CONNECT 流，否则按首字节分发) |
 | 8003 | Tunnel server (reverse tunnel, HTTP/2 + allowHTTP1) |
 | 8004 | Express admin API |
 | 3000 | React dev server (dev only) |
@@ -60,7 +60,7 @@ MITM proxy for parental control & ad blocking. Node.js + React + proxy-core (Any
 - **Dev**: `npm run dev` → full stack with dev flag
 
 ### Request Flow
-Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 / HTTP CONNECT (8002, TLS) → 认证 → CONNECT → 8001；Tunnel xhttp (8003) → 8001
+Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 / HTTP CONNECT / HTTP/2 CONNECT (8002, TLS + ALPN) → 认证 → CONNECT → 8001；Tunnel xhttp (8003) → 8001
 
 ### Core Components
 - **Proxy** (`/proxy/`) – `proxy.js` 入口, `attacker.js` 拦截判断, `domain.js` host 匹配, `fs.js` config 读写备份, `scan.js` 每 2h 扫描局域网设备表(状态与并发去重), 实际扫描在 `lan-scan.js`(原生 UDP 探测 + 内核邻居表解析, 不依赖 arp/ping 命令; 只扫 10/8 与 192.168/16 且排除 172.*, 全量替换而非追加), `mitm/rule.js` 规则 + 响应修改器(YouTube 去广告/有道 VIP), `http.js` HTTP 助手, `monitor.js` 系统指标, `operator.js` 管理路由, `wanip.js` 公网 IP, `access-logger.js` 访问日志(按 MAC 记录被监控设备访问其拦截域名), `temp-credentials.js` 临时代理凭据(7 天有效, 仅 8001/8002), `auth-bypass-hosts.js` 认证豁免白名单(内置 auth_bypass_hosts.json 只读 + 临时 temp_auth_bypass_hosts.json 可增删, 仅 8001), `fd-diagnostics.js` fd/TCP 诊断; `mitm/` 另含 `registry.js`(规则注册), `persistentStore.js`, `uaFilter.js`, `ydcd/`, `youtube/`
@@ -68,7 +68,7 @@ Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 / HTTP 
   - 证书存储: `~/.anyproxy` → 项目本地 `certificates/`；`X-Tunnel-Relay: 1` 头注入 tunnel CONNECT 响应
   - ECONNRESET/EPIPE 自动重试一次 (GET/HEAD/OPTIONS)；keep-alive `maxRequestsPerSocket: 50` 防 gRPC RST_STREAM；流式响应阈值 20MB (无 responseRules 时 64KB)
   - 剥离 MITM 响应中的 `Alt-Svc` 头，防止客户端学到 h3/QUIC 入口绕过 TCP 代理
-- **SOCKS5** (`/socks5/`) – 8002 公网代理端口，SOCKS5 over TLS + UDP over TCP(自定义帧) + HTTP CONNECT over TLS: `server.js`(含 `createPublicProxyHandler` 首字节协议分发、`createHttpConnectHandler` HTTP CONNECT 隧道), `start.js`, `test_tls_reuse.js`; 客户端 `client/proxy_core.py` (asyncio 实现)
+- **SOCKS5** (`/socks5/`) – 8002 公网代理端口，SOCKS5 over TLS + UDP over TCP(自定义帧) + HTTP CONNECT over TLS + HTTP/2 CONNECT(ALPN h2 多路复用): `server.js`(`createPublicProxyDispatcher` 按 ALPN/首字节分发、`createHttpConnectHandler` HTTP/1.1 隧道、`createHttp2ConnectHandler` 解密的 TLSSocket 交给内置 `http2.createServer()` 处理 CONNECT 流), `start.js`, `test_tls_reuse.js`; 客户端 `client/proxy_core.py` + `client/h2_upstream.py` (asyncio 实现)
 - **Tunnel** (`/tunnel/`) – xhttp 传输协议（HTTP POST 上行 + SSE 下行）: `server.js`(HTTP/2 入口), `xhttpHandler.js`(核心处理器), `uploadQueue.js`(上行帧重排序), `protocol.js`(帧编解码), `manager.js`(连接生命周期), `sseControl.js`(旧 SSE 适配), `disguiseResponse.js`(HTTPS 伪装)
 - **Server** (`/server/`) – Express API (8004), 托管 React build, token cookie 认证: `start.js`, `express.js`, `timestampConsole.js`, `util.js`
 - **Frontend** (`/src/`) – CRA + CRACO 管理界面, `App.js` 主组件
@@ -114,11 +114,11 @@ OpenWRT `--network=host` | Docker Node 18 Alpine 多阶段构建（npmmirror 源
 
 ## macOS Client (`/client/`)
 
-Pure Python（PyObjC UI + asyncio proxy core），Nuitka 编译原生二进制。v0.1.6。
+Pure Python（PyObjC UI + asyncio proxy core），Nuitka 编译原生二进制。v0.1.6。运行时依赖见 `client/requirements.txt`（含 `h2`，用于 8002 的 HTTP/2 CONNECT 复用）。
 
 ```
 main.py (入口, 单实例, 崩溃重启) → app.py (PyObjC 状态栏)
-  ├── proxy_core.py (asyncio SOCKS5/HTTP + UDP over TCP) / tunnel_client.py (xhttp 隧道 + 自动重连) / health_policy.py (健康检查重启窗口守卫)
+  ├── proxy_core.py (asyncio SOCKS5/HTTP + UDP over TCP) / h2_upstream.py (8002 HTTP/2 CONNECT 复用池) / tunnel_client.py (xhttp 隧道 + 自动重连) / health_policy.py (健康检查重启窗口守卫)
   ├── node_connect.py (节点连接: DoH 解析 → 多 IP 尝试 → TLS SNI 被安全软件拦截时降级不发 SNI, cert pin TOFU)
   ├── routing.py / geodata_loader.py / proto_parser.py (geosite/geoip 分流) / doh_resolver.py (DoH 解析节点)
   ├── super_dns_control.py / super_dns_window.py (Super DNS 域名管理)
@@ -130,6 +130,7 @@ main.py (入口, 单实例, 崩溃重启) → app.py (PyObjC 状态栏)
 功能/约束要点:
 - 纯 Python 替代 xray-core、纯 PyObjC 替代 rumps/tkinter（公司安全软件按二进制特征码拦截）
 - 本地代理与隧道生命周期解耦: 隧道断开本地代理继续运行, 后台重连；仅 tunnel 配置变化时只重启隧道
+- 8002 上游（protocol=socks5/http + tls）: `protocol=http` 时用独立 ALPN 上下文（`_h2_ssl_ctx`）协商 h2，一条连接多路复用 CONNECT 流；协商不到 h2 就一次性降级回 HTTP/1.1（`_ssl_ctx` 不宣告 ALPN，健康检查/延迟探测不受影响）；`socks5` 路径不进 h2
 - 私有地址直连 (127/8, 10/8, 172.16/12, 192.168/16), 可配置关闭；三种上游模式: SOCKS5 over TLS / HTTP CONNECT / UDP ASSOCIATE
 - DoH 解析节点: 默认 `dns.alidns.com` + bootstrap `223.5.5.5,223.6.6.6`
 - 窗口为独立进程（Nuitka 编译后 `sys.executable` 非 Python 解释器, 用 `subprocess.Popen` + 系统 Python）

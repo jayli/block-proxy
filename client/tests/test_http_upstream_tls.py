@@ -207,3 +207,156 @@ def test_measure_latency_verifies_cert_pin_for_http_over_tls(monkeypatch):
     assert failure is None, f"延迟探测失败: {failure}"
     assert latency is not None
     assert pinned == [ssl_object], "http over TLS 延迟探测未做证书 pin 校验"
+
+
+# ── HTTP/2 复用接线 ───────────────────────────────────────────
+
+class FakeH2Pool:
+    def __init__(self, result=None):
+        self.result = result
+        self.disabled = False
+        self.calls = []
+
+    async def connect(self, host, port):
+        self.calls.append((host, port))
+        return self.result
+
+
+class FakeLegacyPool:
+    def __init__(self):
+        self.started = False
+        self.acquired = False
+
+    async def start(self):
+        self.started = True
+
+    async def acquire(self):
+        self.acquired = True
+        raise LegacyPoolUsed()
+
+
+class LegacyPoolUsed(Exception):
+    pass
+
+
+def test_h2_pool_is_created_and_started_for_http_protocol():
+    async def scenario():
+        pc = proxy_core.ProxyCore()
+        pc._server_config = http_tls_config()
+        pc._ssl_ctx = object()
+        pc._h2_ssl_ctx = proxy_core.ssl.create_default_context()
+        pc._verify_cert_pin = None
+        pc._cert_bind_enabled = False
+        pc._configured_socks_port = 0
+        pc._configured_http_port = 0
+        pc._socks_port = 0
+        pc._http_port = 0
+        await pc._start_local_proxy(allow_port_retry=False)
+        try:
+            assert pc._h2_pool is not None
+            assert pc._h2_pool._task is not None, "h2 池未启动"
+            assert pc._h2_ssl_ctx is not None
+            assert pc._upstream_pool is not None
+            assert pc._upstream_pool._task is None, "h2 生效时不该预连 HTTP/1.1 套接字"
+        finally:
+            await pc._stop_local_proxy(force_abort=False)
+
+    asyncio.run(scenario())
+
+
+def test_socks5_protocol_does_not_create_h2_pool():
+    async def scenario():
+        config = http_tls_config()
+        config["protocol"] = "socks5"
+        pc = proxy_core.ProxyCore()
+        pc._server_config = config
+        pc._ssl_ctx = object()
+        pc._verify_cert_pin = None
+        pc._cert_bind_enabled = False
+        pc._configured_socks_port = 0
+        pc._configured_http_port = 0
+        pc._socks_port = 0
+        pc._http_port = 0
+        await pc._start_local_proxy(allow_port_retry=False)
+        try:
+            assert pc._h2_pool is None
+            assert pc._upstream_pool is not None
+            assert pc._upstream_pool._task is not None
+            assert pc._h2_ssl_ctx is None
+        finally:
+            await pc._stop_local_proxy(force_abort=False)
+
+    asyncio.run(scenario())
+
+
+def test_h2_ssl_context_has_alpn_and_base_context_does_not(monkeypatch):
+    class RecordingContext:
+        def __init__(self):
+            self.check_hostname = True
+            self.verify_mode = None
+            self.alpn = None
+
+        def set_alpn_protocols(self, protocols):
+            self.alpn = list(protocols)
+
+    monkeypatch.setattr(proxy_core.ssl, "create_default_context", RecordingContext)
+
+    pc = proxy_core.ProxyCore()
+    pc._server_config = http_tls_config()
+    pc._build_ssl_context()
+
+    assert pc._h2_ssl_ctx is not None
+    assert pc._h2_ssl_ctx.alpn == ["h2", "http/1.1"]
+    assert getattr(pc._ssl_ctx, "alpn", None) is None, "基础上下文不能宣告 ALPN"
+
+
+def test_h2_connect_returns_stream_pair_without_legacy_pool():
+    async def scenario():
+        pair = object()
+        pc = proxy_core.ProxyCore()
+        pc._server_config = http_tls_config()
+        pc._h2_pool = FakeH2Pool(result=pair)
+        pc._upstream_pool = FakeLegacyPool()
+
+        assert await pc._connect_upstream("target.example", 443) is pair
+        assert pc._h2_pool.calls == [("target.example", 443)]
+        assert pc._upstream_pool.started is False
+
+    asyncio.run(scenario())
+
+
+def test_h2_downgrade_starts_legacy_pool():
+    async def scenario():
+        pc = proxy_core.ProxyCore()
+        pc._server_config = http_tls_config()
+        pc._h2_pool = FakeH2Pool(result=None)
+        pc._upstream_pool = FakeLegacyPool()
+
+        try:
+            await pc._connect_upstream("target.example", 443)
+        except LegacyPoolUsed:
+            pass
+        else:
+            raise AssertionError("降级后没有走 HTTP/1.1 池")
+
+        assert pc._upstream_pool.started is True, "降级时必须启动旧池"
+        assert pc._upstream_pool.acquired is True
+
+    asyncio.run(scenario())
+
+
+def test_upstream_pool_start_is_idempotent(monkeypatch):
+    async def scenario():
+        pool = proxy_core.UpstreamPool(http_tls_config(), None)
+
+        async def fake_create_connection():
+            return FakeReader([]), FakeWriter()
+
+        monkeypatch.setattr(pool, "create_connection", fake_create_connection)
+        await pool.start()
+        task = pool._task
+        await pool.start()
+        assert pool._task is task, "重复 start 启动了第二个维护任务"
+        await pool.stop()
+
+    asyncio.run(scenario())
