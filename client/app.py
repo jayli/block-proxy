@@ -103,7 +103,6 @@ class AppController(NSObject):
         self._reconnecting = False
         self._disconnecting = False
         self._was_connected = False  # state before sleep
-        self._status_interrupted = False  # 状态项当前显示的是否为中断文案
         self._sleep_obs = None
         self._wake_obs = None
 
@@ -153,12 +152,13 @@ class AppController(NSObject):
         menu = NSMenu.alloc().init()
         menu.setAutoenablesItems_(False)
 
-        # 第一项：连接状态。已连接时可点击，点开日志面板（流量统计 tab）；
+        # 第一项：连接状态。已连接时可点击，但点击不做任何动作（不弹日志面板）；
         # 未连接时整项与下方分隔线一起隐藏，第一项直接是「启动代理」。
         # 可直接用原生菜单项：字体/颜色/左对齐由 AppKit 按普通菜单项渲染，
-        # 不再需要自定义 view。
+        # 不再需要自定义 view。action 传 None：菜单关闭 autoenablesItems，
+        # 无 action 的项仍可点击，只是点了什么也不发生。
         self.status_item = self._add_menu_item(
-            menu, self._status_title_connected(), "openStatusLog:"
+            menu, self._status_title_connected(), None
         )
         self.status_separator = NSMenuItem.separatorItem()
         menu.addItem_(self.status_separator)
@@ -244,13 +244,11 @@ class AppController(NSObject):
         self.global_item.setState_(1 if is_global else 0)
         self.manual_item.setState_(1 if not is_global else 0)
 
-    def _set_status_title(self, text, interrupted=False):
+    def _set_status_title(self, text):
         """更新状态项文字（原生菜单项，字体/颜色/左对齐由 AppKit 按普通菜单项渲染）。
 
-        interrupted=True 表示当前是「已中断」类文案，点击时定位到访问日志 tab；
-        正常已连接时点击定位到流量统计 tab。
+        状态项点击不触发任何动作，文案与点击行为完全解耦。
         """
-        self._status_interrupted = interrupted
         self.status_item.setTitle_(text)
 
     def _update_status_item_visibility(self):
@@ -266,6 +264,15 @@ class AppController(NSObject):
 
     def _status_title_connected(self, detail=None):
         name = self._status_protocol_name()
+        # 勾选了 TLS 时用 https / socks5+tls 标注，避免和明文代理看起来一样。
+        # tunnel 的 tls 字段不代表传输层（隧道本身固定走 TLS），不参与。
+        server = self.config.data.get("server", {})
+        protocol = server.get("protocol")
+        if server.get("tls"):
+            if protocol == "http":
+                name = "https"
+            elif protocol == "socks5":
+                name = "socks5+tls"
         # 中英文之间加空格，中文之间不加空格
         base = f"{name} 已连接" if name.isascii() else f"{name}已连接"
         return f"{base} - {detail}" if detail else base
@@ -285,8 +292,7 @@ class AppController(NSObject):
                 self._status_title_connected(
                     f"端口 {fallback['socks']}/{fallback['http']}，"
                     f"配置的 {fallback['configured_socks']}/{fallback['configured_http']} 被占用"
-                ),
-                interrupted=True,
+                )
             )
         else:
             self._set_status_title(self._status_title_connected())
@@ -528,13 +534,6 @@ class AppController(NSObject):
 
     def openLog_(self, sender):
         self._open_log_window("access")
-
-    def openStatusLog_(self, sender):
-        """点击状态项：已连接时看流量统计，中断时看访问日志。"""
-        if self._status_interrupted:
-            self._open_log_window("access")
-        else:
-            self._open_log_window("traffic")
 
     def _open_log_window(self, tab):
         """打开日志面板并定位到指定 tab（已在打开则忽略，与原有行为一致）。"""
@@ -1089,7 +1088,7 @@ class AppController(NSObject):
                         }
                         suffix = reason_map.get(failure_reason)
                         self._set_status_title(
-                            self._status_title_interrupted(suffix), interrupted=True
+                            self._status_title_interrupted(suffix)
                         )
 
                 self._run_on_main(_update)
@@ -1188,7 +1187,7 @@ class AppController(NSObject):
         self._edr_blocked = True
         def _update():
             if self.connected:
-                self._set_status_title("请求被安全软件拦截，请加白名单", interrupted=True)
+                self._set_status_title("请求被安全软件拦截，请加白名单")
         self._run_on_main(_update)
 
     def _on_edr_recovered(self):
