@@ -935,7 +935,13 @@ class ProxyCore:
         self._semaphore = None
         self._routing = None
         self._tunnel_client = None
-        self._stop_lock = threading.Lock()
+        # start()/stop() 共用同一把可重入锁：两路重启（唤醒回调线程与
+        # 健康检查线程）交错会在同一进程里造出两个事件循环。
+        self._lifecycle_lock = threading.RLock()
+        # stop() 时没能退出的旧事件循环线程（唤醒后 loop 僵住的现场）。
+        # 只要它还活着就拒绝 start()，否则新旧两个循环共享 self.* 的
+        # 任务句柄与 server 引用。
+        self._orphan_thread = None
         self._configured_socks_port = None
         self._configured_http_port = None
         self._server_sockets = []
@@ -1052,8 +1058,25 @@ class ProxyCore:
             self._h2_ssl_ctx = h2_ctx
 
     def start(self, user_config, config_dir=None):
+        with self._lifecycle_lock:
+            self._start_locked(user_config, config_dir)
+
+    def _reject_live_orphan_thread(self):
+        stuck = self._orphan_thread
+        if stuck is None:
+            return
+        if stuck.is_alive():
+            raise RuntimeError(
+                "previous proxy event loop thread is still alive; "
+                "refusing to start a second event loop"
+            )
+        self._orphan_thread = None
+
+    def _start_locked(self, user_config, config_dir=None):
         if self._running:
             self.stop()
+        # 内部 stop() 可能刚把一个僵住的线程记成孤儿：此时不能再起新循环
+        self._reject_live_orphan_thread()
 
         self._server_config = user_config["server"]
         self._tunnel_config = user_config.get("tunnel", {})
@@ -1079,11 +1102,15 @@ class ProxyCore:
         routing_config = user_config.get("routing", {})
         self._routing = RoutingEngine(routing_config, _geodata_dir())
 
-        self._loop = asyncio.new_event_loop()
+        loop = asyncio.new_event_loop()
+        self._loop = loop
         started = threading.Event()
         self._start_error = None
+        # loop 必须随线程参数传入：_run_loop 若读 self._loop，两路 start()
+        # 交错时线程会去跑另一个线程已 run_forever 的 loop（历史上表现为
+        # "This event loop is already running"，并留下无人回收的旧循环）。
         self._thread = threading.Thread(
-            target=self._run_loop, args=(started,), daemon=True
+            target=self._run_loop, args=(loop, started), daemon=True
         )
         self._thread.start()
         started.wait(timeout=5)
@@ -1092,7 +1119,7 @@ class ProxyCore:
         self._running = True
 
     def stop(self):
-        with self._stop_lock:
+        with self._lifecycle_lock:
             self._running = False
             loop = self._loop
             thread = self._thread
@@ -1138,6 +1165,17 @@ class ProxyCore:
                     # 线程未退出：强制关闭 server sockets 释放端口
                     self._close_listen_sockets()
                     logger.warning("proxy thread did not exit in time, forced server socket close")
+
+            if thread is not None and thread.is_alive():
+                # 唤醒后 loop 僵住时，_shutdown 协程排不进队列，线程也就退不掉。
+                # 这里留作墓碑而不是直接丢弃：再 start() 会造出第二个事件循环，
+                # 两个循环共享任务句柄 / server 引用，历史上表现为跨 loop 取消、
+                # 端口漂移 1081/1088，最终在异常回溯链析构时把线程栈打穿闪退。
+                self._orphan_thread = thread
+                logger.error(
+                    "proxy event loop thread is still alive after stop; "
+                    "refusing further starts until it exits"
+                )
             # 线程已退出（或已放弃等待），清空 socket 引用，防止新 loop
             # 误操作（跨 loop server 引用会抛 RuntimeError + EADDRINUSE 漂移）
             self._server_sockets = []
@@ -1353,16 +1391,16 @@ class ProxyCore:
         except Exception:
             return (protocol_name, None, "unreachable")
 
-    def _run_loop(self, started_event):
-        asyncio.set_event_loop(self._loop)
+    def _run_loop(self, loop, started_event):
+        asyncio.set_event_loop(loop)
         try:
-            self._loop.run_until_complete(self._start_servers())
+            loop.run_until_complete(self._start_servers())
         except OSError as e:
             self._start_error = e
             started_event.set()
             return
         started_event.set()
-        self._loop.run_forever()
+        loop.run_forever()
 
     async def _start_servers(self):
         self._metrics = RuntimeMetrics()

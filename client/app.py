@@ -102,6 +102,9 @@ class AppController(NSObject):
         self._connecting = False
         self._reconnecting = False
         self._disconnecting = False
+        # 本地代理重启单飞锁：唤醒回调线程与健康检查线程都会重启代理，
+        # 两路 stop()/start() 交错会把同一个 ProxyCore 拉成两个事件循环。
+        self._proxy_restart_lock = threading.Lock()
         self._was_connected = False  # state before sleep
         self._sleep_obs = None
         self._wake_obs = None
@@ -340,11 +343,17 @@ class AppController(NSObject):
             try:
                 self.proxy.start(self.config.data,
                                   config_dir=os.path.dirname(self.config.config_path))
-            except OSError as e:
-                message = (
-                    "端口被占用，请检查端口是否已被其他程序使用"
-                    if e.errno == 48 else str(e)
-                )
+            except Exception as e:
+                if isinstance(e, OSError):
+                    message = (
+                        "端口被占用，请检查端口是否已被其他程序使用"
+                        if e.errno == 48 else str(e)
+                    )
+                else:
+                    # 旧事件循环线程未退出时 start() 会拒绝再起第二个循环
+                    # （RuntimeError）：这种状态只能重启客户端恢复。
+                    message = f"本地代理无法启动：{e}\n请重启客户端后重试"
+                logger.warning("proxy start failed: %s", message, exc_info=True)
 
                 def _fail():
                     self._show_notification(
@@ -715,12 +724,32 @@ class AppController(NSObject):
         )
 
     def _restart_local_proxy_only(self):
-        self.proxy.stop()
-        self.proxy.start(
-            self.config.data,
-            config_dir=os.path.dirname(self.config.config_path),
-        )
-        self._sync_system_proxy_if_needed()
+        """重启本地代理（stop + start），非阻塞单飞。
+
+        健康检查线程与唤醒回调线程可能同时判定代理不健康并各自重启；
+        拿不到锁说明另一路正在重启，直接放弃本轮（对方会完成重启）。
+        重启期间置 _disconnecting，让 toggle 点击与健康检查在本轮内早退。
+        """
+        if not self._proxy_restart_lock.acquire(blocking=False):
+            logger.info("local proxy restart already in progress, skipping")
+            return False
+        previous_disconnecting = self._disconnecting
+        try:
+            # 拿到锁后再复核：用户在唤醒窗口内点了关闭，不能又把它拉起来
+            if not self.connected or previous_disconnecting:
+                logger.info("local proxy restart skipped: proxy is being disconnected")
+                return False
+            self._disconnecting = True
+            self.proxy.stop()
+            self.proxy.start(
+                self.config.data,
+                config_dir=os.path.dirname(self.config.config_path),
+            )
+            self._sync_system_proxy_if_needed()
+            return True
+        finally:
+            self._disconnecting = previous_disconnecting
+            self._proxy_restart_lock.release()
 
     def _ensure_local_proxy_after_wake(self):
         if not self.connected:
@@ -755,7 +784,13 @@ class AppController(NSObject):
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                self._restart_local_proxy_only()
+                if not self._restart_local_proxy_only():
+                    # 健康检查线程正在重启：等对方完成再判定，避免误报恢复失败
+                    time.sleep(2)
+                    if self._local_proxy_is_healthy():
+                        logger.info("Local proxy recovered by concurrent restart")
+                        return
+                    continue
                 # 验证重启是否成功
                 time.sleep(0.5)
                 if self._local_proxy_is_healthy():
@@ -991,7 +1026,20 @@ class AppController(NSObject):
                     disconnecting=self._disconnecting,
                     connecting=self._connecting,
                     recycling=self.proxy.is_recycling(),
+                    reconnecting=self._reconnecting,
                 ):
+                    restart_count = 0
+                    continue
+                # 与唤醒回调线程的重启互斥：两路同时 stop/start 会造出两个事件循环
+                if not self._proxy_restart_lock.acquire(blocking=False):
+                    restart_count = 0
+                    crash_logger.info(
+                        "local proxy restart already in progress, skipping health-check restart"
+                    )
+                    continue
+                # 拿到锁后再复核：等待期间用户可能已点关闭，或唤醒线程接管了重启
+                if not self.connected or self._disconnecting or self._reconnecting:
+                    self._proxy_restart_lock.release()
                     restart_count = 0
                     continue
                 # 重启期间占用 _disconnecting 标志：toggle 点击在该
@@ -1041,6 +1089,7 @@ class AppController(NSObject):
                     )
                 finally:
                     self._disconnecting = False
+                    self._proxy_restart_lock.release()
 
         threading.Thread(target=_loop, daemon=True).start()
 

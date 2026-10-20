@@ -29,15 +29,18 @@ def health_check_skip_reason(connected, quitting, reconnecting,
 
 
 def health_check_restart_allowed(connected, quitting, disconnecting,
-                                 connecting, recycling):
+                                 connecting, recycling, reconnecting=False):
     """sleep(2) 后重启前复核：关停/重连/退出/recycle 可能已在等待期间完成。
 
     quitting 不可省略：若退出发生在 sleep 期间，重启会在进程退出前重新
     enable 系统代理，把 networksetup 留在指向死端口的状态。
+    reconnecting 同样不可省略：系统唤醒回调线程也会重启本地代理，两路
+    stop()/start() 交错会把同一个 ProxyCore 拉成两个事件循环。
     """
     return (
         bool(connected)
         and not quitting
+        and not reconnecting
         and not disconnecting
         and not connecting
         and not recycling

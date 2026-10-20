@@ -75,3 +75,16 @@ class TestHealthCheckRestartAllowed:
 
     def test_denied_while_recycling(self):
         assert health_check_restart_allowed(True, False, False, False, True) is False
+
+    def test_denied_while_reconnecting(self):
+        """系统唤醒回调线程正在重启本地代理时，健康检查不得同时重启。
+
+        两路 stop()/start() 交错会在同一进程里造出两个事件循环
+        （历史上表现为 "This event loop is already running" + 闪退）。
+        """
+        assert (
+            health_check_restart_allowed(
+                True, False, False, False, False, reconnecting=True
+            )
+            is False
+        )
