@@ -30,6 +30,15 @@ const LEAF_NOT_BEFORE_SKEW_MS = 24 * 60 * 60 * 1000; // 1 天前
 const LEAF_VALID_DAYS = 824; // 对齐 Apple 的 824 天证书政策
 const ROOT_CA_VALID_YEARS = 30;
 
+// CDN 主机名会不停轮换（rrN---sn-xxxxx 等），给这类父域签一张通配符证书，
+// 避免每个新主机都要单独签发一次。TLS 通配符只匹配一层标签，且不覆盖裸域，
+// 所以 googlevideo.com 那张还额外带上裸域 SAN。
+// hostname 同时是缓存文件名，sans 是该证书实际包含的全部 SAN。
+const BUILTIN_WILDCARDS = [
+  { hostname: 'googlevideo.com', sans: ['googlevideo.com', '*.googlevideo.com'] },
+  { hostname: 'c.youtube.com', sans: ['c.youtube.com', '*.c.youtube.com'] },
+];
+
 let state = createState({});
 const pendingCerts = new Map();
 
@@ -100,12 +109,25 @@ function readRootCaPem() {
   };
 }
 
-function hasHostnameInSan(cert, hostname) {
-  const san = cert.subjectAltName || '';
-  if (net.isIP(hostname)) {
-    return san.includes(`IP Address:${hostname}`);
+// 证书是否覆盖某个主机名。
+// 不能用字符串 includes 推断：通配符证书（DNS:*.example.com）在 SAN 里
+// 并不包含 "DNS:rr1---sn-x.example.com" 这串文字，但 TLS 层是合法的，
+// 必须交给 tls.checkServerIdentity 做权威校验（含一层通配符语义）。
+function certCoversHostname(certOrPem, hostname) {
+  try {
+    if (!certOrPem || !hostname) return false;
+    // 可能是 X509Certificate 对象，也可能是 PEM 字符串/Buffer
+    const cert = (certOrPem instanceof crypto.X509Certificate)
+      ? certOrPem
+      : new crypto.X509Certificate(Buffer.isBuffer(certOrPem) ? certOrPem : String(certOrPem));
+    const err = tls.checkServerIdentity(hostname, {
+      subjectaltname: cert.subjectAltName,
+      subject: cert.subject,
+    });
+    return err === undefined;
+  } catch (e) {
+    return false;
   }
-  return san.includes(`DNS:${hostname}`);
 }
 
 function validateCache(paths) {
@@ -123,7 +145,7 @@ function validateCache(paths) {
     if (leaf.publicKey.asymmetricKeyType !== 'rsa') return false;
     if (leaf.publicKey.asymmetricKeyDetails.modulusLength !== 2048) return false;
     if (!leaf.verify(root.publicKey)) return false;
-    if (!hasHostnameInSan(leaf, paths.hostname)) return false;
+    if (!certCoversHostname(leaf, paths.hostname)) return false;
 
     const now = Date.now();
     if (now < Date.parse(leaf.validFrom) || now > Date.parse(leaf.validTo)) {
@@ -142,13 +164,26 @@ function deleteCache(paths) {
   try { fs.unlinkSync(paths.crtPath); } catch (e) {}
 }
 
+function getBuiltinWildcard(hostname) {
+  const normalized = String(hostname || '').toLowerCase();
+  return BUILTIN_WILDCARDS.find((entry) => entry.hostname === normalized) || null;
+}
+
 function getCertificateFromGenerator(hostname) {
   const rootCa = readRootCaPem();
   const notBefore = new Date(Date.now() - LEAF_NOT_BEFORE_SKEW_MS);
   const notAfter = new Date(Date.now() + LEAF_VALID_DAYS * 24 * 60 * 60 * 1000);
-  const altNames = net.isIP(hostname)
-    ? [{ type: 7, ip: hostname }]
-    : [{ type: 2, value: hostname }];
+
+  // 内置通配符条目一次签出多个 SAN（裸域 + 通配符）
+  const wildcard = getBuiltinWildcard(hostname);
+  let altNames;
+  if (wildcard) {
+    altNames = wildcard.sans.map((value) => ({ type: 2, value }));
+  } else if (net.isIP(hostname)) {
+    altNames = [{ type: 7, ip: hostname }];
+  } else {
+    altNames = [{ type: 2, value: hostname }];
+  }
 
   return selfsigned.generate([{ name: 'commonName', value: hostname }], {
     keyType: 'rsa',
@@ -164,6 +199,63 @@ function getCertificateFromGenerator(hostname) {
   });
 }
 
+// 找一个能覆盖 hostname 的通配符缓存。
+// 从最左标签开始剥，逐层尝试 *.其余部分（通配符只匹配一层，
+// 所以对 rr1---sn-x.googlevideo.com 先试 *.googlevideo.com）。
+function findWildcardCache(hostname) {
+  const normalized = normalizeHostname(hostname);
+  if (!normalized || net.isIP(normalized)) return null;
+
+  const labels = normalized.split('.');
+  // 至少保留 a.b 两段才可能是通配符父域
+  for (let i = 1; i <= labels.length - 2; i++) {
+    const parent = labels.slice(i).join('.');
+    // 通配符证书可能存成两种文件名：
+    //   parent.crt       —— 内置条目，一张证书带【裸域 + 通配符】两个 SAN
+    //   *.parent.crt     —— 单独的通配符证书
+    const candidates = [parent, `*.${parent}`];
+    for (const candidate of candidates) {
+      const paths = getCachePaths(candidate);
+      if (!fs.existsSync(paths.keyPath) || !fs.existsSync(paths.crtPath)) continue;
+      if (!validateCache(paths)) continue;
+
+      // 内置条目名下如果是历史遗留的仅裸域证书，它其实覆盖不了子域，别当作命中
+      const builtin = getBuiltinWildcard(candidate);
+      if (builtin && !builtinWildcardSatisfied(paths, builtin)) continue;
+
+      const certPem = fs.readFileSync(paths.crtPath);
+      if (!certCoversHostname(certPem, normalized)) continue;
+
+      return {
+        key: fs.readFileSync(paths.keyPath),
+        cert: certPem,
+        source: 'wildcard',
+        matchedWildcard: candidate,
+      };
+    }
+  }
+
+  return null;
+}
+
+// 内置通配符条目的存量证书可能只有裸域 SAN（历史遗留，那时还没有通配符需求），
+// 这种情况下它虽然能通过 validateCache，却不能覆盖任何子域。
+// 必须逐个校验条目的全部 SAN 都在证书里，否则视为不满足、需要重新签发。
+function builtinWildcardSatisfied(paths, wildcard) {
+  try {
+    const cert = new crypto.X509Certificate(fs.readFileSync(paths.crtPath));
+    for (const expected of wildcard.sans) {
+      const covered = expected.startsWith('*.')
+        ? certCoversHostname(cert, `probe.${expected.slice(2)}`)
+        : certCoversHostname(cert, expected);
+      if (!covered) return false;
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 async function ensureCert(hostname) {
   const normalized = normalizeHostname(hostname);
   if (pendingCerts.has(normalized)) {
@@ -172,7 +264,18 @@ async function ensureCert(hostname) {
 
   const promise = (async () => {
     const paths = getCachePaths(normalized);
-    if (validateCache(paths)) {
+
+    // 1) 通配符优先：命中 *.parent 且覆盖当前主机时直接复用，不重复签发
+    const wildcardHit = findWildcardCache(normalized);
+    if (wildcardHit) {
+      return wildcardHit;
+    }
+
+    // 2) 精确缓存（对内置通配符条目额外要求带上全部 SAN）
+    const builtin = getBuiltinWildcard(normalized);
+    const cacheOk = validateCache(paths)
+      && (!builtin || builtinWildcardSatisfied(paths, builtin));
+    if (cacheOk) {
       return {
         key: fs.readFileSync(paths.keyPath),
         cert: fs.readFileSync(paths.crtPath),
@@ -180,6 +283,7 @@ async function ensureCert(hostname) {
       };
     }
 
+    // 3) 都没有则现签。两层子域等通配符覆盖不到的主机也走这里
     deleteCache(paths);
     const result = await getCertificateFromGenerator(normalized);
     // 生成器只返回值，落盘由本模块负责（写入目标受 getCachePaths 约束）
@@ -303,6 +407,11 @@ function getDomainsToPrewarm(config = {}) {
     }
   }
 
+  // 内置通配符条目在启动时就生成，避免第一个 CDN 主机请求等签发
+  for (const entry of BUILTIN_WILDCARDS) {
+    domains.add(entry.hostname);
+  }
+
   return Array.from(domains);
 }
 
@@ -369,5 +478,8 @@ module.exports = {
   healthCheck,
   _test: {
     validateCache,
+    certCoversHostname,
+    findWildcardCache,
+    BUILTIN_WILDCARDS,
   },
 };
