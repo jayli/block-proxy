@@ -8,6 +8,7 @@ const _fs = require('../proxy/fs.js');
 const { createTimestampingWriter } = require('../server/timestampConsole');
 
 const pkgDir = path.join(__dirname, '..');
+const { version: pkgVersion } = require('../package.json');
 const startScript = path.resolve(pkgDir, 'server/start.js');
 const MAX_RESTARTS = 10000;
 let restartCount = 0;
@@ -107,7 +108,7 @@ process.on('SIGTERM', () => {
   program
     .name('block-proxy')
     .description('极简的 MITM 代理工具：https://github.com/jayli/block-proxy')
-    .version('0.1.3')
+    .version(pkgVersion)
     .option('-c, --config <config>', 'MITM 配置文件')
     .option('--pubkey <path>', 'Tunnel TLS 公钥证书路径')
     .option('--privkey <path>', 'Tunnel TLS 私钥路径');
