@@ -16,6 +16,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const { formatTimestamp } = require('../server/timestampConsole');
+const { hostMatchesRule } = require('./host-match.js');
 
 const FILE_PREFIX = 'access-';
 const FILE_SUFFIX = '.log';
@@ -154,8 +155,9 @@ function matchRequest(clientIp, host) {
   const bareHost = stripPort(host);
   if (!bareHost) return null;
   for (const configured of hosts) {
-    // 与 shouldBlockHost 相同的子串匹配语义：baidu.com 命中 www.baidu.com
-    if (bareHost.includes(configured)) {
+    // 与 shouldBlockHost 相同的域名语义：filter_host 指代该域名及其子域，
+    // 例如 baidu.com 命中 www.baidu.com，但 y.qq.com 不命中 ios.bugly.qq.com
+    if (hostMatchesRule(bareHost, configured)) {
       return { mac: mac, matchedHost: configured };
     }
   }

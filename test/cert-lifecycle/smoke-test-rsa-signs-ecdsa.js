@@ -13,7 +13,7 @@ const { ensureTestRootCA } = require('../helpers/ensure-root-ca');
 
 ensureTestRootCA();
 
-test('node-easy-cert path creates RSA 2048 leaf signed by fixed rootCA', async () => {
+test('selfsigned/WebCrypto path creates RSA 2048 leaf signed by fixed rootCA', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cert-lifecycle-smoke-'));
   try {
     fs.copyFileSync(path.join(__dirname, '../../cert/rootCA.crt'), path.join(tmpDir, 'rootCA.crt'));

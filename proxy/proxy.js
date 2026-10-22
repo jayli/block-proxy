@@ -29,6 +29,7 @@ const domain = require('./domain.js');
 const wanip = require('./wanip.js');
 const operator = require("./operator.js");
 const accessLogger = require("./access-logger.js");
+const { hostMatchesRule } = require('./host-match.js');
 const tempCredentials = require("./temp-credentials.js");
 const authBypassHosts = require("./auth-bypass-hosts.js");
 const mitmRegistry = require("./mitm/registry.js");
@@ -540,13 +541,15 @@ function shouldBlockHost(host, blockList, url) {
   return blockList.some(blockItem => {
     // 兼容旧格式（字符串格式）
     if (typeof blockItem === 'string') {
-      return host.includes(blockItem);
+      return hostMatchesRule(host, blockItem);
     }
     
     // 新格式（对象格式）
     if (typeof blockItem === 'object' && blockItem.filter_host) {
 
-      if (!host.includes(blockItem.filter_host)) {
+      // filter_host 指代该域名及其所有子域，不做任意子串匹配
+      // （过滤 ios.bugly.qq.com 曾被 y.qq.com 误命中）
+      if (!hostMatchesRule(host, blockItem.filter_host)) {
         return false;
       }
       // console.log('访问网址 === 配置网址')

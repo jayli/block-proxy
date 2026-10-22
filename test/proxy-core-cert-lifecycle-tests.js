@@ -36,7 +36,7 @@ async function run() {
     assert.throws(() => certLifecycle.normalizeHostname(null));
     console.log('PASS: hostname normalization');
 
-    // Test 2: ensureCert uses the production node-easy-cert path
+    // Test 2: ensureCert uses the production selfsigned/WebCrypto path
     const { key, cert } = await certLifecycle.ensureCert('Example.COM:443');
     const leaf = new X509Certificate(cert);
     const root = new X509Certificate(fs.readFileSync(rootCACertPath, 'utf8'));
@@ -156,7 +156,9 @@ async function run() {
     await new Promise((resolve, reject) => {
       certMgr.getCertificate('compat.example.com', (err, keyContent, crtContent) => {
         if (err) return reject(err);
-        assert.match(String(keyContent), /BEGIN RSA PRIVATE KEY/);
+        // 生成器已换成 selfsigned：私钥为 PKCS#8（BEGIN PRIVATE KEY），
+        // 历史 node-easy-cert 产出的是 PKCS#1（BEGIN RSA PRIVATE KEY），两种都要能读
+        assert.match(String(keyContent), /-----BEGIN (RSA )?PRIVATE KEY-----/);
         assert.match(String(crtContent), /BEGIN CERTIFICATE/);
         resolve();
       });

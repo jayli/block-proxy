@@ -787,7 +787,7 @@ async function testMitmConnectForwardsHttpsRequest() {
     res.end('pong');
   });
 
-  // Ensure certificates/ has rootCA for node-easy-cert (now project-local)
+  // Ensure certificates/ has rootCA for MITM leaf signing (now project-local)
   const certDir = path.join(__dirname, '../certificates');
   fs.mkdirSync(certDir, { recursive: true });
   const needCleanup = !fs.existsSync(path.join(certDir, 'rootCA.crt'));

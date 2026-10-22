@@ -3,10 +3,15 @@
 /**
  * Certificate lifecycle helpers for the MITM proxy.
  *
- * This intentionally keeps node-easy-cert as the certificate generator so the
- * leaf certificate format stays compatible with the YouTube MITM fix. The
- * lifecycle layer adds prewarming, validation, invalidation, and a shared
- * pending map around the existing generator.
+ * Leaf certificates are generated with `selfsigned`, which delegates key generation
+ * and signing to WebCrypto (`crypto.subtle`). That matters on low-power routers:
+ * the previous node-easy-cert/node-forge path generated RSA keys synchronously in
+ * pure JS (measured 4.5–8.7s per host on an RK3588, blocking the whole event loop).
+ * WebCrypto does the same work on the libuv threadpool (~1.1–1.8s) and only leaves
+ * ~100ms of event loop lag.
+ *
+ * The lifecycle layer adds prewarming, validation, invalidation, and a shared
+ * pending map around the generator.
  */
 
 const crypto = require('crypto');
@@ -15,26 +20,18 @@ const net = require('net');
 const path = require('path');
 const tls = require('tls');
 const { domainToASCII } = require('url');
-const EasyCert = require('node-easy-cert');
+const selfsigned = require('selfsigned');
 const util = require('./util');
 
-const DEFAULT_CERT_ATTRS = [
-  { name: 'countryName', value: 'CN' },
-  { name: 'organizationName', value: 'AnyProxy' },
-  { shortName: 'ST', value: 'SH' },
-  { shortName: 'OU', value: 'AnyProxy SSL Proxy' }
-];
+// 与 easy-cert 保持一致，避免新旧证书签发参数漂移
+const LEAF_KEY_SIZE = 2048;
+const ROOT_CA_KEY_SIZE = 2048;
+const LEAF_NOT_BEFORE_SKEW_MS = 24 * 60 * 60 * 1000; // 1 天前
+const LEAF_VALID_DAYS = 824; // 对齐 Apple 的 824 天证书政策
+const ROOT_CA_VALID_YEARS = 30;
 
 let state = createState({});
 const pendingCerts = new Map();
-
-function createEasyCert(certDir) {
-  return new EasyCert({
-    rootDirPath: certDir,
-    inMemory: false,
-    defaultCertAttrs: DEFAULT_CERT_ATTRS,
-  });
-}
 
 function createState(options) {
   const certDir = options.certDir || util.getAnyProxyHome();
@@ -42,13 +39,8 @@ function createState(options) {
 
   return {
     certDir,
-    easyCert: createEasyCert(certDir),
     mitmRegistry: options.mitmRegistry || null,
   };
-}
-
-function resetGenerator() {
-  state.easyCert = createEasyCert(state.certDir);
 }
 
 function init(options = {}) {
@@ -96,6 +88,18 @@ function readRootCert() {
   return new crypto.X509Certificate(fs.readFileSync(rootPath));
 }
 
+function readRootCaPem() {
+  const keyPath = path.join(state.certDir, 'rootCA.key');
+  const crtPath = path.join(state.certDir, 'rootCA.crt');
+  if (!fs.existsSync(keyPath) || !fs.existsSync(crtPath)) {
+    throw new Error('rootCA.key / rootCA.crt not found, generate the root CA first');
+  }
+  return {
+    key: fs.readFileSync(keyPath, 'utf8'),
+    cert: fs.readFileSync(crtPath, 'utf8'),
+  };
+}
+
 function hasHostnameInSan(cert, hostname) {
   const san = cert.subjectAltName || '';
   if (net.isIP(hostname)) {
@@ -138,15 +142,25 @@ function deleteCache(paths) {
   try { fs.unlinkSync(paths.crtPath); } catch (e) {}
 }
 
-function getCertificateFromEasyCert(hostname) {
-  return new Promise((resolve, reject) => {
-    state.easyCert.getCertificate(hostname, (err, key, cert) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve({ key, cert });
-      }
-    });
+function getCertificateFromGenerator(hostname) {
+  const rootCa = readRootCaPem();
+  const notBefore = new Date(Date.now() - LEAF_NOT_BEFORE_SKEW_MS);
+  const notAfter = new Date(Date.now() + LEAF_VALID_DAYS * 24 * 60 * 60 * 1000);
+  const altNames = net.isIP(hostname)
+    ? [{ type: 7, ip: hostname }]
+    : [{ type: 2, value: hostname }];
+
+  return selfsigned.generate([{ name: 'commonName', value: hostname }], {
+    keyType: 'rsa',
+    keySize: LEAF_KEY_SIZE,
+    algorithm: 'sha256',
+    ca: { cert: rootCa.cert, key: rootCa.key },
+    notBeforeDate: notBefore,
+    notAfterDate: notAfter,
+    extensions: [
+      { name: 'basicConstraints', cA: false },
+      { name: 'subjectAltName', altNames },
+    ],
   });
 }
 
@@ -167,15 +181,17 @@ async function ensureCert(hostname) {
     }
 
     deleteCache(paths);
-    resetGenerator();
-    const result = await getCertificateFromEasyCert(normalized);
+    const result = await getCertificateFromGenerator(normalized);
+    // 生成器只返回值，落盘由本模块负责（写入目标受 getCachePaths 约束）
+    fs.writeFileSync(paths.keyPath, result.private);
+    fs.writeFileSync(paths.crtPath, result.cert);
     if (!validateCache(paths)) {
       deleteCache(paths);
       throw new Error(`generated certificate failed validation for ${normalized}`);
     }
 
     return {
-      key: result.key,
+      key: result.private,
       cert: result.cert,
       source: 'generated',
     };
@@ -194,11 +210,13 @@ function getCertificate(hostname, cb) {
 }
 
 function ifRootCAFileExists() {
-  return state.easyCert.isRootCAFileExists();
+  const keyPath = path.join(state.certDir, 'rootCA.key');
+  const crtPath = path.join(state.certDir, 'rootCA.crt');
+  return fs.existsSync(crtPath) && fs.existsSync(keyPath);
 }
 
 function getRootCAFilePath() {
-  return state.easyCert.getRootCAFilePath();
+  return ifRootCAFileExists() ? path.join(state.certDir, 'rootCA.crt') : '';
 }
 
 function getCertDir() {
@@ -206,16 +224,56 @@ function getCertDir() {
 }
 
 function generateRootCA(cb) {
-  state.easyCert.generateRootCA({
-    commonName: 'AnyProxy',
-    overwrite: false,
-  }, cb);
+  const crtPath = path.join(state.certDir, 'rootCA.crt');
+  const keyPath = path.join(state.certDir, 'rootCA.key');
+
+  if (fs.existsSync(crtPath) && fs.existsSync(keyPath)) {
+    // 与 easy-cert 的默认行为一致：已存在且未要求覆盖时直接返回
+    if (typeof cb === 'function') cb(null, crtPath);
+    return Promise.resolve({ keyPath, certPath: crtPath });
+  }
+
+  const notAfterDate = new Date();
+  notAfterDate.setFullYear(notAfterDate.getFullYear() + ROOT_CA_VALID_YEARS);
+
+  // 与 cert/generator.js 保持同一套 CA 参数，避免两条路径签出的根证书不一致
+  const promise = selfsigned.generate(
+    [
+      { name: 'commonName', value: 'BlockProxy' },
+      { name: 'organizationName', value: 'BlockProxy' },
+      { shortName: 'ST', value: 'SH' },
+      { shortName: 'OU', value: 'BlockProxy SSL Proxy' },
+    ],
+    {
+      keyType: 'rsa',
+      keySize: ROOT_CA_KEY_SIZE,
+      algorithm: 'sha256',
+      notAfterDate,
+      extensions: [
+        { name: 'basicConstraints', cA: true, critical: true },
+        { name: 'keyUsage', keyCertSign: true, cRLSign: true, critical: true },
+      ],
+    }
+  ).then((pems) => {
+    // 私钥收 0600：泄露即可伪造任意站点
+    fs.writeFileSync(keyPath, pems.private, { mode: 0o600 });
+    fs.writeFileSync(crtPath, pems.cert, { mode: 0o644 });
+    if (typeof cb === 'function') cb(null, crtPath);
+    return { keyPath, certPath: crtPath };
+  }).catch((error) => {
+    if (typeof cb === 'function') {
+      cb(error);
+      return { keyPath, certPath: crtPath, error: error.message };
+    }
+    throw error;
+  });
+
+  return promise;
 }
 
 function invalidateCert(hostname, lru) {
   const paths = getCachePaths(hostname);
   deleteCache(paths);
-  resetGenerator();
   pendingCerts.delete(paths.hostname);
 
   if (lru && typeof lru.delete === 'function') {
