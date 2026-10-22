@@ -2,14 +2,15 @@
 
 ----------
 
-> Socks5/HTTP 代理 + 反向隧道工具，支持 MITM 和二次开发。用于家庭网关限制小朋友上网，域名/地址/设备拦截，以及内网穿透场景。
+> Socks5/HTTP 代理 + 反向隧道工具，支持 MITM 和二次开发。
+> 用于家庭网关限制小朋友上网，域名/地址/设备拦截，以及内网穿透。
 
 - HTTP 代理 + Socks5/HTTP over TLS 公网代理 + 隧道代理
 - 域名拦截、URL 正则匹配、MAC 地址定向拦截
 - 按时间段和星期拦截
 - [macOS 客户端](https://github.com/jayli/block-proxy/releases)，支持 SOCKS5/HTTP/隧道三种协议，内置 geosite/geoip 分流引擎
 
-## 快速开始
+## 快速开始（服务端）
 
 **方式一：npx 直接启动（无需安装）**
 
@@ -53,7 +54,7 @@ pm2 start block-proxy --interpreter bash
 
 首次启动后访问 `http://代理IP:8004` 进入后台配置面板。
 
-## 端口说明
+## 代理服务端口说明
 
 | 端口 | 说明 | 可否关闭 |
 |:----:|:----|:------:|
@@ -62,7 +63,7 @@ pm2 start block-proxy --interpreter bash
 | 8003 | 隧道代理端口（TLS） | 可 |
 | 8004 | 后台配置面板 | 可 |
 
-## 隧道代理
+## 服务端启动隧道代理
 
 隧道代理是双向的，客户端通过隧道连服务端同样可以支持 MITM。
 
@@ -78,7 +79,7 @@ block-proxy --pubkey /path/to/fullchain.pem --privkey /path/to/privkey.pem
 - `--pubkey`：TLS 公钥证书路径（完整证书链）
 - `--privkey`：TLS 私钥路径
 
-## 开发
+## 服务端程序开发&调试
 
 ```bash
 pnpm i
@@ -86,9 +87,11 @@ npm run start     # 生产启动
 npm run proxy     # 仅启动代理，不开后台面板
 ```
 
-## macOS 客户端
+## 客户端
 
-纯 Python（PyObjC）实现的状态栏代理客户端，支持三种连接协议：
+> 下载地址：<https://github.com/jayli/block-proxy/releases>
+
+MacOS 客户端：纯 Python（PyObjC）实现的状态栏代理客户端，支持三种连接协议：
 
 | 协议 | 说明 |
 |:----:|:----|
@@ -96,6 +99,7 @@ npm run proxy     # 仅启动代理，不开后台面板
 | HTTP | HTTP 代理直连服务端 8001 端口；也可选 TLS 模式连接 8002 公网代理端口（HTTP CONNECT over TLS） |
 | 隧道 | 隧道代理 |
 
+Android 端：只能链接隧道
 
 ## 更多文档
 
