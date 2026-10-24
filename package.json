@@ -61,7 +61,7 @@
     "test:proxy-core": "node test/proxy-core-connect-tests.js",
     "test:public-proxy": "node test/public-proxy-protocol-tests.js && node test/public-proxy-h2-tests.js",
     "test:registry": "node test/mitm-registry-tests.js",
-    "test:mitm-runtime": "node test/mitm-runtime-tests.js",
+    "test:mitm-runtime": "node test/mitm-runtime-tests.js && node test/block-rule-ua-tests.js",
     "test:access-logger": "node test/access-logger-tests.js && node test/access-logger-integration-tests.js",
     "test:visit-logger": "node test/visit-logger-tests.js && node test/visit-logger-integration-tests.js",
     "test:temp-credentials": "node test/temp-credentials-tests.js",

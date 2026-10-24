@@ -1833,9 +1833,9 @@ function getAnyProxyOptions() {
         }
 
         // Hack, 根据 UA 判断是否符合放行条件，比如 Youtube 的 MITM 只对 App 生效，则浏览器的 UA 就需要放行
-        if (isBuiltinYoutubeMitmEnabled() && uaFilter.match(requestOptions.headers, host)) {
-          return passRequestWithHttpAgent(requestDetail, isHttps);
-        }
+        // 注意：UA 豁免只跳过「重写规则（去广告等）」，不能绕过下面的父控拦截判定——
+        // 否则浏览器访问 youtube.com 会整套跳过 block_hosts，拦截规则形同虚设。
+        const bypassByUa = isBuiltinYoutubeMitmEnabled() && uaFilter.match(requestOptions.headers, host);
 
         // 这里验证只能处理 HTTP 请求，HTTPs 里 _req 携带的请求头是不包含验证字段的，因为
         // https 内的 header 是五层信息，proxy-Authenticate 信息属于四层，这里看不到
@@ -1866,11 +1866,14 @@ function getAnyProxyOptions() {
 
         // 如果当前 IP 没有配置拦截规则，检查重写逻辑并判断直接放行
         if (blockRules.length === 0) {
-          // 先匹配重写规则
-          var rewriteResult = await rewriteRuleBeforeRequest(host, url, _request);
-          if (rewriteResult !== false) {
-            return rewriteResult;
-          } else if (vpn_proxy != "" && vpn_proxy !== undefined) {
+          // 先匹配重写规则（UA 豁免的浏览器 YouTube 流量跳过重写，直接放行）
+          if (!bypassByUa) {
+            var rewriteResult = await rewriteRuleBeforeRequest(host, url, _request);
+            if (rewriteResult !== false) {
+              return rewriteResult;
+            }
+          }
+          if (vpn_proxy != "" && vpn_proxy !== undefined) {
             // 如果配置了 vpn_proxy，不匹配拦截的情况，所有请求都通过 proxy 做七层转发
             // TODO: 需要调试所有请求转发的失败的情况，所有请求都应该转发成功
             const { ip, port } = parseAddress(vpn_proxy);
@@ -1933,10 +1936,13 @@ function getAnyProxyOptions() {
           }
         }
 
-        // 最后做一轮重写逻辑检查
-        var rewriteResult = await rewriteRuleBeforeRequest(host, url, _request);
-        if (rewriteResult !== false) {
-          return rewriteResult;
+        // 未命中拦截规则，才做重写逻辑检查；UA 豁免（浏览器访问 YouTube）在这里生效，
+        // 即：不做重写（去广告），但也不影响已命中的父控拦截
+        if (!bypassByUa) {
+          var rewriteResult = await rewriteRuleBeforeRequest(host, url, _request);
+          if (rewriteResult !== false) {
+            return rewriteResult;
+          }
         }
         /// console.log("[✅] 2 " + url);
         // 如果重写逻辑也不匹配，则请求放行
