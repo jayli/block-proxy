@@ -107,7 +107,7 @@ var access_log_flush_interval_ms = 1000; // 异步入盘的批量间隔
 // 访问足迹日志：记录被拦截 MAC 的设备访问过的全部域名（不区分是否被拦截，不记 path）
 var visit_log_enabled = "1"; // "0", "1"
 var visit_log_dir = ""; // 空则用默认 logs/visits
-var visit_log_max_total_bytes = 30 * 1024 * 1024; // 全部分片总大小上限，默认 30MB
+var visit_log_max_total_bytes = 15 * 1024 * 1024; // 全部分片总大小上限，默认 15MB
 var visit_log_flush_interval_ms = 1000; // 异步入盘的批量间隔
 // 仅当访问日志的关键状态变化时才打印一行启动日志，避免 loadConfig 每 2 小时刷屏
 var lastAccessLogStatusSignature = "";
@@ -404,7 +404,7 @@ async function loadConfig() {
       visit_log_dir = visitLogOpts.dir || "";
       visit_log_max_total_bytes = Number(visitLogOpts.max_total_bytes) > 0
         ? Number(visitLogOpts.max_total_bytes)
-        : 30 * 1024 * 1024;
+        : 15 * 1024 * 1024;
       visit_log_flush_interval_ms = Number(visitLogOpts.flush_interval_ms) > 0
         ? Number(visitLogOpts.flush_interval_ms)
         : 1000;

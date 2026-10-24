@@ -18,7 +18,7 @@
 //
 // 落盘约定：
 //   - 按天分片：visit-YYYY-MM-DD.log
-//   - 所有分片总大小受 maxTotalBytes 限制（默认 30MB），超限从最旧分片开始删
+//   - 所有分片总大小受 maxTotalBytes 限制（默认 15MB），超限从最旧分片开始删
 
 const fs = require('fs');
 const fsp = fs.promises;
@@ -31,7 +31,7 @@ const FILE_SUFFIX = '.log';
 // 分片文件名白名单：只有严格匹配该格式的文件才可能被删除，避免误删目录里的其他文件
 const SHARD_NAME_RE = /^visit-(\d{4}-\d{2}-\d{2})\.log$/;
 const DEFAULT_DIR = path.join(__dirname, '../logs/visits');
-const DEFAULT_MAX_TOTAL_BYTES = 30 * 1024 * 1024;
+const DEFAULT_MAX_TOTAL_BYTES = 15 * 1024 * 1024;
 const DEFAULT_FLUSH_INTERVAL_MS = 1000;
 const MAX_QUEUE_LENGTH = 20000;
 

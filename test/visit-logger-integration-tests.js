@@ -22,7 +22,7 @@ function tempDir() {
 
 function setup(dir) {
   visitLogger.stop();
-  visitLogger.configure({ enabled: true, dir: dir, maxTotalBytes: 30 * 1024 * 1024, flushIntervalMs: 1000 });
+  visitLogger.configure({ enabled: true, dir: dir, maxTotalBytes: 15 * 1024 * 1024, flushIntervalMs: 1000 });
 
   const blockHosts = [
     // 只有一条针对 MONITORED_MAC 的拦截规则：足以让这台机器进入「被监控」名单

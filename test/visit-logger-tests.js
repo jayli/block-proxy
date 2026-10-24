@@ -34,7 +34,7 @@ function configureFixture(dir, extra) {
   visitLogger.configure({
     enabled: true,
     dir: dir,
-    maxTotalBytes: 30 * 1024 * 1024,
+    maxTotalBytes: 15 * 1024 * 1024,
     flushIntervalMs: 1000,
     ...extra
   });
@@ -215,7 +215,7 @@ async function testAppendAcrossFlushes() {
 
 async function testTotalSizeCapDeletesOldestShard() {
   const dir = tempDir('cap');
-  configureFixture(dir, { maxTotalBytes: 30 * 1024 * 1024 });
+  configureFixture(dir, { maxTotalBytes: 15 * 1024 * 1024 });
 
   const makeEntries = (day, count) => {
     for (let i = 0; i < count; i++) {
@@ -257,11 +257,11 @@ async function testTotalSizeCapDeletesOldestShard() {
   );
 }
 
-async function testDefaultCapIs30MB() {
+async function testDefaultCapIs15MB() {
   const dir = tempDir('default-cap');
   visitLogger.stop();
   visitLogger.configure({ enabled: true, dir: dir });
-  assert.strictEqual(visitLogger.getStats().maxTotalBytes, 30 * 1024 * 1024);
+  assert.strictEqual(visitLogger.getStats().maxTotalBytes, 15 * 1024 * 1024);
   assert.strictEqual(visitLogger.getStats().flushIntervalMs, 1000);
 }
 
@@ -393,7 +393,7 @@ const tests = [
   testDaySharding,
   testAppendAcrossFlushes,
   testTotalSizeCapDeletesOldestShard,
-  testDefaultCapIs30MB,
+  testDefaultCapIs15MB,
   testDefaultDirIsLogsVisits,
   testCapSurvivesRestartWithExistingShards,
   testCapDoesNotDeleteUnrelatedFiles,
