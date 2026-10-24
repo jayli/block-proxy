@@ -29,6 +29,7 @@ const domain = require('./domain.js');
 const wanip = require('./wanip.js');
 const operator = require("./operator.js");
 const accessLogger = require("./access-logger.js");
+const visitLogger = require("./visit-logger.js");
 const { hostMatchesRule } = require('./host-match.js');
 const tempCredentials = require("./temp-credentials.js");
 const authBypassHosts = require("./auth-bypass-hosts.js");
@@ -103,8 +104,14 @@ var access_log_enabled = "1"; // "0", "1"
 var access_log_dir = ""; // 空则用默认 logs/access
 var access_log_max_total_bytes = 50 * 1024 * 1024; // 全部分片总大小上限，默认 50MB
 var access_log_flush_interval_ms = 1000; // 异步入盘的批量间隔
+// 访问足迹日志：记录被拦截 MAC 的设备访问过的全部域名（不区分是否被拦截，不记 path）
+var visit_log_enabled = "1"; // "0", "1"
+var visit_log_dir = ""; // 空则用默认 logs/visits
+var visit_log_max_total_bytes = 30 * 1024 * 1024; // 全部分片总大小上限，默认 30MB
+var visit_log_flush_interval_ms = 1000; // 异步入盘的批量间隔
 // 仅当访问日志的关键状态变化时才打印一行启动日志，避免 loadConfig 每 2 小时刷屏
 var lastAccessLogStatusSignature = "";
+var lastVisitLogStatusSignature = "";
 var chain_proxy_enabled = "0"; // "0", "1"，是否启用下游链式代理
 var chain_proxy_type = "http"; // "http" 或 "socks5"
 var chain_proxy_address = ""; // 上游代理地址，格式: username:password@host:port 或 host:port
@@ -235,6 +242,21 @@ function logAccessLoggerStatus() {
   }
 }
 
+function logVisitLoggerStatus() {
+  const stats = visitLogger.getStats();
+  // 与访问日志同理：设备数每 2 小时扫描会变，不纳入签名，避免周期性刷屏
+  const signature = [stats.enabled, stats.dir, stats.monitoredMacs, stats.maxTotalBytes, stats.flushIntervalMs].join('|');
+  if (signature === lastVisitLogStatusSignature) {
+    return;
+  }
+  lastVisitLogStatusSignature = signature;
+  if (stats.enabled) {
+    console.log(`[VisitLog] 已启用，目录: ${stats.dir}，监控 MAC: ${stats.monitoredMacs} 台，总大小上限: ${stats.maxTotalBytes} 字节`);
+  } else {
+    console.log('[VisitLog] 已关闭 (visit_log.enabled = 0)');
+  }
+}
+
 function isEmpty(obj) {
   if (obj === null || obj === undefined) {
     return true;
@@ -282,6 +304,12 @@ async function loadConfig() {
       dir: access_log_dir,
       max_total_bytes: access_log_max_total_bytes,
       flush_interval_ms: access_log_flush_interval_ms
+    },
+    visit_log: {
+      enabled: visit_log_enabled,
+      dir: visit_log_dir,
+      max_total_bytes: visit_log_max_total_bytes,
+      flush_interval_ms: visit_log_flush_interval_ms
     },
   };
 
@@ -363,6 +391,28 @@ async function loadConfig() {
         dir: access_log_dir,
         max_total_bytes: access_log_max_total_bytes,
         flush_interval_ms: access_log_flush_interval_ms
+      };
+
+      // 访问足迹日志配置（对象或字符串 "0"/"1" 均兼容）；旧配置缺字段时用默认值
+      const loadedVisitLog = loadedConfig.visit_log || {};
+      const visitLogOpts = (typeof loadedVisitLog === 'object' && loadedVisitLog !== null)
+        ? loadedVisitLog
+        : { enabled: String(loadedVisitLog) };
+      visit_log_enabled = (visitLogOpts.enabled === undefined || visitLogOpts.enabled === null)
+        ? "1"
+        : String(visitLogOpts.enabled);
+      visit_log_dir = visitLogOpts.dir || "";
+      visit_log_max_total_bytes = Number(visitLogOpts.max_total_bytes) > 0
+        ? Number(visitLogOpts.max_total_bytes)
+        : 30 * 1024 * 1024;
+      visit_log_flush_interval_ms = Number(visitLogOpts.flush_interval_ms) > 0
+        ? Number(visitLogOpts.flush_interval_ms)
+        : 1000;
+      config.visit_log = {
+        enabled: visit_log_enabled,
+        dir: visit_log_dir,
+        max_total_bytes: visit_log_max_total_bytes,
+        flush_interval_ms: visit_log_flush_interval_ms
       };
 
       chain_proxy_enabled = loadedConfig.chain_proxy_enabled || "0";
@@ -449,6 +499,12 @@ async function loadConfig() {
           dir: access_log_dir,
           max_total_bytes: access_log_max_total_bytes,
           flush_interval_ms: access_log_flush_interval_ms
+        },
+        visit_log: {
+          enabled: visit_log_enabled,
+          dir: visit_log_dir,
+          max_total_bytes: visit_log_max_total_bytes,
+          flush_interval_ms: visit_log_flush_interval_ms
         }
       });
       // fs.writeFileSync(configPath, JSON.stringify({
@@ -465,6 +521,12 @@ async function loadConfig() {
   accessLogger.setRules(blockHosts);
   accessLogger.setDevices(devices);
   logAccessLoggerStatus();
+
+  // 访问足迹日志：监控对象是被 block_hosts 显式指定了 filter_mac 的那几台机器
+  visitLogger.configure(config.visit_log);
+  visitLogger.setMonitoredMacs(blockHosts);
+  visitLogger.setDevices(devices);
+  logVisitLoggerStatus();
 
   return config;
 }
@@ -830,6 +892,14 @@ function logConnectAccess(clientIp, host) {
     host: host,
     path: ''
   });
+}
+
+// 访问足迹日志打点：被监控 MAC 的设备访问任意域名都记一条（只到域名级）
+// matchVisit() 只做内存 Map 查找，record() 只入队，不产生任何异步或磁盘 IO
+function logVisit(clientIp, host) {
+  const mac = visitLogger.matchVisit(clientIp, host);
+  if (!mac) return;
+  visitLogger.record({ ts: new Date(), ip: clientIp, mac: mac, host: host });
 }
 
 // 获得 Symbol 实例的属性
@@ -1625,6 +1695,10 @@ function getAnyProxyOptions() {
       // 只对特定域名启用 HTTPS 拦截，无规则时直接四层转发
       async beforeDealHttpsRequest(requestDetail, next) {
         const clientIp = getRemoteAddressFromReq(requestDetail);
+        // 访问足迹日志：CONNECT 阶段就能拿到域名，与后续是否解密无关。
+        // 放在最前面，保证 tunnel 域名、vpn_proxy、认证失败等所有分支都能留痕；
+        // 解密后 beforeSendRequest 里会再过一次，由 matchVisit 内的短时去重挡住重复行。
+        logVisit(clientIp, requestDetail.host);
         // 如果配置了 vpn_proxy，全部走解密逻辑，仅调试使用
         if (vpn_proxy != "" && vpn_proxy !== undefined) {
           return true;
@@ -1739,6 +1813,9 @@ function getAnyProxyOptions() {
         if (net.isIPv4(host) || net.isIPv6(host)) {
           return passRequestWithHttpAgent(requestDetail, isHttps);
         }
+
+        // 访问足迹日志：明文 HTTP 与 MITM 解密后的 HTTPS 都在这里记一条（只到域名级）
+        logVisit(clientIp, host);
 
         // 访问日志打点：被监控 MAC 的设备访问了为其配置的拦截域名
         // matchRequest() 只做内存 Map 查找，record() 只入队，全部 IO 在异步 flush 中完成
@@ -1997,6 +2074,7 @@ var LocalProxy = {
     devices = replaceRouterMap;
     // IP→MAC 映射变了，同步给访问日志，否则新设备/换 IP 的设备记不到
     accessLogger.setDevices(devices);
+    visitLogger.setDevices(devices);
 
     // 路由表没变化就不写盘，避免每 2 小时留下一次无意义的 config 写入
     if (changed || !lanScan.deviceTablesEqual(oldRouterMap, replaceRouterMap)) {
@@ -2105,9 +2183,15 @@ module.exports._test = {
   loadConfig,
   setDevicesForTest(nextDevices) {
     devices = Array.isArray(nextDevices) ? nextDevices : [];
+    // 打点用的 IP→MAC 索引需要和拦截判定同步，否则测试里改设备表不生效
+    accessLogger.setDevices(devices);
+    visitLogger.setDevices(devices);
   },
   setBlockHostsForTest(nextBlockHosts) {
     blockHosts = Array.isArray(nextBlockHosts) ? nextBlockHosts : [];
+    // 监控 MAC 集合由 block_hosts 推导，测试改规则时同步刷新，行为与 loadConfig 一致
+    visitLogger.setMonitoredMacs(blockHosts);
+    accessLogger.setRules(blockHosts);
   },
   setRuleRegistryForTest(nextRegistry) {
     ruleRegistry = nextRegistry;
