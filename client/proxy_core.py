@@ -1,5 +1,6 @@
 import asyncio
 import errno
+import faulthandler
 import functools
 import hashlib
 import ipaddress
@@ -120,6 +121,13 @@ ORPHAN_THREAD_GIVEUP_SECONDS = 30.0
 # 膨胀只在 diagnostics.log 里静默发生（同日现场物理 footprint 41GB，
 # 磁盘日志无任何异常记录，只能靠事后 vmmap 才看出来）。
 RSS_WARN_THRESHOLD_MB = 2048
+# 事件循环卡死检测：loop 连续 5 秒不执行 call_soon_threadsafe 排进去的
+# 心跳，就认定线程卡在同步代码里，dump 全部线程栈到 crash.log。卡住
+# 期间每 30 秒重 dump 一次（栈可能变化，2026-10-26 两次现场分别停摆
+# 4 分钟和 9 分钟，且期间内存从 202MB 涨到 31.9GB）。
+WATCHDOG_INTERVAL = 1.0
+WATCHDOG_STUCK_SECONDS = 5.0
+WATCHDOG_REPORT_INTERVAL = 30.0
 
 
 def _memory_stats():
@@ -176,6 +184,81 @@ def _memory_stats():
     except Exception:
         py_blocks = 0
     return rss_mb, py_blocks
+
+
+def _crash_log_path():
+    """crash.log 的磁盘路径；logging 未初始化（测试）时返回 None。"""
+    for handler in crash_logger.handlers:
+        path = getattr(handler, "baseFilename", None)
+        if path:
+            return path
+    return None
+
+
+class _LoopWatchdog:
+    """事件循环卡死检测：loop 连续数秒不处理回调就 dump 全部线程栈。
+
+    2026-10-26 两次现场（16:34、17:21）事件循环都完全停摆 4~9 分钟，
+    期间协程、访问日志、诊断日志全部停转，事后只能确认「卡了多久」，
+    无法知道「卡在哪一行」。这里每秒用 call_soon_threadsafe 给 loop
+    排一个心跳回调：回调迟迟不执行说明 loop 线程卡在同步代码里，直接
+    faulthandler.dump_traceback 把所有线程栈写进 crash.log。
+    """
+
+    def __init__(self, loop, log_path, interval=WATCHDOG_INTERVAL,
+                 stuck_after=WATCHDOG_STUCK_SECONDS,
+                 report_interval=WATCHDOG_REPORT_INTERVAL):
+        self._loop = loop
+        self._log_path = log_path
+        self._interval = interval
+        self._stuck_after = stuck_after
+        self._report_interval = report_interval
+        self._last_beat = time.monotonic()
+        self._last_report = 0.0
+        self._stop = threading.Event()
+        self._thread = None
+
+    def start(self):
+        if not self._log_path:
+            return
+        self._thread = threading.Thread(
+            target=self._run, name="loop-watchdog", daemon=True
+        )
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+
+    def _beat(self):
+        self._last_beat = time.monotonic()
+
+    def _run(self):
+        while not self._stop.wait(self._interval):
+            try:
+                self._loop.call_soon_threadsafe(self._beat)
+            except RuntimeError:
+                return  # loop 已关闭
+            stalled = time.monotonic() - self._last_beat
+            if stalled < self._stuck_after:
+                continue
+            now = time.monotonic()
+            if now - self._last_report < self._report_interval:
+                continue
+            self._last_report = now
+            self._dump(stalled)
+
+    def _dump(self, stalled):
+        try:
+            with open(self._log_path, "a", encoding="utf-8") as fh:
+                fh.write(
+                    "\n=== event loop stalled %.1fs, dumping all thread "
+                    "stacks ===\n" % stalled
+                )
+                fh.flush()
+                faulthandler.dump_traceback(file=fh, all_threads=True)
+                fh.write("=== end of stalled dump ===\n")
+        except Exception:
+            pass
 
 
 def _set_nodelay(writer):
@@ -1059,6 +1142,8 @@ class ProxyCore:
         self._metrics = RuntimeMetrics()
         self._target_admission = TargetAdmission()
         self._diagnostics_task = None
+        # 事件循环心跳看门狗：卡死时把线程栈 dump 进 crash.log
+        self._watchdog = None
         # RSS 超阈值告警的限流时间戳（monotonic），避免每分钟刷 crash.log
         self._last_rss_warn = 0.0
         # 端口冲突导致的漂移记录（None 表示按配置端口正常监听）
@@ -1279,6 +1364,16 @@ class ProxyCore:
     def is_running(self):
         thread = self._thread
         return self._running and thread is not None and thread.is_alive()
+
+    def orphan_thread_alive(self):
+        """stop() 放弃的旧事件循环线程是否仍活着。
+
+        stop() 会清空 _thread，is_running() 因此恒为 False。健康检查
+        若只看 is_running()，会把「孤儿还活着、只是没人接手」误报成
+        「Proxy thread died」（2026-10-26 17:26:08 现场）。
+        """
+        stuck = self._orphan_thread
+        return stuck is not None and stuck.is_alive()
 
     def fd_count(self):
         """当前进程 fd 数量。残留连接（探测连接的 CLOSED fd / FIN_WAIT_2）
@@ -1505,6 +1600,8 @@ class ProxyCore:
         self._active_connections = 0
         self._mark_proxy_activity()
         self._diagnostics_task = asyncio.ensure_future(self._diagnostics_loop())
+        self._watchdog = _LoopWatchdog(asyncio.get_running_loop(), _crash_log_path())
+        self._watchdog.start()
         await self._start_local_proxy(allow_port_retry=True)
         self._recycle_task = asyncio.ensure_future(self._local_proxy_recycle_loop())
 
@@ -1573,6 +1670,9 @@ class ProxyCore:
                     raise
 
     async def _stop_servers(self):
+        if self._watchdog is not None:
+            self._watchdog.stop()
+            self._watchdog = None
         if self._stats_task and self._stats_task is not asyncio.current_task():
             self._stats_task.cancel()
             try:

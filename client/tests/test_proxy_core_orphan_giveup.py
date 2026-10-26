@@ -165,3 +165,102 @@ def test_memory_warning_skipped_below_threshold(monkeypatch):
     proxy._warn_if_memory_bloated(proxy_core.RSS_WARN_THRESHOLD_MB - 1, 1000)
 
     assert calls == []
+
+
+# ── 事件循环看门狗 ───────────────────────────────────────────────
+
+
+class FakeLoop:
+    """只记录 call_soon_threadsafe；heartbeat=True 时模拟 loop 正常推进。"""
+
+    def __init__(self, heartbeat):
+        self.heartbeat = heartbeat
+        self.scheduled = 0
+
+    def call_soon_threadsafe(self, callback):
+        self.scheduled += 1
+        if self.heartbeat:
+            callback()
+
+
+def test_watchdog_dumps_when_loop_stops_beating(tmp_path):
+    """loop 不执行排进去的回调 → 判定卡死并 dump（只按 report 间隔重复）。"""
+    loop = FakeLoop(heartbeat=False)
+    watchdog = proxy_core._LoopWatchdog(
+        loop, str(tmp_path / "crash.log"),
+        interval=0.01, stuck_after=0.03, report_interval=10.0,
+    )
+    calls = []
+    watchdog._dump = calls.append
+    watchdog.start()
+    time.sleep(0.2)
+    watchdog.stop()
+
+    assert len(calls) == 1
+    assert calls[0] >= 0.03
+
+
+def test_watchdog_silent_when_loop_keeps_beating(tmp_path):
+    loop = FakeLoop(heartbeat=True)
+    watchdog = proxy_core._LoopWatchdog(
+        loop, str(tmp_path / "crash.log"),
+        interval=0.01, stuck_after=0.03, report_interval=10.0,
+    )
+    calls = []
+    watchdog._dump = calls.append
+    watchdog.start()
+    time.sleep(0.15)
+    watchdog.stop()
+
+    assert loop.scheduled > 0
+    assert calls == []
+
+
+def test_watchdog_without_log_path_does_not_start(tmp_path):
+    """logging 未初始化（无 crash.log 路径）时不启动线程。"""
+    loop = FakeLoop(heartbeat=False)
+    watchdog = proxy_core._LoopWatchdog(loop, None, interval=0.01, stuck_after=0.01)
+
+    watchdog.start()
+
+    assert watchdog._thread is None
+    assert loop.scheduled == 0
+
+
+def test_watchdog_dump_writes_all_thread_stacks(tmp_path):
+    log_path = tmp_path / "crash.log"
+    watchdog = proxy_core._LoopWatchdog(
+        FakeLoop(heartbeat=True), str(log_path), interval=1.0, stuck_after=1.0
+    )
+
+    watchdog._dump(12.5)
+
+    text = log_path.read_text()
+    assert "event loop stalled 12.5s" in text
+    assert "end of stalled dump" in text
+
+
+def test_orphan_thread_alive_tracks_orphan_state():
+    proxy = proxy_core.ProxyCore()
+    assert proxy.orphan_thread_alive() is False
+
+    thread = FakeThread(alive=True)
+    proxy._orphan_thread = thread
+    assert proxy.orphan_thread_alive() is True
+
+    thread.alive = False
+    assert proxy.orphan_thread_alive() is False
+
+
+def test_crash_log_path_comes_from_rotating_handler(tmp_path):
+    """看门狗必须能定位 crash.log；真实运行时由 RotatingFileHandler 提供。"""
+    import logging.handlers
+
+    target = str(tmp_path / "crash.log")
+    handler = logging.handlers.RotatingFileHandler(target)
+    proxy_core.crash_logger.addHandler(handler)
+    try:
+        assert proxy_core._crash_log_path() == target
+    finally:
+        proxy_core.crash_logger.removeHandler(handler)
+        handler.close()

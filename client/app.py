@@ -1016,6 +1016,14 @@ class AppController(NSObject):
                     crash_logger.warning(
                         "Proxy thread alive but ports not listening, restarting local proxy"
                     )
+                elif self.proxy.orphan_thread_alive():
+                    # stop() 已清空 _thread，is_running() 恒为 False；但旧
+                    # 事件循环线程可能还活着。这不是「线程死了」，而是
+                    # 「孤儿僵死」，start() 会被拒绝（见 ProxyThreadStuckError）
+                    crash_logger.warning(
+                        "Proxy event loop thread is detached but still alive "
+                        "(orphan), cannot restart in-process"
+                    )
                 else:
                     crash_logger.warning("Proxy thread died")
 
@@ -1154,6 +1162,11 @@ class AppController(NSObject):
         NSAlert.runModal 会阻塞主线程直到用户点「好」，状态栏菜单在
         此期间完全无响应；通知 + 状态栏文案能传达同样的信息且不阻塞。
         """
+        crash_logger.warning(
+            "health check gave up after %d restarts; disconnecting proxy",
+            max_restarts,
+        )
+
         def _report():
             self._set_status_title("代理已停止")
             self._show_notification(
@@ -1167,6 +1180,12 @@ class AppController(NSObject):
 
     def _on_proxy_thread_stuck(self):
         """旧事件循环线程僵死超过阈值：本进程内无法再安全启动代理。"""
+        crash_logger.error(
+            "proxy event loop thread stuck for over %.0fs; "
+            "disconnecting and asking user to restart the client",
+            ORPHAN_THREAD_GIVEUP_SECONDS,
+        )
+
         def _report():
             self._set_status_title("代理线程卡死，请重启客户端")
             self._show_notification(
