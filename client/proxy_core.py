@@ -8,6 +8,7 @@ import os
 import socket
 import ssl
 import struct
+import sys
 import threading
 import time
 
@@ -38,6 +39,24 @@ class CertPinMismatchError(Exception):
 
 class CertPinUnavailableError(Exception):
     pass
+
+
+class ProxyThreadStuckError(RuntimeError):
+    """旧事件循环线程仍存活，拒绝再起第二个循环。
+
+    age_seconds 是该线程被记为孤儿后存活的秒数：调用方据此区分
+    「刚僵住、还可能自己退出」（继续退避重试）与「已僵死、本进程
+    内无救」（直接提示用户重启客户端）。消息保留旧文案前缀，便于
+    已有日志检索与测试匹配。
+    """
+
+    def __init__(self, age_seconds):
+        self.age_seconds = age_seconds
+        super().__init__(
+            "previous proxy event loop thread is still alive "
+            "(stuck %.0fs); refusing to start a second event loop"
+            % age_seconds
+        )
 
 
 def _log_access(dest_addr, dest_port, method, direct, error=None):
@@ -91,6 +110,72 @@ LOCAL_PROXY_STOP_WAIT_TIMEOUT = 3.0
 # 自毁（内部 wait_for），杜绝僵尸协程在旧事件循环上继续操作 server
 # 引用（跨 loop RuntimeError / EADDRINUSE 端口漂移）。
 LOCAL_PROXY_RECYCLE_TIMEOUT = 15
+# 孤儿事件循环线程的放弃阈值：stop() 没能让线程退出后，start() 每次
+# 都会被拒。超过这个时限仍不退出就认定 loop 已僵死，本进程内无法再
+# 安全启动代理，app 层据此直接提示用户重启客户端，而不是继续按退避
+# 重试（2026-10-26 现场：orphan 线程存活 5 分钟，三次自动重启全被拒，
+# 代理空窗 6.5 分钟，期间系统代理仍指向死端口，用户感知为整机卡顿）。
+ORPHAN_THREAD_GIVEUP_SECONDS = 30.0
+# RSS 告警阈值（MB）：超过即每 10 分钟往 crash.log 记一次，避免对象堆
+# 膨胀只在 diagnostics.log 里静默发生（同日现场物理 footprint 41GB，
+# 磁盘日志无任何异常记录，只能靠事后 vmmap 才看出来）。
+RSS_WARN_THRESHOLD_MB = 2048
+
+
+def _memory_stats():
+    """返回 (rss_mb, py_blocks)：当前常驻内存与 CPython 分配块数。
+
+    2026-10-26 现场：物理 footprint 41GB、41955 个 1MB VM_ALLOCATE
+    区域，而 malloc 各 zone 合计仅 30MB —— 膨胀的是 pymalloc arena。
+    RSS 与 getallocatedblocks() 必须一起看才能区分成因：
+      - 块数持续上涨        → 对象泄漏，去查长期存活的容器；
+      - 块数平稳而 RSS 上涨 → arena 碎片化（长寿对象散落在各 arena
+        中，短命对象释放后整块 arena 无法归还系统）。
+    取不到值时返回 0，不影响诊断日志。
+    """
+    rss_mb = 0
+    try:
+        if sys.platform == "darwin":
+            import ctypes
+
+            class _TimeValue(ctypes.Structure):
+                _fields_ = [
+                    ("seconds", ctypes.c_int32),
+                    ("microseconds", ctypes.c_int32),
+                ]
+
+            class _MachTaskBasicInfo(ctypes.Structure):
+                _fields_ = [
+                    ("virtual_size", ctypes.c_uint64),
+                    ("resident_size", ctypes.c_uint64),
+                    ("resident_size_max", ctypes.c_uint64),
+                    ("user_time", _TimeValue),
+                    ("system_time", _TimeValue),
+                    ("policy", ctypes.c_int32),
+                    ("suspend_count", ctypes.c_int32),
+                ]
+
+            libc = ctypes.CDLL(None)
+            info = _MachTaskBasicInfo()
+            count = ctypes.c_uint32(
+                ctypes.sizeof(info) // ctypes.sizeof(ctypes.c_uint32)
+            )
+            task = ctypes.c_uint32.in_dll(libc, "mach_task_self_").value
+            # MACH_TASK_BASIC_INFO = 20
+            kr = libc.task_info(task, 20, ctypes.byref(info), ctypes.byref(count))
+            if kr == 0:
+                rss_mb = info.resident_size // (1024 * 1024)
+        else:
+            import resource
+
+            rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+    except Exception:
+        rss_mb = 0
+    try:
+        py_blocks = sys.getallocatedblocks()
+    except Exception:
+        py_blocks = 0
+    return rss_mb, py_blocks
 
 
 def _set_nodelay(writer):
@@ -940,8 +1025,10 @@ class ProxyCore:
         self._lifecycle_lock = threading.RLock()
         # stop() 时没能退出的旧事件循环线程（唤醒后 loop 僵住的现场）。
         # 只要它还活着就拒绝 start()，否则新旧两个循环共享 self.* 的
-        # 任务句柄与 server 引用。
+        # 任务句柄与 server 引用。_since 记录首次被记为孤儿的 monotonic
+        # 时间，供调用方按存活时长决定「继续重试」还是「放弃并提示重启」。
         self._orphan_thread = None
+        self._orphan_thread_since = None
         self._configured_socks_port = None
         self._configured_http_port = None
         self._server_sockets = []
@@ -972,6 +1059,8 @@ class ProxyCore:
         self._metrics = RuntimeMetrics()
         self._target_admission = TargetAdmission()
         self._diagnostics_task = None
+        # RSS 超阈值告警的限流时间戳（monotonic），避免每分钟刷 crash.log
+        self._last_rss_warn = 0.0
         # 端口冲突导致的漂移记录（None 表示按配置端口正常监听）
         self._port_fallback = None
 
@@ -1066,11 +1155,12 @@ class ProxyCore:
         if stuck is None:
             return
         if stuck.is_alive():
-            raise RuntimeError(
-                "previous proxy event loop thread is still alive; "
-                "refusing to start a second event loop"
-            )
+            since = self._orphan_thread_since
+            # 未记录起点（直接注入墓碑的旧路径 / 测试）视为刚僵住
+            age = time.monotonic() - since if since is not None else 0.0
+            raise ProxyThreadStuckError(age)
         self._orphan_thread = None
+        self._orphan_thread_since = None
 
     def _start_locked(self, user_config, config_dir=None):
         if self._running:
@@ -1171,6 +1261,10 @@ class ProxyCore:
                 # 这里留作墓碑而不是直接丢弃：再 start() 会造出第二个事件循环，
                 # 两个循环共享任务句柄 / server 引用，历史上表现为跨 loop 取消、
                 # 端口漂移 1081/1088，最终在异常回溯链析构时把线程栈打穿闪退。
+                # 只记首次僵住时间：stop() 可能被多次调用（健康检查每轮
+                # 都会先 stop 再 start），重复重置会让存活时长永远归零。
+                if self._orphan_thread is not thread:
+                    self._orphan_thread_since = time.monotonic()
                 self._orphan_thread = thread
                 logger.error(
                     "proxy event loop thread is still alive after stop; "
@@ -1788,6 +1882,8 @@ class ProxyCore:
     def _log_diagnostics(self):
         metrics = self._metrics.snapshot()
         admission = self._target_admission.snapshot()
+        rss_mb, py_blocks = _memory_stats()
+        self._warn_if_memory_bloated(rss_mb, py_blocks)
         active_top = ",".join(
             f"{entry['target']}={entry['count']}" for entry in admission["active_top"]
         )
@@ -1795,12 +1891,15 @@ class ProxyCore:
             f"{entry['target']}={entry['count']}" for entry in admission["rejected_top"]
         )
         diagnostics_logger.info(
-            "fd=%d active=%d active_peak=%d setup_wait_n=%d setup_wait_avg_ms=%d "
+            "fd=%d rss_mb=%d py_blocks=%d active=%d active_peak=%d "
+            "setup_wait_n=%d setup_wait_avg_ms=%d "
             "setup_wait_max_ms=%d setup_wait_slow=%d setup_timeout_rejects=%d "
             "total_ceiling_rejects=%d dns_idle_kills=%d relay_idle_kills=%d edr_badfd=%d "
             "target_active=%d target_active_top=%s target_rejected_total=%d "
             "target_rejected_top=%s",
             self.fd_count(),
+            rss_mb,
+            py_blocks,
             self._active_connections,
             metrics["active_peak"],
             metrics["setup_wait_count"],
@@ -1816,6 +1915,27 @@ class ProxyCore:
             active_top or "-",
             admission["rejected_total"],
             rejected_top or "-",
+        )
+
+    def _warn_if_memory_bloated(self, rss_mb, py_blocks):
+        """RSS 超阈值时往 crash.log 留痕（10 分钟限流）。
+
+        diagnostics.log 每分钟一条、按天滚动，排障时不会主动翻；
+        crash.log 才是出问题时会看的地方。2026-10-26 的 41GB 现场里
+        磁盘上没有任何内存告警，只能事后 vmmap 才看出来。
+        """
+        if rss_mb < RSS_WARN_THRESHOLD_MB:
+            return
+        now = time.monotonic()
+        if now - self._last_rss_warn < 600:
+            return
+        self._last_rss_warn = now
+        crash_logger.warning(
+            "high memory: rss=%dMB py_blocks=%d active=%d (threshold %dMB)",
+            rss_mb,
+            py_blocks,
+            self._active_connections,
+            RSS_WARN_THRESHOLD_MB,
         )
 
     def _should_direct(self, host):

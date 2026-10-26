@@ -36,7 +36,12 @@ from AppKit import (
 )
 
 from config import Config
-from proxy_core import LOCAL_PROXY_FD_RECYCLE_THRESHOLD, ProxyCore
+from proxy_core import (
+    LOCAL_PROXY_FD_RECYCLE_THRESHOLD,
+    ORPHAN_THREAD_GIVEUP_SECONDS,
+    ProxyCore,
+    ProxyThreadStuckError,
+)
 from super_dns_control import is_super_dns_running
 from system_proxy import SystemProxy
 from tunnel_client import TunnelClient
@@ -348,6 +353,16 @@ class AppController(NSObject):
                     message = (
                         "端口被占用，请检查端口是否已被其他程序使用"
                         if e.errno == 48 else str(e)
+                    )
+                elif (
+                    isinstance(e, ProxyThreadStuckError)
+                    and e.age_seconds >= ORPHAN_THREAD_GIVEUP_SECONDS
+                ):
+                    # 线程已僵死超过放弃阈值，本进程内再点也没用
+                    message = (
+                        "本地代理线程已卡死（超过 %.0f 秒），"
+                        "当前进程内无法恢复。\n请退出并重新打开客户端。"
+                        % e.age_seconds
                     )
                 else:
                     # 旧事件循环线程未退出时 start() 会拒绝再起第二个循环
@@ -1011,9 +1026,10 @@ class AppController(NSObject):
                 )
 
                 if restart_count > MAX_RESTARTS:
-                    self._run_on_main(
-                        lambda: self._on_health_failed(MAX_RESTARTS)
-                    )
+                    # 不经 _run_on_main：_on_health_failed 内部把断开动作
+                    # 放到后台线程，主线程只做 UI 收尾（stop() 在僵死
+                    # loop 上最坏要等 10s，同步跑在主线程会让状态栏卡住）
+                    self._on_health_failed(MAX_RESTARTS)
                     restart_count = 0
                     continue
 
@@ -1046,6 +1062,7 @@ class AppController(NSObject):
                 # 亚秒窗口被忽略（_disconnect_async / toggleProxy_ 早退），
                 # 避免用户关停与 restart 交错导致端口漂移/系统代理黑洞
                 self._disconnecting = True
+                give_up = False
                 try:
                     self.proxy.stop()
                     self.proxy.start(self.config.data,
@@ -1083,6 +1100,15 @@ class AppController(NSObject):
                             )
                         )
                         self._run_on_main(self._refresh_status_title)
+                except ProxyThreadStuckError as e:
+                    crash_logger.warning(
+                        "Proxy restart failed: %s", e, exc_info=True
+                    )
+                    # 旧事件循环线程僵死超过阈值：每次 start() 都会被拒，
+                    # 继续退避重试只是把代理空窗越拉越长（2026-10-26 实测
+                    # 6.5 分钟）。放弃自动恢复，提示用户重启客户端。
+                    if e.age_seconds >= ORPHAN_THREAD_GIVEUP_SECONDS:
+                        give_up = True
                 except Exception as e:
                     crash_logger.warning(
                         "Proxy restart failed: %s", e, exc_info=True
@@ -1091,17 +1117,66 @@ class AppController(NSObject):
                     self._disconnecting = False
                     self._proxy_restart_lock.release()
 
+                if give_up:
+                    restart_count = 0
+                    self._on_proxy_thread_stuck()
+
         threading.Thread(target=_loop, daemon=True).start()
 
+    def _disconnect_in_background(self, on_done):
+        """后台断开代理并在主线程收尾，供健康检查的失败路径使用。
+
+        proxy.stop() 在僵死 loop 上最坏要等 10s（shutdown 超时），
+        sys_proxy.disable() 还要起外部进程。旧实现把整串同步跑在主线程
+        （_run_on_main 后直接 _disconnect），期间状态栏无响应，与代理
+        空窗叠加就是 2026-10-26「客户端特别卡」的一半。
+        """
+        if self._disconnecting:
+            return
+        self._disconnecting = True
+
+        def _stop():
+            try:
+                self._disconnect_core()
+            finally:
+                def _finish():
+                    self._disconnecting = False
+                    self._on_disconnected()
+                    on_done()
+
+                self._run_on_main(_finish)
+
+        threading.Thread(target=_stop, daemon=True).start()
+
     def _on_health_failed(self, max_restarts):
-        self._disconnect()
-        alert = NSAlert.alloc().init()
-        alert.setMessageText_("代理已断开")
-        alert.setInformativeText_(
-            f"代理连续 {max_restarts} 次重启失败，已停止"
-        )
-        alert.addButtonWithTitle_("好")
-        alert.runModal()
+        """自动重启次数耗尽：断开并提示，不再弹 modal。
+
+        NSAlert.runModal 会阻塞主线程直到用户点「好」，状态栏菜单在
+        此期间完全无响应；通知 + 状态栏文案能传达同样的信息且不阻塞。
+        """
+        def _report():
+            self._set_status_title("代理已停止")
+            self._show_notification(
+                "BlockProxyClient",
+                "代理已断开",
+                f"代理连续 {max_restarts} 次重启失败，已停止。"
+                "请检查网络后重新连接。",
+            )
+
+        self._disconnect_in_background(_report)
+
+    def _on_proxy_thread_stuck(self):
+        """旧事件循环线程僵死超过阈值：本进程内无法再安全启动代理。"""
+        def _report():
+            self._set_status_title("代理线程卡死，请重启客户端")
+            self._show_notification(
+                "BlockProxyClient",
+                "本地代理线程已卡死",
+                "自动恢复失败（线程僵死超过 %.0f 秒），"
+                "请退出并重新打开客户端。" % ORPHAN_THREAD_GIVEUP_SECONDS,
+            )
+
+        self._disconnect_in_background(_report)
 
     # ------------------------------------------------------------------
     # Menu-open latency check
