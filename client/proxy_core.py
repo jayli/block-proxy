@@ -2,6 +2,7 @@ import asyncio
 import errno
 import faulthandler
 import functools
+import gc
 import hashlib
 import ipaddress
 import logging
@@ -128,6 +129,16 @@ RSS_WARN_THRESHOLD_MB = 2048
 WATCHDOG_INTERVAL = 1.0
 WATCHDOG_STUCK_SECONDS = 5.0
 WATCHDOG_REPORT_INTERVAL = 30.0
+# relay 提前超时的退避与熔断：正常情况下 wait_for 会等满剩余时间，
+# 只有底层 reader 异常快速失败才会连续触发。50ms 退避把重试频率从
+# 每秒数万次压到 20 次，连续 100 次（约 5 秒）后直接关闭连接。
+RELAY_TIMEOUT_BACKOFF = 0.05
+RELAY_TIMEOUT_BURST_LIMIT = 100
+# GC 阈值 (gen0, gen1, gen2)：默认 (700, 10, 10) 在连接风暴下会让
+# full GC 连续触发。实测 geodata 解析后有 272 万个 GC 对象、单次
+# full GC 约 85ms；频率降两个数量级后，连续 GC 才有机会让出 GIL。
+GC_THRESHOLD = (20000, 50, 100)
+GC_SLOW_SECONDS = 0.5
 
 
 def _memory_stats():
@@ -261,6 +272,66 @@ class _LoopWatchdog:
             pass
 
 
+class _GcMonitor:
+    """gc.callbacks 钩子：只记录耗时超过阈值的收集。
+
+    2026-10-27 现场里 GC 把事件循环卡成分钟级，但默认日志里没有任何
+    GC 痕迹。这里把代数/耗时/回收数写进 crash.log，用来验证阈值调整
+    的效果，也便于发现新的对象堆积。
+    """
+
+    def __init__(self, slow_seconds=GC_SLOW_SECONDS):
+        self._slow = slow_seconds
+        self._started = 0.0
+        self._generation = -1
+
+    def __call__(self, phase, info):
+        if phase == "start":
+            self._started = time.monotonic()
+            self._generation = info.get("generation", -1)
+            return
+        elapsed = time.monotonic() - self._started
+        if elapsed < self._slow:
+            return
+        crash_logger.warning(
+            "slow GC: generation=%d elapsed=%.2fs collected=%s uncollectable=%s",
+            self._generation,
+            elapsed,
+            info.get("collected"),
+            info.get("uncollectable"),
+        )
+
+
+_gc_monitor_installed = False
+_gc_frozen = False
+
+
+def _configure_gc():
+    """启动完成后收紧 GC：先回收、再冻结长寿对象、最后放宽阈值。
+
+    必须在 geodata / routing / listener 都建好之后调用：freeze 之后
+    这些启动期对象不再参与每次 full GC 的遍历（实测 geodata 自身就有
+    272 万个 GC 跟踪对象）。阈值放宽则把 full GC 的触发频率降两个
+    数量级，避免连接风暴下的 GC 抖动。
+
+    freeze 只做一次：健康检查/唤醒会反复触发 stop()+start()，每次都
+    freeze 会把新一轮的 RoutingEngine/geodata 也钉进永久代，进程内
+    多份并存时白占内存。
+    """
+    global _gc_monitor_installed, _gc_frozen
+    try:
+        gc.collect()
+        if not _gc_frozen:
+            gc.freeze()
+            _gc_frozen = True
+        gc.set_threshold(*GC_THRESHOLD)
+        if not _gc_monitor_installed:
+            gc.callbacks.append(_GcMonitor())
+            _gc_monitor_installed = True
+    except Exception:
+        crash_logger.warning("gc tuning failed", exc_info=True)
+
+
 def _set_nodelay(writer):
     try:
         sock = writer.transport.get_extra_info("socket")
@@ -329,6 +400,7 @@ async def relay(reader, writer, route=None, direction=None, on_activity=None,
     # 单向计时（旧的单方向语义）。
     deadline = idle if idle is not None else IdleDeadline(idle_timeout)
     timed_out = False
+    premature_timeouts = 0
     try:
         while True:
             try:
@@ -339,11 +411,26 @@ async def relay(reader, writer, route=None, direction=None, on_activity=None,
                 # 到期瞬间兄弟方向可能刚续过命，重新看一次剩余时间，
                 # 避免把刚有流量的连接误判为空闲。
                 if deadline.remaining() > 0:
+                    # 剩余时间还在却抛了 TimeoutError：说明是底层 reader
+                    # 提前失败，不是 wait_for 的截止时间到了。旧实现直接
+                    # continue，异常 reader 会让这个 while 以每秒数万次的
+                    # 频率重试，每次创建 Task/Timeout/TimerHandle，把事件
+                    # 循环拖进连续 GC（2026-10-27 实测停滞 160s、内存 25GB）。
+                    premature_timeouts += 1
+                    if premature_timeouts >= RELAY_TIMEOUT_BURST_LIMIT:
+                        crash_logger.warning(
+                            "relay: %d consecutive premature timeouts "
+                            "(route=%s direction=%s), closing connection",
+                            premature_timeouts, route or "-", direction or "-",
+                        )
+                        break
+                    await asyncio.sleep(RELAY_TIMEOUT_BACKOFF)
                     continue
                 timed_out = True
                 break
             if not data:
                 break
+            premature_timeouts = 0
             deadline.touch()
             writer.write(data)
             if on_activity:
@@ -1604,6 +1691,8 @@ class ProxyCore:
         self._watchdog.start()
         await self._start_local_proxy(allow_port_retry=True)
         self._recycle_task = asyncio.ensure_future(self._local_proxy_recycle_loop())
+        # geodata/routing/listener 都已就绪，冻结这批长寿对象并放宽 GC 阈值
+        _configure_gc()
 
     async def _start_local_proxy(self, allow_port_retry):
         self._server_sockets = []
