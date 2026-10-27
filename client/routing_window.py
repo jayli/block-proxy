@@ -83,6 +83,17 @@ def _setup_minimal_menu():
     NSApp.setMainMenu_(main_menu)
 
 
+# 分流面板的三个 tab，用稳定标识（而不是中文标题）记录状态
+ROUTING_TAB_DIRECT = "direct"
+ROUTING_TAB_PROXY = "proxy"
+ROUTING_TAB_QUERY = "query"
+ROUTING_TABS = (ROUTING_TAB_DIRECT, ROUTING_TAB_PROXY, ROUTING_TAB_QUERY)
+DEFAULT_ROUTING_TAB = ROUTING_TAB_DIRECT
+
+# 界面状态（与运行配置分开，避免写 config.json 触发客户端重连）
+UI_STATE_FILENAME = "ui_state.json"
+
+
 _DOMAIN_RE = re.compile(
     r"^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
 )
@@ -185,6 +196,48 @@ def validate_rules(direct_text, proxy_text, geosite_tags=None, geoip_codes=None)
     return errors
 
 
+def routing_state_path(config_path):
+    """界面状态文件与 config.json 同级。"""
+    return os.path.join(os.path.dirname(os.path.abspath(config_path)), UI_STATE_FILENAME)
+
+
+def load_routing_tab(config_path):
+    """读上次关闭分流面板时选中的 tab；文件缺失/损坏/取值非法时回退到直连规则。"""
+    try:
+        with open(routing_state_path(config_path), "r") as f:
+            data = json.load(f)
+        tab = data.get("routing_tab")
+    except Exception:
+        return DEFAULT_ROUTING_TAB
+    return tab if tab in ROUTING_TABS else DEFAULT_ROUTING_TAB
+
+
+def save_routing_tab(config_path, tab):
+    """记录选中的 tab（合并写入，保留其它窗口的状态）。返回是否写入成功。"""
+    if tab not in ROUTING_TABS:
+        return False
+    path = routing_state_path(config_path)
+    data = {}
+    try:
+        with open(path, "r") as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            data = loaded
+    except Exception:
+        pass
+    if data.get("routing_tab") == tab:
+        return True
+    data["routing_tab"] = tab
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, path)
+    except Exception:
+        return False
+    return True
+
+
 def _center_on_mouse_screen(w, h):
     if platform.system() == "Darwin":
         try:
@@ -212,8 +265,35 @@ def _center_on_mouse_screen(w, h):
 
 
 class _RoutingWindowDelegate(NSObject):
+    """记录当前选中的 tab，然后结束模态循环。"""
+
+    def initWithTabView_configPath_(self, tab_view, config_path):
+        self = objc.super(_RoutingWindowDelegate, self).init()
+        if self is None:
+            return None
+        self._tab_view = tab_view
+        self._config_path = config_path
+        self._last_saved_tab = None
+        return self
+
+    def tabView_didSelectTabViewItem_(self, tab_view, item):
+        # 切换即记录，即使窗口没正常关闭也不会丢掉状态
+        self._rememberSelectedTab()
+
     def windowWillClose_(self, notification):
+        self._rememberSelectedTab()
         NSApp.stopModal()
+
+    def _rememberSelectedTab(self):
+        try:
+            item = self._tab_view.selectedTabViewItem()
+            tab = str(item.identifier())
+        except Exception:
+            return
+        if tab == self._last_saved_tab:
+            return
+        if save_routing_tab(self._config_path, tab):
+            self._last_saved_tab = tab
 
 
 def _rules_to_text(rules):
@@ -264,7 +344,6 @@ class RoutingWindowController(NSObject):
         )
         win.setTitle_("分流规则")
         win.setLevel_(NSFloatingWindowLevel)
-        win.setDelegate_(self._delegate())
 
         content = win.contentView()
         p = 15
@@ -338,15 +417,27 @@ class RoutingWindowController(NSObject):
         )
         content.addSubview_(tab)
 
-        self._direct_text = self._add_tab(tab, "直连规则", routing.get("direct_rules", []))
-        self._proxy_text = self._add_tab(tab, "代理规则", routing.get("proxy_rules", []))
+        self._direct_text = self._add_tab(
+            tab, ROUTING_TAB_DIRECT, "直连规则", routing.get("direct_rules", [])
+        )
+        self._proxy_text = self._add_tab(
+            tab, ROUTING_TAB_PROXY, "代理规则", routing.get("proxy_rules", [])
+        )
         self._add_query_tab(tab)
+
+        self._tab_view = tab
+        tab.selectTabViewItemWithIdentifier_(load_routing_tab(self._config_path))
+        self._delegate_ref = _RoutingWindowDelegate.alloc().initWithTabView_configPath_(
+            tab, self._config_path
+        )
+        tab.setDelegate_(self._delegate_ref)
+        win.setDelegate_(self._delegate_ref)
 
         self._updateRoutingHint()
 
         self._window = win
 
-    def _add_tab(self, tab_view, title, rules):
+    def _add_tab(self, tab_view, identifier, title, rules):
         # Use the tab view's content rect — this already excludes the tab bar
         cr = tab_view.contentRect()
         item_view = NSView.alloc().initWithFrame_(cr)
@@ -383,7 +474,7 @@ class RoutingWindowController(NSObject):
         # Scroll to top so first line is visible
         text_view.scrollRangeToVisible_((0, 0))
 
-        tab_item = NSTabViewItem.alloc().initWithIdentifier_(title)
+        tab_item = NSTabViewItem.alloc().initWithIdentifier_(identifier)
         tab_item.setLabel_(title)
         tab_item.setView_(item_view)
         tab_view.addTabViewItem_(tab_item)
@@ -479,7 +570,7 @@ class RoutingWindowController(NSObject):
 
         self._q_result_text = text_view
 
-        tab_item = NSTabViewItem.alloc().initWithIdentifier_("规则查询")
+        tab_item = NSTabViewItem.alloc().initWithIdentifier_(ROUTING_TAB_QUERY)
         tab_item.setLabel_("规则查询")
         tab_item.setView_(item_view)
         tab_view.addTabViewItem_(tab_item)
@@ -501,11 +592,6 @@ class RoutingWindowController(NSObject):
             else:
                 hint = "（未启用分流，流量全部走直连）"
         self._routing_hint.setStringValue_(hint)
-
-    def _delegate(self):
-        delegate = _RoutingWindowDelegate.alloc().init()
-        self._delegate_ref = delegate
-        return delegate
 
     def show(self):
         self._window.center()

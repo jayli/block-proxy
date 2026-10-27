@@ -544,3 +544,79 @@ class TestValidateRules:
         errors = validate_rules(text, text)
         # domain checks still work; geosite/geoip checks are skipped silently
         assert errors == []
+
+
+import json
+
+from routing_window import (
+    ROUTING_TAB_DIRECT,
+    ROUTING_TAB_PROXY,
+    ROUTING_TAB_QUERY,
+    load_routing_tab,
+    save_routing_tab,
+    routing_state_path,
+)
+
+
+class TestRoutingTabState:
+    """分流面板 tab 记忆：状态存在与 config.json 同级的 ui_state.json。"""
+
+    def test_defaults_to_direct_when_no_state_file(self, tmp_path):
+        config_path = tmp_path / "config.json"
+        config_path.write_text("{}")
+        assert load_routing_tab(str(config_path)) == ROUTING_TAB_DIRECT
+
+    def test_round_trip_each_tab(self, tmp_path):
+        config_path = tmp_path / "config.json"
+        config_path.write_text("{}")
+        for tab in (ROUTING_TAB_PROXY, ROUTING_TAB_QUERY, ROUTING_TAB_DIRECT):
+            assert save_routing_tab(str(config_path), tab) is True
+            assert load_routing_tab(str(config_path)) == tab
+
+    def test_state_file_lives_next_to_config(self, tmp_path):
+        config_path = tmp_path / "config.json"
+        config_path.write_text("{}")
+        save_routing_tab(str(config_path), ROUTING_TAB_QUERY)
+        assert routing_state_path(str(config_path)) == str(tmp_path / "ui_state.json")
+        assert (tmp_path / "ui_state.json").exists()
+        assert not (tmp_path / "ui_state.json.tmp").exists()
+
+    def test_keeps_other_keys(self, tmp_path):
+        config_path = tmp_path / "config.json"
+        config_path.write_text("{}")
+        (tmp_path / "ui_state.json").write_text('{"log_tab": "traffic"}')
+        save_routing_tab(str(config_path), ROUTING_TAB_PROXY)
+        data = json.loads((tmp_path / "ui_state.json").read_text())
+        assert data == {"log_tab": "traffic", "routing_tab": ROUTING_TAB_PROXY}
+
+    def test_ignores_unknown_stored_tab(self, tmp_path):
+        config_path = tmp_path / "config.json"
+        config_path.write_text("{}")
+        (tmp_path / "ui_state.json").write_text('{"routing_tab": "bogus"}')
+        assert load_routing_tab(str(config_path)) == ROUTING_TAB_DIRECT
+
+    def test_ignores_corrupt_state_file(self, tmp_path):
+        config_path = tmp_path / "config.json"
+        config_path.write_text("{}")
+        (tmp_path / "ui_state.json").write_text("not json {{{")
+        assert load_routing_tab(str(config_path)) == ROUTING_TAB_DIRECT
+
+    def test_ignores_non_dict_state_file(self, tmp_path):
+        config_path = tmp_path / "config.json"
+        config_path.write_text("{}")
+        (tmp_path / "ui_state.json").write_text('["routing_tab"]')
+        assert load_routing_tab(str(config_path)) == ROUTING_TAB_DIRECT
+        assert save_routing_tab(str(config_path), ROUTING_TAB_PROXY) is True
+        assert load_routing_tab(str(config_path)) == ROUTING_TAB_PROXY
+
+    def test_rejects_unknown_tab_on_save(self, tmp_path):
+        config_path = tmp_path / "config.json"
+        config_path.write_text("{}")
+        assert save_routing_tab(str(config_path), "bogus") is False
+        assert not (tmp_path / "ui_state.json").exists()
+
+    def test_save_reports_success_when_already_current(self, tmp_path):
+        config_path = tmp_path / "config.json"
+        config_path.write_text("{}")
+        save_routing_tab(str(config_path), ROUTING_TAB_QUERY)
+        assert save_routing_tab(str(config_path), ROUTING_TAB_QUERY) is True
