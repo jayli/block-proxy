@@ -67,6 +67,7 @@ function App() {
     socks5_tls: "1",
     auth_username: "",
     auth_password: "",
+    auth_http_enabled: "0",
     login_username: "",
     login_password: "",
     chain_proxy_enabled: "0",
@@ -915,6 +916,22 @@ function App() {
           </div>
           <div className="help-text" style={{ marginTop: '-8px', marginBottom: '8px' }}>
             公网代理端口强制启用 TLS，不可修改；SOCKS5 与 HTTP CONNECT 共用此端口
+          </div>
+
+          <div className="setting-row">
+            <label>内网HTTP代理启用密码:</label>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={(config.auth_http_enabled || "0") === "1"}
+                onChange={(e) => setConfig({...config, auth_http_enabled: e.target.checked ? "1" : "0"})}
+              />
+              <span className="switch-slider"></span>
+            </label>
+          </div>
+          <div className="help-text" style={{ marginTop: '-8px', marginBottom: '8px' }}>
+            只影响内网 HTTP 代理（8001）。不勾选则内网无需密码；只要填写了用户名和密码，
+            公网代理（8002）和隧道（8003）始终强制校验
           </div>
 
           <div className="setting-row">

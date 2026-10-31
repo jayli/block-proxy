@@ -280,6 +280,8 @@ function validateImportedConfig(newConfig) {
   if (!('chain_proxy_enabled' in newConfig)) newConfig.chain_proxy_enabled = "0";
   if (!('chain_proxy_type' in newConfig)) newConfig.chain_proxy_type = "http";
   if (!('chain_proxy_address' in newConfig)) newConfig.chain_proxy_address = "";
+  // 可选字段：8001 内网 HTTP 代理是否启用密码校验，旧配置缺失时按 "0" 补齐
+  if (!('auth_http_enabled' in newConfig)) newConfig.auth_http_enabled = "0";
 
   // 校验每个必需字段
   for (const field of REQUIRED_FIELDS) {
@@ -303,7 +305,7 @@ function validateImportedConfig(newConfig) {
       continue;
     }
 
-    if (['enable_mitm', 'enable_socks5', 'enable_express', 'socks5_tls', 'enable_tunnel', 'chain_proxy_enabled'].includes(field.key)) {
+    if (['enable_mitm', 'enable_socks5', 'enable_express', 'socks5_tls', 'enable_tunnel', 'chain_proxy_enabled', 'auth_http_enabled'].includes(field.key)) {
       if (value !== '0' && value !== '1') {
         details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是 "0" 或 "1"`);
       }
@@ -320,6 +322,11 @@ function validateImportedConfig(newConfig) {
         details.push(`字段 ${field.label} (${field.key}) 值无效: 必须是字符串数组`);
       }
     }
+  }
+
+  // 可选字段的值域：缺失时会补默认值，但填了非法值仍要拦下
+  if (!['0', '1'].includes(newConfig.auth_http_enabled)) {
+    details.push('字段 内网HTTP代理启用密码 (auth_http_enabled) 值无效: 必须是 "0" 或 "1"');
   }
 
   if (!['http', 'socks5'].includes(newConfig.chain_proxy_type)) {

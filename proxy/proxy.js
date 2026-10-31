@@ -89,6 +89,8 @@ var localIp = getLocalIp();
 var network_scanning_status = "0";
 var auth_username = "";
 var auth_password = "";
+// 8001 内网 HTTP 代理是否启用密码校验；"0" 时内网免密，凭据仍对 8002/8003 生效
+var auth_http_enabled = "0";
 var your_domain = "";
 var wan_ip = "0.0.0.0";
 var is_running_in_docker = false;
@@ -275,6 +277,7 @@ async function loadConfig() {
     vpn_proxy:"",
     auth_username:"",
     auth_password:"",
+    auth_http_enabled:"0",
     enable_express: enable_express,
     enable_socks5: enable_socks5,
     socks5_tls: socks5_tls,
@@ -349,6 +352,10 @@ async function loadConfig() {
 
       auth_password = loadedConfig.auth_password;
       config.auth_password = auth_password;
+
+      // 兼容旧配置：字段缺失时按 "0"（内网免密）处理
+      auth_http_enabled = loadedConfig.auth_http_enabled === "1" ? "1" : "0";
+      config.auth_http_enabled = auth_http_enabled;
 
       progress_time_stamp = loadedConfig.progress_time_stamp;
       config.progress_time_stamp = progress_time_stamp;
@@ -473,7 +480,7 @@ async function loadConfig() {
         proxy_port: proxyPort,
         auth_password:"",
         auth_username:"",
-        enable_express: enable_express,
+        auth_http_enabled: auth_http_enabled,
         your_domain: your_domain,
         socks5_port: socks5Port,
         express_port: expressPort,
@@ -1461,7 +1468,8 @@ function parseHeaders(rawHeaders) {
 function getProxyAuthConfig() {
   return {
     auth_username,
-    auth_password
+    auth_password,
+    auth_http_enabled
   };
 }
 
@@ -1614,7 +1622,6 @@ function getAnyProxyOptions() {
         if (expectedUser === "") {
           return true;
         }
-
         // 恶意扫描 IP 始终拒绝
         if (sourceIp != "127.0.0.1" &&
           sourceIp != "255.255.255.254" &&
@@ -1622,6 +1629,13 @@ function getAnyProxyOptions() {
           attacker.isBadGuy(sourceIp)) {
           console.log('[🚫]>> 拦截 badguy', sourceIp);
           return this.sendAuthRequired();
+        }
+
+        // 8001 内网 HTTP 代理的密码校验可单独关闭（默认 "0"）。
+        // 放在恶意扫描 IP 拦截之后：防护不随开关一起关掉。
+        // auth_username 仍保留给 8002/8003 使用，不会被清空。
+        if (authConfig.auth_http_enabled !== "1") {
+          return true;
         }
 
         const headers = parseHeaders(req.rawHeaders);
@@ -2208,6 +2222,25 @@ module.exports._test = {
   setAuthCredentialsForTest(username, password) {
     auth_username = username;
     auth_password = password;
+  },
+  setHttpAuthEnabledForTest(nextValue) {
+    auth_http_enabled = nextValue;
+  },
+  getHttpAuthEnabled() {
+    return auth_http_enabled;
+  },
+  // 供测试直接调用 8001 的认证判定（内部 rule 对象）
+  checkProxyAuthForTest(protocol, req, sourceIp, url) {
+    return getAnyProxyOptions().rule.checkProxyAuth.call(
+      getAnyProxyOptions().rule,
+      protocol,
+      req,
+      sourceIp,
+      url,
+    );
+  },
+  getProxyAuthConfigForTest() {
+    return getProxyAuthConfig();
   },
   setAuthPassHostsForTest(nextHosts) {
     authPassHosts = Array.isArray(nextHosts) ? nextHosts : [];
