@@ -20,7 +20,7 @@ This file provides guidance to Claude Code (and other agents via the AGENTS.md s
 - `npm run test:android` – Android phone flavor 单元测试；`npm run test:android:emulator` – 仪器化测试
 - 单类测试: `cd android-client && ./gradlew :app:testPhoneDebugUnitTest --tests '*ClassName'`
 - `npm run test` – React 前端测试 (react-scripts test)
-- 其余单测按文件名后缀分两种风格，别混用：`*.test.js`（`tunnel/test/*`、`test/tunnel-integration.test.js`、`test/timestamp-console.test.js`）是 `node:test`，用 `node --test <file>` 跑（如 `node --test tunnel/test/protocol.test.js`）；`test/*-tests.js` 是自带断言的普通 Node 脚本，直接 `node test/<file>.js`（没有 npm 脚本的有 `fd-diagnostics-` / `proxy-core-cert-lifecycle-` / `server-config-validation-` / `socks5-server-limits-tests.js`）；`socks5-server-limits-tests.js` 偶发未捕获的 `read ECONNRESET` 导致退出码 1（2026-10-09 实测 10 次里 2 次，疑似服务端销毁连接的竞态下测试客户端 socket 没挂 `error` 监听），重跑即过，别当成自己改动引入的回归
+- 其余单测按文件名后缀分两种风格，别混用：`*.test.js`（`tunnel/test/*`、`test/tunnel-integration.test.js`、`test/timestamp-console.test.js`）是 `node:test`，用 `node --test <file>` 跑（如 `node --test tunnel/test/protocol.test.js`）；`test/*-tests.js` 是自带断言的普通 Node 脚本，直接 `node test/<file>.js`（没有 npm 脚本的有 `fd-diagnostics-` / `host-match-tests.js` / `proxy-core-cert-lifecycle-` / `server-config-validation-` / `socks5-server-limits-tests.js` / `tunnel-forward-idle-config-tests.js`）；`socks5-server-limits-tests.js` 偶发未捕获的 `read ECONNRESET` 导致退出码 1（2026-10-09 实测 10 次里 2 次，疑似服务端销毁连接的竞态下测试客户端 socket 没挂 `error` 监听），重跑即过，别当成自己改动引入的回归
 
 ### Utilities
 - `npm run rm_bkconfig` – 删除备份配置；`npm run gen-icons` / `npm run watch:icons` – 生成/监听客户端图标
@@ -64,9 +64,10 @@ MITM proxy for parental control & ad blocking. Node.js + React + proxy-core (Any
 Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 / HTTP CONNECT / HTTP/2 CONNECT (8002, TLS + ALPN) → 认证 → CONNECT → 8001；Tunnel xhttp (8003) → 8001
 
 ### Core Components
-- **Proxy** (`/proxy/`) – `proxy.js` 入口, `attacker.js` 拦截判断, `domain.js` host 匹配, `fs.js` config 读写备份, `scan.js` 每 2h 扫描局域网设备表(状态与并发去重), 实际扫描在 `lan-scan.js`(原生 UDP 探测 + 内核邻居表解析, 不依赖 arp/ping 命令; 只扫 10/8 与 192.168/16 且排除 172.*, 全量替换而非追加), `mitm/rule.js` 规则 + 响应修改器(YouTube 去广告/有道 VIP), `http.js` HTTP 助手, `monitor.js` 系统指标, `operator.js` 管理路由, `wanip.js` 公网 IP, `access-logger.js` 访问日志(按 MAC 记录被监控设备访问其拦截域名), `visit-logger.js` 访问足迹日志(按 MAC 记录访问过的全部域名, 不记 path), `temp-credentials.js` 临时代理凭据(7 天有效, 仅 8001/8002), `auth-bypass-hosts.js` 认证豁免白名单(内置 auth_bypass_hosts.json 只读 + 临时 temp_auth_bypass_hosts.json 可增删, 仅 8001), `fd-diagnostics.js` fd/TCP 诊断; `mitm/` 另含 `registry.js`(规则注册), `persistentStore.js`, `uaFilter.js`, `ydcd/`, `youtube/`
+- **Proxy** (`/proxy/`) – `proxy.js` 入口, `attacker.js` 拦截判断, `host-match.js` 域名匹配语义(`filter_host` 命中自身及子域, 按 `.` 边界判定, 不做任意子串; 拦截/访问日志/足迹日志共用), `domain.js` DNS 解析/本机 IP, `fs.js` config 读写备份, `scan.js` 每 2h 扫描局域网设备表(状态与并发去重), 实际扫描在 `lan-scan.js`(原生 UDP 探测 + 内核邻居表解析, 不依赖 arp/ping 命令; 只扫 10/8 与 192.168/16 且排除 172.*, 全量替换而非追加), `mitm/rule.js` 规则 + 响应修改器(YouTube 去广告/有道 VIP), `http.js` HTTP 助手, `monitor.js` 系统指标, `operator.js` 管理路由, `wanip.js` 公网 IP, `access-logger.js` 访问日志(按 MAC 记录被监控设备访问其拦截域名), `visit-logger.js` 访问足迹日志(按 MAC 记录访问过的全部域名, 不记 path), `temp-credentials.js` 临时代理凭据(7 天有效, 仅 8001/8002), `auth-bypass-hosts.js` 认证豁免白名单(内置 auth_bypass_hosts.json 只读 + 临时 temp_auth_bypass_hosts.json 可增删, 仅 8001), `fd-diagnostics.js` fd/TCP 诊断; `mitm/` 另含 `registry.js`(规则注册), `persistentStore.js`, `uaFilter.js`(UA 豁免只跳过内置 YouTube MITM 重写, 不绕过父控拦截规则), `ydcd/`, `youtube/`
 - **Proxy-Core** (`/proxy/proxy-core/`) – AnyProxy fork 本地模块（非 npm 依赖）: `proxy-server.js`(入口), `index.js`, `request-handler.js`(HTTP/S/WS 转发核心, 1126 行), `https-server-mgr.js`(SNI+IP HTTPS, LRU 1000), `cert-lifecycle.js`(预热/并发去重/健康检查), `cert-mgr.js`, `util.js`, `log.js`, `rule-default.js`, `request-error-handler.js`(内联错误页), `ws-server-mgr.js`(WS 服务器工厂)
   - 证书存储: `~/.anyproxy` → 项目本地 `certificates/`；`X-Tunnel-Relay: 1` 头注入 tunnel CONNECT 响应
+  - 内置通配符证书: `cert-lifecycle.js#BUILTIN_WILDCARDS` 对 CDN 父域一次签出裸域 + `*.parent` 两个 SAN，主机名轮换时先查通配符缓存，避免 rrN---sn-xxx 每个新主机重复签发（通配符只匹配一层标签）
   - ECONNRESET/EPIPE 自动重试一次 (GET/HEAD/OPTIONS)；keep-alive `maxRequestsPerSocket: 50` 防 gRPC RST_STREAM；流式响应阈值 20MB (无 responseRules 时 64KB)
   - 剥离 MITM 响应中的 `Alt-Svc` 头，防止客户端学到 h3/QUIC 入口绕过 TCP 代理
 - **SOCKS5** (`/socks5/`) – 8002 公网代理端口，SOCKS5 over TLS + UDP over TCP(自定义帧) + HTTP CONNECT over TLS + HTTP/2 CONNECT(ALPN h2 多路复用): `server.js`(`createPublicProxyDispatcher` 按 ALPN/首字节分发、`createHttpConnectHandler` HTTP/1.1 隧道、`createHttp2ConnectHandler` 解密的 TLSSocket 交给内置 `http2.createServer()` 处理 CONNECT 流), `start.js`, `test_tls_reuse.js`; 客户端 `client/proxy_core.py` + `client/h2_upstream.py` (asyncio 实现)
@@ -95,7 +96,7 @@ Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 / HTTP 
 ### MITM 规则系统
 
 两套互相独立的机制，别混用字段：
-- **拦截规则**：`config.json` 的 `block_hosts[]`（后台 UI 维护，`src/App.js`），条目 `{ filter_host, filter_match_rule, filter_start_time, filter_end_time, filter_weekday, filter_mac }`，由 `proxy.js#shouldBlockHost()` 判定（host 子串 + URL 正则 + 时间段 + 周几 + MAC，MAC 仅 HTTP 代理）。
+- **拦截规则**：`config.json` 的 `block_hosts[]`（后台 UI 维护，`src/App.js`），条目 `{ filter_host, filter_match_rule, filter_start_time, filter_end_time, filter_weekday, filter_mac }`，由 `proxy.js#shouldBlockHost()` 判定（域名及子域匹配（`proxy/host-match.js`，按 `.` 边界，不做任意子串）+ URL 正则 + 时间段 + 周几 + MAC，MAC 仅 HTTP 代理）。
 - **MITM 改写规则**（回调式）：规则组 `{ 组名: [ { type: 'beforeSendRequest'|'beforeSendResponse', host, regexp, callback(url, request, response) } ] }`（也可写成 `{ name, description, rules }`），范例见 `example/rule.js`；`callback` 返回含 `response` 的对象，不处理就原样返回原 response。`proxy/mitm/registry.js` 合并三个来源，**同名组后者覆盖前者**：内置 `proxy/mitm/rule.js` < CLI `block-proxy -c rule.js` < Docker 挂载的 `config/rule.js`；单个组可由 `config.rule_modules["<source>:<组名>"] = false` 关闭（如 `builtin:Youtube`）；每次启动/重启代理前 `rebuildRuleRegistry()` 重建。HTTPS 要客户端装了根证书且 `enable_mitm`="1" 才会被解密并进入回调，明文 HTTP 不受影响。
 
 ### Tunnel 协议要点
@@ -137,6 +138,7 @@ main.py (入口, 单实例, 崩溃重启) → app.py (PyObjC 状态栏)
 - DoH 解析节点: 默认 `dns.alidns.com` + bootstrap `223.5.5.5,223.6.6.6`
 - 窗口为独立进程（Nuitka 编译后 `sys.executable` 非 Python 解释器, 用 `subprocess.Popen` + 系统 Python）
 - 系统唤醒恢复: socket 探测端口存活 + 隧道线程状态恢复, 等 3s 网络稳定后重试
+- 事件循环看门狗: `proxy_core.py` 每秒心跳，主循环卡死超过 5s 就把线程栈 dump 进 crash.log；旧 loop 线程超过 `ORPHAN_THREAD_GIVEUP_SECONDS`(30s) 判定僵死，本进程内不再自动重启，提示用户退出重开
 - Nuitka 构建后处理: `build.sh` 自动重命名可执行文件、修正 Info.plist (CFBundleExecutable, LSUIElement)；状态栏图标始终 `setTemplate_(True)`（单色黑+alpha, 系统按浅/深色模式自动反白, 兼容 Tahoe Liquid Glass）
 - **build.sh 模块清单**: `--include-data-files` 逐个列出顶层 .py（编译后窗口子进程用系统 Python 读同级源码），新增顶层模块必须同步加入，否则编译产物运行时才报 ModuleNotFoundError；`tests/test_build_script.py` 强制遍历校验
 - **版本号三处同步**: `client/VERSION`、`client/build.sh`（`VERSION=`）、`client/app.py`（`版本：vX.Y.Z`）
@@ -151,10 +153,10 @@ Kotlin + Jetpack Compose + VpnService + tun2socks (JNI) + xhttp 传输。v0.1.6 
 - `cdn/` – CDN IP 池: `CfCdnConfig`(NONE/Cloudflare/Aliyun), `CfIpDns`, `CfIpPool`, `CfIpSelector`, `CfIpRefreshWorker`, `CfIpRuntimeRegistry`, `CfIpSpeedTester`
 - `doh/` – `DohConfig` + `DohDns`（OkHttp Dns override, `dns.alidns.com`）；`tun/` – `Tun2Socks.kt`, `Tun2SocksMapDnsConfig.kt`
 - `socks/` – `LocalSocksServer`, `SocksSession`, `SocksConnectors`, `SocksProtocol`, `TlsClientHelloParser`, `TrafficSniffer`, `DomainMappingStore`, `HostnameValidator`, `HttpHostParser`
-- `tunnel/` – 传输层: `TunnelClient`(生命周期/自动重连/轮换), `TunnelTransportFactory`, `XhttpSession`(POST /xhttp/create), `XhttpTransport`(SSE 下行 + POST 上行, idle watchdog 90s + 15s 重连窗口), `XhttpUploadClient`(OkHttp/NativeUtls, uTLS 失败回退), `XhttpUploadScheduler`, `GomobileUtlsPostClient`(utlsws AAR 反射), `Frame`/`FrameCodec`/`FrameSender`, `PaddingInjector`
+- `tunnel/` – 传输层: `TunnelClient`(生命周期/自动重连/轮换), `TunnelTransportFactory`, `XhttpSession`(POST /xhttp/create), `XhttpTransport`(SSE 下行 + POST 上行, idle watchdog 90s + 15s 重连窗口), `XhttpUploadClient`(OkHttp/NativeUtls, uTLS 失败回退), `XhttpUploadListener`(连续上传失败回调, 触发隧道自愈), `XhttpUploadScheduler`, `GomobileUtlsPostClient`(utlsws AAR 反射), `Frame`/`FrameCodec`/`FrameSender`, `PaddingInjector`, `SseIdleWatchdog`(SSE 下行空闲看门狗)
 - `tunnel/` – 连接管理: `ForwardSession`/`ForwardSessionRegistry`(正向 CONNECT), `ReverseConnectHandler`(反向 CONNECT 双向中继), `ForwardAdmissionController`(12 全局 + 每目标 4), `TunnelRotationPolicy`(1~2h), `TargetSocket`/`RealTargetSocket`(支持 VpnService.protect)
 - `routing/` – `RoutingEngine`, `GeositeLoader`, `GeositeMatcher`, `ProtoParser`, `RouteDecision`, `DomainRule`
-- `service/` – `BlockProxyVpnService`, `TunnelServiceController`, `TunnelNotification`, `TunnelWatchdogWorker`, `BootRestartReceiver`, `BootRestoreRetryPolicy`
+- `service/` – `BlockProxyVpnService`, `TunnelServiceController`, `TunnelNotification`, `TunnelWatchdogWorker`, `BootRestartReceiver`, `BootRestoreRetryPolicy`, `VpnAutoRestartPolicy`(开机/看门狗自动重启前先重新 prepare VPN 授权)
 - `ui/` – Compose 界面 + `TunnelViewModel`, `RoutingViewModel`, `NetworkInfoCard`, `SlideButton`, `SliderStateMachine`
 - `status/` – `StatusStore`(全局 StateFlow), `TunnelStatus`；`diagnostics/` – `TunnelDiagnosticsLog`；`util/` – `NetworkInfoManager`, `TlsTester`；`config/` – `ConfigRepository`, `CredentialStore`, `ClientIdentityStore`, `RoutingConfig(Repository)`, `ServerConfig`
 - 根目录: `BlockProxyApplication.kt`, `MainActivity.kt`, `CrashReportActivity.kt`
