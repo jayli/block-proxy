@@ -195,6 +195,7 @@ pm2 start server/start.js --name "block-proxy" -- --pubkey /root/block-proxy/yui
 在管理界面「客户端代理设置」区块可一键生成临时用户名/密码，作为上方代理用户名/密码的平替：
 
 - 固定有效期 **7 天**，到期自动失效；也可点击「立即撤销」提前作废
+- 用户名为随机英文单词（如 `lemon`、`panda`），密码为 12 位无混淆字符的随机串，方便手输
 - 凭据存于服务端根目录 `temp_credentials.json`（已加入 `.gitignore`，不随仓库提交），最多保留最新 20 组
 - **生效范围**：仅 8001 内网 HTTP 代理、8002 公网 SOCKS5 与 HTTP CONNECT over TLS；**隧道 8003 不接入**，macOS/Android 客户端无法使用临时凭据
 - 重新生成不会使旧的未过期凭据失效；界面上只显示最新一组及其剩余有效期

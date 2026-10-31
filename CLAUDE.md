@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (and other agents via the AGENTS.md s
 - `npm run test:registry` / `npm run test:mitm-runtime` – MITM 规则注册 / 运行时测试
 - `npm run test:access-logger` – 访问日志单元测试 + 与真实代理钩子的集成测试
 - `npm run test:visit-logger` – 访问足迹日志（按 MAC 记录访问过的全部域名）单元测试 + 集成测试
-- `npm run test:temp-credentials` – 临时代理凭据单元测试（生成/过期/撤销/20 条裁剪）
+- `npm run test:temp-credentials` – 临时代理凭据单元测试（生成/过期/撤销/用户名单词不重复/20 条裁剪）
 - `npm run test:auth-bypass` – 认证豁免白名单单元测试（内置只读/临时读写/合并去重/fail-closed/loadConfig 刷新）
 - `npm run test:lan-scan` – 局域网设备表扫描单元测试（网段过滤/邻居表解析/MAC 归一化/全量替换语义）
 - `npm run test:android` – Android phone flavor 单元测试；`npm run test:android:emulator` – 仪器化测试

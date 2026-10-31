@@ -28,12 +28,39 @@ const CACHE_TTL_MS = 5000;
 // 密码字符表去掉易混淆字符（0/O、1/l/I），方便手输
 const PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
 
+// 用户名从常见英文单词里随机取一个，方便手输和口述（如 panda / lemon / sunny）
+const USERNAME_WORDS = [
+  'apple', 'banana', 'berry', 'cherry', 'cocoa', 'coffee', 'cookie', 'cream',
+  'grape', 'honey', 'lemon', 'mango', 'melon', 'olive', 'peach', 'pepper',
+  'sugar', 'toast', 'waffle', 'popcorn', 'pumpkin', 'carrot', 'tomato', 'potato',
+  'panda', 'tiger', 'koala', 'otter', 'zebra', 'eagle', 'camel', 'horse',
+  'mouse', 'sheep', 'snail', 'whale', 'shark', 'robin', 'finch', 'raven',
+  'moose', 'llama', 'bison', 'gecko', 'cobra', 'bunny', 'kitten', 'puppy',
+  'fox', 'bear', 'deer', 'hare', 'seal', 'crab', 'dove', 'wolf',
+  'river', 'ocean', 'stone', 'cloud', 'storm', 'sunny', 'windy', 'rainy',
+  'frost', 'snow', 'leaf', 'tree', 'grass', 'hill', 'lake', 'sand',
+  'wave', 'star', 'moon', 'comet', 'dusk', 'dawn', 'meadow', 'forest',
+  'island', 'canyon', 'valley', 'garden', 'pebble', 'boulder', 'glacier', 'harbor',
+  'chair', 'table', 'lamp', 'pillow', 'camera', 'pencil', 'marker', 'ruler',
+  'paper', 'basket', 'bottle', 'kettle', 'spoon', 'fork', 'plate', 'bowl',
+  'candle', 'mirror', 'window', 'brick', 'hammer', 'bucket', 'rocket', 'anchor',
+  'happy', 'silly', 'lucky', 'brave', 'calm', 'cozy', 'quiet', 'swift',
+  'brisk', 'mellow', 'bright', 'golden', 'purple', 'orange', 'violet', 'amber',
+  'coral', 'ivory', 'jade', 'mint', 'teal', 'ruby', 'pearl', 'silver',
+  'copper', 'maple', 'cedar', 'willow', 'lilac', 'tulip', 'daisy', 'lily'
+];
+
 var filePath = DEFAULT_FILE_PATH;
 var cache = null;          // { credentials, mtimeMs, loadedAt }
 var parseErrorLogged = false;
 
-function randomHex(bytes) {
-  return crypto.randomBytes(bytes).toString('hex');
+// 从词表里挑一个还没被占用过的单词；词表用完（20 条上限下几乎不可能）时加数字后缀
+function pickUsername(taken) {
+  const available = USERNAME_WORDS.filter((word) => !taken.has(word));
+  if (available.length > 0) {
+    return available[crypto.randomInt(available.length)];
+  }
+  return `${USERNAME_WORDS[crypto.randomInt(USERNAME_WORDS.length)]}${crypto.randomInt(10, 100)}`;
 }
 
 function randomPassword(length) {
@@ -111,14 +138,16 @@ function generate() {
   const now = Date.now();
   const createdAt = new Date(now);
   const expiresAt = new Date(now + TTL_MS);
+  const existing = getAll();
+  const taken = new Set(existing.map((item) => item.username));
   const credential = {
-    username: `tmp_${randomHex(4)}`,
+    username: pickUsername(taken),
     password: randomPassword(12),
     created_at: createdAt.toISOString(),
     expires_at: expiresAt.toISOString(),
     revoked: false
   };
-  write(getAll().concat([credential]));
+  write(existing.concat([credential]));
   return { ...credential, ...statusOf(credential, Date.now()) };
 }
 
@@ -182,6 +211,7 @@ module.exports = {
   getAll,
   configure,
   getFilePath,
+  USERNAME_WORDS,
   MAX_CREDENTIALS,
   TTL_MS
 };

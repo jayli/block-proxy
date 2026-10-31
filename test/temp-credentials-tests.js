@@ -23,7 +23,8 @@ function testGenerateReturnsActiveCredentialWithSevenDayTtl() {
   useTempFile('generate');
   const cred = tempCredentials.generate();
 
-  assert.match(cred.username, /^tmp_[0-9a-f]{8}$/);
+  assert(/^[a-z]+$/.test(cred.username), `username=${cred.username}`);
+  assert(tempCredentials.USERNAME_WORDS.includes(cred.username), `username=${cred.username}`);
   assert.strictEqual(cred.password.length, 12);
   assert.strictEqual(cred.revoked, false);
   assert.strictEqual(cred.status, 'active');
@@ -109,6 +110,17 @@ function testMultipleCredentialsAllValidAndLatestIsNewest() {
   assert.strictEqual(tempCredentials.getLatest().username, second.username);
 }
 
+function testUsernamesAreUniqueSimpleWords() {
+  useTempFile('words');
+  const seen = new Set();
+  for (let i = 0; i < 15; i++) {
+    const cred = tempCredentials.generate();
+    assert(tempCredentials.USERNAME_WORDS.includes(cred.username), `username=${cred.username}`);
+    assert(!seen.has(cred.username), `重复的用户名 ${cred.username}`);
+    seen.add(cred.username);
+  }
+}
+
 function testFileKeepsOnlyLatestTwentyCredentials() {
   const file = useTempFile('cap');
   let last = null;
@@ -190,6 +202,7 @@ const tests = [
   testRevokeMarksLatestAndRejectsValidation,
   testRevokeWithoutAnyCredentialReturnsNone,
   testMultipleCredentialsAllValidAndLatestIsNewest,
+  testUsernamesAreUniqueSimpleWords,
   testFileKeepsOnlyLatestTwentyCredentials,
   testCorruptFileIsTreatedAsEmpty,
   testLegacyArrayShapeIsAccepted,
