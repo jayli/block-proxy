@@ -114,7 +114,7 @@ var visit_log_flush_interval_ms = 1000; // 异步入盘的批量间隔
 // 仅当访问日志的关键状态变化时才打印一行启动日志，避免 loadConfig 每 2 小时刷屏
 var lastAccessLogStatusSignature = "";
 var lastVisitLogStatusSignature = "";
-var chain_proxy_enabled = "0"; // "0", "1"，是否启用下游链式代理
+var chain_proxy_enabled = "0"; // "0", "1"，是否启用上游链式代理
 var chain_proxy_type = "http"; // "http" 或 "socks5"
 var chain_proxy_address = ""; // 上游代理地址，格式: username:password@host:port 或 host:port
 const chainProxyAgentCache = new Map();

@@ -1003,7 +1003,7 @@ function App() {
             </select>
           </div>
           <div className="setting-row">
-            <label>下游链式代理:</label>
+            <label>上游链式代理:</label>
             <label className="switch">
               <input
                 type="checkbox"
@@ -1031,7 +1031,7 @@ function App() {
             />
           </div>
           <div className="help-text" style={{ marginTop: '-4px', marginBottom: '8px', marginLeft: '140px' }}>
-            开启后所有代理流量将转发至指定下游代理，隧道域名除外
+            开启后所有代理流量将转发至指定上游代理，隧道域名除外
           </div>
           <div className="rule-module-block">
             <div className="rule-module-header">
@@ -1493,7 +1493,7 @@ function App() {
             }</span>
           </p>
           <p>
-            <b>下游链式代理：</b>
+            <b>上游链式代理：</b>
             <span>{
               (config.chain_proxy_enabled || "0") === "1" && config.chain_proxy_address
                 ? `${config.chain_proxy_type?.toUpperCase() || 'HTTP'} → ${config.chain_proxy_address}`
