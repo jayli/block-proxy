@@ -930,8 +930,8 @@ function App() {
             </label>
           </div>
           <div className="help-text" style={{ marginTop: '-8px', marginBottom: '8px' }}>
-            只影响内网 HTTP 代理（8001）。不勾选则内网无需密码；只要填写了用户名和密码，
-            公网代理（8002）和隧道（8003）始终强制校验
+            只影响内网 HTTP 代理（{config.proxy_port || 8001}）。不勾选则内网无需密码；只要填写了用户名和密码，
+            公网代理（{config.socks5_port || 8002}）和隧道（{config.tunnel_port || 8003}）始终强制校验
           </div>
 
           <div className="setting-row">
