@@ -17,6 +17,8 @@ from Foundation import NSRunLoop, NSTimer, NSObject
 from AppKit import NSApplication, NSApplicationActivationPolicyAccessory, NSApp
 
 import settings_window as sw
+import config_panel as cpmod
+from AppKit import NSTextField
 
 REAL_CONFIG = os.path.expanduser(
     "~/Library/Application Support/BlockProxyClient/config.json"
@@ -146,6 +148,293 @@ def main():
         )
 
     # ------------------------------------------------------------------
+    # 布局回归：面板宽度统一 + config 两列网格 + routing 文本框宽度
+    # ------------------------------------------------------------------
+
+    def layout_checks():
+        sizes = {t: ctrl._panels[t].panelSize() for t in tab_order}
+        widths = {t: s[0] for t, s in sizes.items()}
+        check(
+            "三个面板宽度一致（左右留白相同）",
+            len(set(widths.values())) == 1,
+            f"{widths}",
+        )
+        check(
+            "面板宽度不超过窗口宽",
+            max(widths.values()) <= sw.WINDOW_WIDTH,
+            f"max={max(widths.values())} window={sw.WINDOW_WIDTH}",
+        )
+
+        cp = ctrl._panels[sw.PANEL_TAB_CONFIG]
+        pw = sizes[sw.PANEL_TAB_CONFIG][0]
+        fields = cp._fields
+        spans = {
+            k: (f.frame().origin.x, f.frame().origin.x + f.frame().size.width)
+            for k, f in fields.items()
+        }
+        rows = {}
+        for k, f in fields.items():
+            rows.setdefault(round(f.frame().origin.y), []).append(k)
+
+        # 地址|端口与用户名|密码同栅格：地址与用户名等宽同列，端口与密码等宽同列
+        addr_row = next(y for y, ks in rows.items() if "address" in ks)
+        check(
+            "config 地址与端口同行",
+            sorted(rows[addr_row]) == ["address", "port"],
+            f"同行={rows[addr_row]}",
+        )
+        check(
+            "config 地址与用户名等宽同列",
+            abs(spans["address"][0] - spans["username"][0]) < 0.5
+            and abs(
+                (spans["address"][1] - spans["address"][0])
+                - (spans["username"][1] - spans["username"][0])
+            ) < 0.5,
+            f"address={spans['address']} username={spans['username']}",
+        )
+        check(
+            "config 端口与密码等宽同列（左对齐）",
+            abs(spans["port"][0] - spans["password"][0]) < 0.5
+            and abs(
+                (spans["port"][1] - spans["port"][0])
+                - (spans["password"][1] - spans["password"][0])
+            ) < 0.5,
+            f"port={spans['port']} password={spans['password']}",
+        )
+
+        # 短字段两两并排：地址|端口、用户名|密码、本地SOCKS|本地HTTP
+        pairs = {frozenset(ks) for y, ks in rows.items() if len(ks) == 2}
+        check(
+            "config 短字段两两并排",
+            pairs == {
+                frozenset(["address", "port"]),
+                frozenset(["username", "password"]),
+                frozenset(["socks_port", "http_port"]),
+            },
+            f"实际={[sorted(p) for p in pairs]}",
+        )
+
+        # 标签与输入框垂直对齐：label frame 高 22px、输入框 frame 高 24px，
+        # 两者同 y 时 label 文字会比输入框文字高约 2px（实测），
+        # 所以标签要低 LABEL_ALIGN_DY。这里量 frame 偏移，文字墨迹对齐
+        # 靠实测扫描确定（offset=-2 时差 0.00px）。
+        labels = [
+            v for v in cp.view().subviews()
+            if isinstance(v, NSTextField) and not v.isBezeled() and not v.isEditable()
+        ]
+        misaligned = []
+        for k, fld in fields.items():
+            fy = fld.frame().origin.y
+            same = [l for l in labels
+                    if abs(l.frame().origin.y - (fy - cpmod.LABEL_ALIGN_DY)) < 0.5]
+            if not same:
+                misaligned.append((k, round(fy, 1)))
+        check(
+            "config 标签比输入框低 LABEL_ALIGN_DY（视觉对齐）",
+            not misaligned,
+            f"未对齐={misaligned} LABEL_ALIGN_DY={cpmod.LABEL_ALIGN_DY}",
+        )
+        # 协议行的 popup 偏移与输入框不同（实测最佳 offset=0）
+        pp = cp._protocol_popup.frame()
+        proto_lbl = [l for l in labels if l.stringValue() == "协议:"]
+        check(
+            "config 协议标签与 popup 同 y",
+            proto_lbl and abs(proto_lbl[0].frame().origin.y - pp.origin.y) < 0.5,
+            f"label_y={proto_lbl[0].frame().origin.y if proto_lbl else None} "
+            f"popup_y={pp.origin.y:.1f}",
+        )
+
+        # 同一行不得重叠，且右边界留出边距
+        overlap = []
+        overflow = []
+        for y, ks in rows.items():
+            ss = sorted((spans[k][0], spans[k][1], k) for k in ks)
+            for i in range(len(ss) - 1):
+                if ss[i][1] > ss[i + 1][0]:
+                    overlap.append((y, ss[i][2], ss[i + 1][2]))
+            for k in ks:
+                if spans[k][1] > pw - 12:
+                    overflow.append((k, round(spans[k][1], 1)))
+        check("config 同行控件不重叠", not overlap, f"{overlap}")
+        check(
+            "config 输入框不超出面板右边距",
+            not overflow,
+            f"{overflow} panel_w={pw}",
+        )
+
+        # 竖向重叠：删控件时很容易连带删掉它占的竖向空间，
+        # 让下面的控件压到上一行的提示文字上（实际发生过）。
+        # 只比真正有可见内容的控件：复选框 frame 故意做得很宽，
+        # 标题只占左侧一小段，所以用「标题实际宽度」而不是 frame 宽。
+        vitems = []
+        for name in [
+            "_tls_cb", "_insecure_cb", "_insecure_hint_label",
+            "_cert_bind_cb", "_cert_bind_label", "_udp_cb",
+            "_proxy_private_cb", "_autostart_cb", "_save_btn", "_cancel_btn",
+        ]:
+            v = getattr(cp, name)
+            f = v.frame()
+            if hasattr(v, "attributedTitle"):
+                # 复选框/按钮：box(≈20px) + 标题
+                right = f.origin.x + 20 + v.attributedTitle().size().width
+            else:
+                right = f.origin.x + max(
+                    v.attributedStringValue().size().width, 1
+                )
+            vitems.append(
+                (name, f.origin.y, f.origin.y + f.size.height, f.origin.x, right)
+            )
+        # 「重置」按钮与绑定证书复选框同行，单独按 frame 宽参与比较
+        rb = cp._reset_pin_btn.frame()
+        vitems.append(
+            ("_reset_pin_btn", rb.origin.y, rb.origin.y + rb.size.height,
+             rb.origin.x, rb.origin.x + rb.size.width)
+        )
+
+        voverlap = []
+        for i in range(len(vitems)):
+            for j in range(i + 1, len(vitems)):
+                a, b = vitems[i], vitems[j]
+                # y 区间相交 且 x 区间相交 才算真重叠。
+                # 留 2px 容差：label 的 frame 自带行高 leading，
+                # 与相邻控件 frame 边缘贴 1px 是正常排版，不是 bug
+                # （真正要抓的是几十 px 的压字，曾实测发生过）。
+                y_ov = min(a[2], b[2]) - max(a[1], b[1])
+                x_ov = min(a[4], b[4]) - max(a[3], b[3])
+                if y_ov > 2.0 and x_ov > 2.0:
+                    voverlap.append((a[0], b[0], round(y_ov, 1), round(x_ov, 1)))
+        check(
+            "config 控件竖向不重叠",
+            not voverlap,
+            f"{voverlap}",
+        )
+
+        # 提示文字不能被截断
+        truncated = []
+        for name in ["_insecure_hint_label", "_cert_bind_label"]:
+            v = getattr(cp, name)
+            need = v.attributedStringValue().size().width
+            if need > v.frame().size.width:
+                truncated.append((name, round(need, 1), round(v.frame().size.width, 1)))
+        check("config 提示文字不截断", not truncated, f"{truncated}")
+
+        # 证书指纹要完整显示（64 位 SHA-256 hex），不能缩略成 [:24]...
+        # 会改面板状态，所以先存后还，别污染后面的 saveAll_ 测试
+        saved_pin = cp._cert_pin
+        saved_mismatch = cp._cert_pin_mismatch
+        saved_state = cp._cert_bind_cb.state()
+        try:
+            import hashlib
+            pin = hashlib.sha256(b"smoke-test-certificate-der").hexdigest()
+            cp._cert_pin = pin
+            cp._cert_pin_mismatch = False
+            cp._cert_bind_cb.setState_(1)
+            cp._refresh_cert_bind_ui()
+            lbl = cp._cert_bind_label
+            text = lbl.stringValue()
+            need = lbl.attributedStringValue().size().width
+            have = lbl.frame().size.width
+            check(
+                "config 证书指纹完整显示（不缩略）",
+                pin in text and "..." not in text,
+                f"len={len(text)} 含完整指纹={pin in text}",
+            )
+            check(
+                "config 指纹行不截断",
+                need <= have,
+                f"need={need:.1f} have={have:.1f}",
+            )
+            # 指纹行撑满栅格宽，左右留白对称
+            lx = lbl.frame().origin.x
+            rx = pw - (lbl.frame().origin.x + have)
+            check(
+                "config 指纹行左右留白对称",
+                abs(lx - rx) < 0.5,
+                f"left={lx:.0f} right={rx:.0f}",
+            )
+            # 切回非指纹文案时要恢复 13pt + 原缩进（不能一直用小字）
+            cp._cert_bind_cb.setState_(0)
+            cp._refresh_cert_bind_ui()
+            back = cp._cert_bind_label
+            check(
+                "config 非指纹文案恢复原字体与缩进",
+                back.frame().origin.x == 102.0
+                and round(back.font().pointSize()) == 13,
+                f"x={back.frame().origin.x} size={back.font().pointSize()}",
+            )
+        finally:
+            cp._cert_pin = saved_pin
+            cp._cert_pin_mismatch = saved_mismatch
+            cp._cert_bind_cb.setState_(saved_state)
+            cp._refresh_cert_bind_ui()
+
+        # 「重置」按钮右缘对齐栅格右缘：所有控件都跨 16..504，
+        # 按钮右边距 = 栅格左边距，看上去才对称
+        rb = cp._reset_pin_btn.frame()
+        check(
+            "config 重置按钮右缘对齐栅格右缘（左右留白对称）",
+            abs((rb.origin.x + rb.size.width) - (pw - 16)) < 0.5,
+            f"btn_right={rb.origin.x + rb.size.width:.0f} grid_right={pw - 16:.0f} "
+            f"btn_left={rb.origin.x:.0f}",
+        )
+
+        # 「取消」在「保存」左边，等宽并排居中，左右留白对称。
+        # 不在这里真点取消：cancelAll_ 会关窗，而 windowWillClose_ 会 stopModal，
+        # 直接把冒烟脚本的模态循环提前结束。「不写盘」的行为由
+        # test_settings_window.py::test_cancel_all_closes_window_without_writing 覆盖。
+        cancel = cp._cancel_btn.frame()
+        save = cp._save_btn.frame()
+        check(
+            "config 取消按钮在保存左边且同行",
+            cancel.origin.x + cancel.size.width < save.origin.x
+            and abs(cancel.origin.y - save.origin.y) < 0.5,
+            f"cancel_x={cancel.origin.x:.0f} save_x={save.origin.x:.0f} "
+            f"cancel_y={cancel.origin.y:.0f} save_y={save.origin.y:.0f}",
+        )
+        check(
+            "config 取消/保存等宽等高",
+            abs(cancel.size.width - save.size.width) < 0.5
+            and abs(cancel.size.height - save.size.height) < 0.5,
+            f"cancel={cancel.size.width:.0f}x{cancel.size.height:.0f} "
+            f"save={save.size.width:.0f}x{save.size.height:.0f}",
+        )
+        c_left = cancel.origin.x
+        c_right = pw - (save.origin.x + save.size.width)
+        check(
+            "config 底部按钮组居中（左右留白对称）",
+            abs(c_left - c_right) < 1.0,
+            f"left={c_left:.0f} right={c_right:.0f}",
+        )
+        check(
+            "config 取消按钮标题与动作",
+            cp._cancel_btn.title() == "取消"
+            and str(cp._cancel_btn.action()) == "cancelClicked:"
+            and cp._cancel_btn.target() is cp,
+            f"title={cp._cancel_btn.title()!r} action={cp._cancel_btn.action()}",
+        )
+        check(
+            "宿主窗口有 cancelAll_ 方法",
+            hasattr(ctrl, "cancelAll_"),
+            "",
+        )
+
+        # 分流文本框宽度要接近 Super DNS（NSTabView 自身要吃 20px，不可能完全相等）
+        rp = ctrl._panels[sw.PANEL_TAB_ROUTING]
+        sp = ctrl._panels[sw.PANEL_TAB_SUPER_DNS]
+        rw = rp._direct_text.frame().size.width
+        sw_w = sp._domains_text.frame().size.width
+        check(
+            "分流文本框宽度接近 Super DNS",
+            sw_w - rw <= 35,
+            f"routing={rw:.0f} super_dns={sw_w:.0f} 差={sw_w - rw:.0f}",
+        )
+        check(
+            "分流文本框比加宽前（385）明显变宽",
+            rw > 430,
+            f"routing={rw:.0f}",
+        )
+
+    # ------------------------------------------------------------------
     # 动画采样：切换过程中逐帧量几何
     # ------------------------------------------------------------------
 
@@ -165,7 +454,7 @@ def main():
             "panel_bottom": pf.origin.y,
         }
 
-    def anim_report(label, target_tab, rows):
+    def anim_report(label, target_tab, rows, active_at_submit):
         if len(rows) < 5:
             check(f"动画 {label}", False, f"只采到 {len(rows)} 帧，无法判定")
             return
@@ -176,12 +465,29 @@ def main():
         for i in range(1, len(rows)):
             if abs(heights[i] - heights[i - 1]) > 0.05:
                 last_change = rows[i]["t"] - rows[0]["t"]
-        check(
-            f"动画 {label} 确实在插值（不是瞬变）",
-            distinct >= 5 and last_change > 0.1,
-            f"不同高度值={distinct} 时长≈{last_change * 1000:.0f}ms "
-            f"{heights[0]:.0f}→{heights[-1]:.0f}",
+        fin = rows[-1]
+        final_ok = (
+            abs(fin["panel_bottom"]) < 0.6
+            and abs(fin["frame_h"] - expected_frame_h(target_tab)) < 1.0
         )
+        # animator() 只在 app active 时才真正插值；inactive 时退化为瞬时改高度
+        # （settings_window._select_tab 的兜底）。两种情况落位都必须正确，
+        # 但「平滑插值」只在 active 时才是硬要求。
+        # active_at_submit 由调用方在提交动画那一刻记下，不能用现在的 isActive()。
+        if active_at_submit:
+            check(
+                f"动画 {label} active 时平滑插值",
+                distinct >= 5 and last_change > 0.1,
+                f"不同高度值={distinct} 时长≈{last_change * 1000:.0f}ms "
+                f"{heights[0]:.0f}→{heights[-1]:.0f}",
+            )
+        else:
+            check(
+                f"动画 {label} inactive 时瞬时落位",
+                final_ok,
+                f"不同高度值={distinct} {heights[0]:.0f}→{heights[-1]:.0f} "
+                f"expected={expected_frame_h(target_tab):.0f}",
+            )
         tops = [r["top"] for r in rows]
         check(
             f"动画 {label} 顶边不动",
@@ -202,11 +508,9 @@ def main():
             len(btns) == 1 and abs(next(iter(btns)) - sw.TAB_BAR_INSET_Y) < 0.6,
             f"按钮距内容区顶边={sorted(btns)}",
         )
-        fin = rows[-1]
         check(
             f"动画 {label} 结束落位正确",
-            abs(fin["panel_bottom"]) < 0.6
-            and abs(fin["frame_h"] - expected_frame_h(target_tab)) < 1.0,
+            final_ok,
             f"panel_bottom={fin['panel_bottom']:.1f} frame_h={fin['frame_h']:.0f} "
             f"expected={expected_frame_h(target_tab):.0f}",
         )
@@ -216,6 +520,7 @@ def main():
     # ------------------------------------------------------------------
 
     script = []
+    script += [("layout",)]
     for tab in tab_order:
         script += [("select", tab), ("wait", SETTLE_SEC), ("static", tab)]
     # 静态检查跑完停在 super_dns，从这里接着量动画；收缩与伸展两个方向都要验
@@ -237,6 +542,7 @@ def main():
         "rows": [],
         "anim_label": "",
         "anim_target": None,
+        "anim_active": False,
         "done": False,
     }
 
@@ -285,7 +591,8 @@ def main():
             if now < state["busy_until"]:
                 state["rows"].append(sample(state["anim_target"]))
                 return
-            anim_report(state["anim_label"], state["anim_target"], state["rows"])
+            anim_report(state["anim_label"], state["anim_target"], state["rows"],
+                        state["anim_active"])
             state["sampling"] = False
             state["rows"] = []
             state["busy_until"] = now + SETTLE_SEC   # 等落位再进下一步
@@ -306,6 +613,8 @@ def main():
 
         if kind == "select":
             ctrl._select_tab(item[1])
+        elif kind == "layout":
+            layout_checks()
         elif kind == "wait":
             state["busy_until"] = now + item[1]
         elif kind == "static":
@@ -317,6 +626,10 @@ def main():
             state["rows"] = []
             state["sampling"] = True
             state["busy_until"] = now + SAMPLE_SEC
+            # 在提交动画的那一刻记 isActive：_select_tab 就是按这个值决定
+            # 走动画还是走瞬时兜底。事后再读会不准 —— 激活状态可能在
+            # 采样期间翻转，导致拿 active 的标准去要求一个走了兜底路径的切换。
+            state["anim_active"] = bool(NSApp.isActive())
             ctrl._select_tab(target)
             state["rows"].append(sample(target))
         elif kind == "save":

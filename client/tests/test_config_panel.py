@@ -304,10 +304,34 @@ def test_config_panel_cert_binding_layout_uses_compact_checkbox_rows():
     assert "CERT_BIND_OFFSET_Y = 5" in text
     assert "LOWER_CONTROLS_OFFSET_Y = 15" in text
     assert "FOOTER_CONTROLS_OFFSET_Y = 5" in text
-    # 面板尺寸与合并前独立窗口一致（像素级不变）
-    assert "PANEL_WIDTH = 420" in text
-    assert "PANEL_HEIGHT = 615" in text
+    # 面板尺寸：宽度与 Super DNS 一致（520），高度按两列网格重排后降低
+    assert "PANEL_WIDTH = 520" in text
+    assert "PANEL_HEIGHT = 518" in text
     assert "w, h = PANEL_WIDTH, PANEL_HEIGHT" in text
+    # 两列网格：地址|端口、用户名|密码、本地SOCKS|本地HTTP 两两并排
+    assert "GRID_MARGIN_X = 16" in text
+    assert "GRID_GAP_X = 20" in text
+    assert "GRID_COL_W = 234" in text
+    assert "GRID_COL2_X = GRID_MARGIN_X + GRID_COL_W + GRID_GAP_X" in text
+    assert "GRID_FULL_W = GRID_COL_W * 2 + GRID_GAP_X" in text
+    # 栅格统一：地址与用户名等宽同列，端口与密码等宽同列（不做特例）
+    assert "PORT_FIELD_W" not in text
+    assert "width=addr_w" not in text
+    # 指纹完整显示：11pt 等宽 + 撑满栅格宽，不缩略
+    assert "CERT_PIN_FONT_SIZE = 11" in text
+    assert "f\"证书指纹：{self._cert_pin}\"" in text
+    assert "[:24]" not in text
+    # 「重置」按钮右缘对齐栅格右缘，左右留白对称
+    assert "RESET_BTN_W = 70" in text
+    assert "GRID_MARGIN_X + GRID_FULL_W - RESET_BTN_W" in text
+    # 标签比输入框低 2px 才能视觉对齐（实测偏移扫描：-2 时文字墨迹中心差 0.00px）
+    assert "LABEL_ALIGN_DY = 2" in text
+    assert "label(text, y - LABEL_ALIGN_DY, x=col_x, lw=lw)" in text
+    # 协议 popup 的标签偏移不同（实测最佳 offset=0），不能套 LABEL_ALIGN_DY
+    assert 'label("协议:", y_pos - 2)' in text
+    # 指纹/提示行下推 4px，下面的控件跟着下推同样多（保住间距）
+    assert "CERT_BIND_LABEL_DROP_Y = 4" in text
+    assert "y_pos -= 22 + 28 + CERT_BIND_LABEL_DROP_Y" in text
     assert "def checkbox(y, title, default, width=None):" in text
     assert "cb.setFont_(ui_font)" in text
     assert "lbl.setFont_(ui_font)" in text
@@ -315,7 +339,6 @@ def test_config_panel_cert_binding_layout_uses_compact_checkbox_rows():
     assert "cert_bind_label_y = y_pos - CERT_BIND_OFFSET_Y" in text
     assert "y_pos += LOWER_CONTROLS_OFFSET_Y" in text
     assert "y_pos += FOOTER_CONTROLS_OFFSET_Y" in text
-    assert "HINT_X + 190, y_pos + 39" in text
     assert "y_pos -= 20" in text
     assert "self._reset_pin_btn.setHidden_(True)" in text
 
@@ -338,7 +361,10 @@ def test_config_panel_cert_pin_mismatch_replaces_fingerprint_label():
     assert "elif self._cert_pin_mismatch:" in text
     assert 'self._cert_bind_label.setStringValue_("证书指纹不匹配（中间人攻击 or 服务端证书已更新）")' in text
     assert "self._cert_bind_label.setTextColor_(NSColor.systemRedColor())" in text
-    assert "self._cert_pin_error_label.setHidden_(True)" in text
+    # 指纹不匹配提示统一由 _cert_bind_label 展示；独立的 _cert_pin_error_label
+    # 一直 setHidden_(True)、文案与 _cert_bind_label 重复，已删除
+    # （注释里还会提到这个名字，所以只断言不再使用这个属性）
+    assert "self._cert_pin_error_label" not in text
 
 
 def test_config_panel_allow_insecure_is_pinned_true_and_disabled():
@@ -369,3 +395,19 @@ def test_config_panel_save_button_forwards_to_host_window():
     # 面板内不再有直接写盘/关窗的代码
     assert "def saveAndClose_" not in text
     assert "NSApp.stopModal()" not in text
+
+
+def test_config_panel_cancel_button_forwards_to_host_window():
+    """「取消」与「保存」一样只转发给宿主窗口，面板自己不关窗不写盘。"""
+    source = os.path.join(os.path.dirname(__file__), "..", "config_panel.py")
+    text = open(source).read()
+
+    assert 'cancel_btn.setAction_("cancelClicked:")' in text
+    assert "def cancelClicked_(self, sender):" in text
+    assert "self._save_target.cancelAll_(sender)" in text
+    assert 'cancel_btn.setTitle_("取消")' in text
+    # 取消路径不能写盘、不能自己关窗（关窗由宿主 cancelAll_ 负责）
+    cancel_body = text.split("def cancelClicked_(self, sender):")[1].split("\n    def ")[0]
+    assert "close()" not in cancel_body
+    assert "json.dump" not in cancel_body
+    assert "apply_to" not in cancel_body

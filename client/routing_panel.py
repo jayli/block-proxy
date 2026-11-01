@@ -38,8 +38,10 @@ from config import read_ui_state, write_ui_state
 
 BEZEL_ROUNDED = 1
 
-# 面板内容尺寸：与合并前独立窗口「分流规则」的 contentView 完全一致
-PANEL_WIDTH = 460
+# 面板内容尺寸。宽度与 Super DNS 面板一致（520），让中间文本框宽度接近它：
+# 460 宽时文本框只有 385px（NSTabView 自身还要吃掉 20px），520 宽时实测 445px
+# （Super DNS 是 473px，差的 28px 就是 NSTabView 那 20px 边框加滚动条）。
+PANEL_WIDTH = 520
 PANEL_HEIGHT = 480
 
 # 分流面板的三个 tab，用稳定标识（而不是中文标题）记录状态

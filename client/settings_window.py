@@ -361,12 +361,20 @@ class SettingsWindowController(NSObject):
         ).size.height
         # 顶边不动：新 origin.y = 旧 origin.y + 旧高 - 新高
         new_y = frame.origin.y + frame.size.height - frame_h
-        NSAnimationContext.beginGrouping()
-        NSAnimationContext.currentContext().setDuration_(TAB_SWITCH_ANIM_SEC)
-        self._window.animator().setFrame_display_(
-            ((frame.origin.x, new_y), (WINDOW_WIDTH, frame_h)), True
-        )
-        NSAnimationContext.endGrouping()
+        target = ((frame.origin.x, new_y), (WINDOW_WIDTH, frame_h))
+
+        # animator() 只在 app 处于 active 时才真正驱动动画；inactive 时整个
+        # 动画被丢弃（连 completionHandler 都不触发），窗口会停在旧高度。
+        # IPC 跳转（_pollPanelRequest_）切 Tab 时本进程常不是 active（用户在
+        # 主应用里点的菜单），所以 inactive 时退化为瞬时改高度，保证落位正确；
+        # active 时才走动画。
+        if NSApp.isActive():
+            NSAnimationContext.beginGrouping()
+            NSAnimationContext.currentContext().setDuration_(TAB_SWITCH_ANIM_SEC)
+            self._window.animator().setFrame_display_(target, True)
+            NSAnimationContext.endGrouping()
+        else:
+            self._window.setFrame_display_(target, True)
 
     def show(self):
         self._window.makeKeyAndOrderFront_(None)
@@ -437,6 +445,14 @@ class SettingsWindowController(NSObject):
         self._stop_request_polling()
         self._window.close()
         NSApp.stopModal()
+
+    def cancelAll_(self, sender):
+        """取消：什么都不写，直接关窗。
+
+        关窗会触发 windowWillClose_（本控制器就是 delegate），
+        由它停轮询并结束模态循环，所以这里不需要重复做。
+        """
+        self._window.close()
 
     def windowWillClose_(self, notification):
         self._stop_request_polling()

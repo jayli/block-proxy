@@ -173,10 +173,10 @@ def test_select_tab_sets_window_frame_height_including_titlebar(tmp_path, monkey
 # ---------------------------------------------------------------------------
 
 
-def _make_ctrl(tmp_path, monkeypatch, panels=None, content_height=679):
+def _make_ctrl(tmp_path, monkeypatch, panels=None, content_height=679, active=True):
     config_path = tmp_path / "config.json"
     config_path.write_text("{}")
-    monkeypatch.setattr(settings_window, "NSApp", _fake_app())
+    monkeypatch.setattr(settings_window, "NSApp", _fake_app(active))
 
     ctrl = settings_window.SettingsWindowController.__new__(
         settings_window.SettingsWindowController
@@ -210,6 +210,30 @@ def test_tab_switch_animates_window_frame_instead_of_jumping(tmp_path, monkeypat
     assert len(ctrl._window.animated_frames) == 1, "应通过 animator() 动画改 frame"
     assert ctx.begins == 1 and ctx.ends == 1, "动画必须包在 begin/endGrouping 里"
     assert ctx.durations == [settings_window.TAB_SWITCH_ANIM_SEC]
+
+
+def test_inactive_app_falls_back_to_instant_resize(tmp_path, monkeypatch):
+    """app 不是 active 时必须瞬时改高度，不能交给 animator()。
+
+    2026-11-01 实测：NSApp.isActive() 为假时 animator().setFrame_display_() 整个
+    被丢弃 —— frame 不变、completionHandler 也不触发，窗口会停在旧高度。
+    IPC 跳转（菜单点「分流规则」）时本进程常不是 active，所以必须兜底。"""
+    ctx = _FakeAnimationContext()
+    monkeypatch.setattr(settings_window, "NSAnimationContext", ctx)
+
+    ctrl = _make_ctrl(tmp_path, monkeypatch, active=False)
+    ctrl._select_tab(settings_window.PANEL_TAB_ROUTING)
+
+    assert ctrl._window.animated_frames == [], "inactive 时 animator() 会被丢弃，不能用"
+    assert len(ctrl._window.instant_frames) == 1, "inactive 时应瞬时改 frame"
+    assert ctx.begins == 0 and ctx.ends == 0, "inactive 时不该开动画分组"
+
+    # 两条路径的目标 frame 必须一致（只是有无动画的区别）
+    animated_ctrl = _make_ctrl(tmp_path, monkeypatch, active=True)
+    actx = _FakeAnimationContext()
+    monkeypatch.setattr(settings_window, "NSAnimationContext", actx)
+    animated_ctrl._select_tab(settings_window.PANEL_TAB_ROUTING)
+    assert ctrl._window.instant_frames[0] == animated_ctrl._window.animated_frames[0]
 
 
 def test_incoming_panel_is_glued_below_tab_bar_before_animating(tmp_path, monkeypatch):
@@ -353,10 +377,10 @@ def _fake_panels():
 
 
 def _fake_panels_with_sizes():
-    """三个高度不同的面板，用于验证伸缩动画的几何。"""
+    """三个高度不同的面板，用于验证伸缩动画的几何。尺寸与真实面板一致。"""
     return {
-        settings_window.PANEL_TAB_CONFIG: _FakePanel((420, 615)),
-        settings_window.PANEL_TAB_ROUTING: _FakePanel((460, 480)),
+        settings_window.PANEL_TAB_CONFIG: _FakePanel((520, 518)),
+        settings_window.PANEL_TAB_ROUTING: _FakePanel((520, 480)),
         settings_window.PANEL_TAB_SUPER_DNS: _FakePanel((520, 430)),
     }
 
@@ -382,10 +406,11 @@ class _FakeAnimationContext:
         self.durations.append(duration)
 
 
-def _fake_app():
+def _fake_app(active=True):
     return type("App", (), {
         "stopModal": staticmethod(lambda: None),
         "activateIgnoringOtherApps_": staticmethod(lambda flag: None),
+        "isActive": staticmethod(lambda: active),
     })
 
 
@@ -410,6 +435,11 @@ class _FakeWindow:
         return self._animator
 
     def setFrame_display_animate_(self, frame, display, animate):
+        self.instant_frames.append(frame)
+        self._frame = _FakeFrame(frame)
+
+    def setFrame_display_(self, frame, display):
+        """inactive 兜底路径用的瞬时改 frame。"""
         self.instant_frames.append(frame)
         self._frame = _FakeFrame(frame)
 
@@ -544,6 +574,40 @@ def test_save_all_reads_latest_disk_config_before_applying(tmp_path, monkeypatch
     saved = json.loads(config_path.read_text())
     assert saved["server"]["certPin"] == "fresh-pin"
     assert saved["server"]["address"] == "new.example.com"
+
+
+def test_cancel_all_closes_window_without_writing(tmp_path, monkeypatch):
+    """取消：什么都不写，直接关窗；面板里改脏的值不落盘。"""
+    config_path = tmp_path / "config.json"
+    original = {
+        "server": {"address": "old.example.com"},
+        "routing": {"enabled": False},
+    }
+    config_path.write_text(json.dumps(original))
+
+    ctrl = settings_window.SettingsWindowController.__new__(
+        settings_window.SettingsWindowController
+    )
+    ctrl._config_path = str(config_path)
+    ctrl._app_path = None
+    # 面板里改脏了地址，但取消不应该写盘
+    ctrl._config_panel = _FakeConfigPanel("SHOULD-NOT-BE-SAVED.example.com")
+    ctrl._routing_panel = _FakeRoutingPanel(True)
+    ctrl._window = _FakeWindow()
+    ctrl._request_timer = None
+
+    sync_calls = []
+    monkeypatch.setitem(
+        sys.modules, "autostart",
+        type("A", (), {"sync": staticmethod(lambda *a: sync_calls.append(a))}),
+    )
+    monkeypatch.setattr(settings_window, "NSApp", _fake_app())
+
+    ctrl.cancelAll_(None)
+
+    assert ctrl._window.closed is True, "取消必须关窗"
+    assert json.loads(config_path.read_text()) == original, "取消不能改 config"
+    assert sync_calls == [], "取消不能触发 autostart.sync"
 
 
 def test_super_dns_save_stays_panel_local():
