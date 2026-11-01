@@ -896,6 +896,9 @@ function App() {
               onChange={(e) => setConfig({...config, proxy_port: parseInt(e.target.value) || 8001})}
             />
           </div>
+          <div className="help-text" style={{ marginTop: '-8px', marginBottom: '8px' }}>
+            建议端口只对局域网开放
+          </div>
           <div className="setting-row">
             <label>公网Socks/Http代理端口:</label>
             <input
@@ -903,6 +906,9 @@ function App() {
               value={config.socks5_port}
               onChange={(e) => setConfig({...config, socks5_port: parseInt(e.target.value) || 8002})}
             />
+          </div>
+          <div className="help-text" style={{ marginTop: '-8px', marginBottom: '8px' }}>
+            建议此端口接受来自公网的代理请求
           </div>
           <div className="setting-row">
             <label>公网代理启用 TLS:</label>
