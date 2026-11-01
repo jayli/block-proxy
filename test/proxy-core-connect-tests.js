@@ -551,6 +551,213 @@ function testWsReqInfoRejectsMissingHostHeader() {
   );
 }
 
+function testParseConnectTargetSupportsIpv6AndLegacyForms() {
+  const parse = RequestHandler._test.parseConnectTarget;
+  // 标准带方括号 IPv6
+  assert.deepStrictEqual(parse('[2001:db8::1]:443'), { host: '2001:db8::1', port: '443' });
+  assert.deepStrictEqual(parse('[::1]:8443'), { host: '::1', port: '8443' });
+  // 无端口默认 443
+  assert.deepStrictEqual(parse('[2001:db8::1]'), { host: '2001:db8::1', port: '443' });
+  // 非标准的无括号 IPv6:端口（按最后一个冒号切）
+  assert.deepStrictEqual(parse('240c:409f:1000::4:0:a5:443'), { host: '240c:409f:1000::4:0:a5', port: '443' });
+  // 域名与 IPv4 行为不变
+  assert.deepStrictEqual(parse('example.com:443'), { host: 'example.com', port: '443' });
+  assert.deepStrictEqual(parse('1.2.3.4:8080'), { host: '1.2.3.4', port: '8080' });
+  assert.deepStrictEqual(parse('example.com'), { host: 'example.com', port: '443' });
+  // 非法目标
+  assert.strictEqual(parse('[::1'), null);
+  assert.strictEqual(parse('[::1]x:443'), null);
+  assert.strictEqual(parse('example.com:notaport'), null);
+  assert.strictEqual(parse('example.com:99999'), null);
+  assert.strictEqual(parse(''), null);
+}
+
+function testSplitHostPortKeepsUndefinedPort() {
+  const split = RequestHandler._test.splitHostPort;
+  // 无端口时 port 必须是 undefined（getWsReqInfo 依赖这个语义）
+  assert.deepStrictEqual(split('example.com'), { host: 'example.com', port: undefined });
+  assert.deepStrictEqual(split('[::1]'), { host: '::1', port: undefined });
+  assert.deepStrictEqual(split('[::1]:8080'), { host: '::1', port: '8080' });
+  assert.deepStrictEqual(split('example.com:443'), { host: 'example.com', port: '443' });
+}
+
+function testWsReqInfoParsesIpv6HostHeader() {
+  const info = RequestHandler._test.getWsReqInfo({
+    headers: { host: '[2001:db8::1]:8080' },
+    url: '/chat',
+  });
+  assert.strictEqual(info.hostName, '2001:db8::1');
+  assert.strictEqual(info.port, '8080');
+
+  // 无端口时保持旧行为：port 为 undefined
+  const noPort = RequestHandler._test.getWsReqInfo({
+    headers: { host: 'example.com' },
+    url: '/chat',
+  });
+  assert.strictEqual(noPort.hostName, 'example.com');
+  assert.strictEqual(noPort.port, undefined);
+}
+
+async function testConnectHandlerParsesBracketedIpv6Target() {
+  const connectTargets = [];
+  const handler = new RequestHandler({
+    httpServerPort: 18888,
+    wsIntercept: false,
+    forceProxyHttps: false,
+    dangerouslyIgnoreUnauthorized: false,
+    customConnect(host, port, callback) {
+      connectTargets.push({ host, port });
+      const stream = new PassThrough();
+      process.nextTick(callback);
+      return stream;
+    },
+  }, {
+    *beforeDealHttpsRequest() {
+      return null;
+    },
+  });
+
+  const req = {
+    url: '[2001:db8::1]:443',
+    httpVersion: '1.1',
+    method: 'CONNECT',
+  };
+  const socket = new FakeClientSocket();
+
+  handler.connectReqHandler(req, socket, Buffer.from('clienthello'));
+
+  await waitFor(() => connectTargets.length > 0);
+  // 关键断言：host 是裸 IPv6（不带方括号），net.connect 才能连
+  assert.deepStrictEqual(connectTargets[0], {
+    host: '2001:db8::1',
+    port: '443',
+  });
+  await waitFor(() => socket.clientWrites.length > 0);
+  assert.match(Buffer.concat(socket.clientWrites).toString('utf8'), /^HTTP\/1\.1 200 /);
+}
+
+async function testConnectHandlerPipesDataToRealIpv6Origin() {
+  // 端到端：无 customConnect 时回退到 net.connect(port, 裸IPv6)，
+  // 验证解析出的 host 能真正连上 IPv6 目标
+  const echo = net.createServer((socket) => {
+    socket.pipe(socket);
+  });
+  await new Promise((resolve) => echo.listen(0, '::1', resolve));
+  const echoPort = echo.address().port;
+
+  const handler = new RequestHandler({
+    httpServerPort: 18888,
+    wsIntercept: false,
+    forceProxyHttps: false,
+    dangerouslyIgnoreUnauthorized: false,
+  }, {
+    *beforeDealHttpsRequest() {
+      return false; // 不拦截，纯四层转发
+    },
+  });
+
+  const req = {
+    url: `[::1]:${echoPort}`,
+    httpVersion: '1.1',
+    method: 'CONNECT',
+  };
+  const socket = new FakeClientSocket();
+
+  try {
+    handler.connectReqHandler(req, socket, Buffer.from('hello-ipv6'));
+
+    await waitFor(() => socket.clientWrites.length > 0);
+    const response = Buffer.concat(socket.clientWrites).toString('utf8');
+    assert.match(response, /^HTTP\/1\.1 200 /);
+    await waitFor(() => Buffer.concat(socket.clientWrites).toString('utf8').includes('hello-ipv6'));
+  } finally {
+    socket.destroy();
+    await new Promise((resolve) => echo.close(resolve));
+  }
+}
+
+async function testPlainHttpForwardsToRealIpv6Origin() {
+  // 端到端：明文 HTTP 的 absolute-form（http://[::1]:port/path）经真实
+  // ProxyServer 转发到 IPv6 源。url.parse 天然支持方括号 IPv6，
+  // 这里验证整条链路（含 proxy.js 的裸 IP 放行分支）不被 IPv6 目标卡住。
+  const origin = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('hello-from-' + req.url);
+  });
+  await new Promise((resolve) => origin.listen(0, '::1', resolve));
+  const originPort = origin.address().port;
+
+  const proxyPort = await util.getFreePort();
+  const proxy = new ProxyServer({
+    port: proxyPort,
+    dangerouslyIgnoreUnauthorized: true,
+    rule: {
+      *beforeDealHttpsRequest() {
+        return false;
+      },
+      *beforeSendResponse() {
+        return null;
+      },
+    },
+  });
+
+  try {
+    await new Promise((resolve, reject) => {
+      proxy.once('ready', resolve);
+      proxy.once('error', reject);
+      proxy.start();
+    });
+
+    const body = await new Promise((resolve, reject) => {
+      const req = http.request({
+        host: '127.0.0.1',
+        port: proxyPort,
+        method: 'GET',
+        path: `http://[::1]:${originPort}/v6path`,
+        headers: { Host: `[::1]:${originPort}` },
+      }, (res) => {
+        assert.strictEqual(res.statusCode, 200);
+        let data = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { data += chunk; });
+        res.once('end', () => resolve(data));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+
+    assert.strictEqual(body, 'hello-from-/v6path');
+  } finally {
+    await proxy.close();
+    await new Promise((resolve) => origin.close(resolve));
+  }
+}
+
+async function testConnectHandlerRejectsMalformedTarget() {
+  const handler = new RequestHandler({
+    httpServerPort: 18888,
+    wsIntercept: false,
+    forceProxyHttps: false,
+    dangerouslyIgnoreUnauthorized: false,
+  }, {
+    *beforeDealHttpsRequest() {
+      return null;
+    },
+  });
+
+  const req = {
+    url: '[::1',
+    httpVersion: '1.1',
+    method: 'CONNECT',
+  };
+  const socket = new FakeClientSocket();
+
+  handler.connectReqHandler(req, socket, Buffer.alloc(0));
+
+  await waitFor(() => socket.clientWrites.length > 0);
+  assert.match(Buffer.concat(socket.clientWrites).toString('utf8'), /^HTTP\/1\.1 400 Bad Request/);
+}
+
 async function testFetchRemoteResponseHonorsTimeout() {
   const sockets = new Set();
   const server = http.createServer(() => {});
@@ -995,6 +1202,20 @@ async function run() {
   console.log('PASS testHttpsServerSecureOptionsDisableSslv3AndTlsv1');
   testWsReqInfoRejectsMissingHostHeader();
   console.log('PASS testWsReqInfoRejectsMissingHostHeader');
+  testParseConnectTargetSupportsIpv6AndLegacyForms();
+  console.log('PASS testParseConnectTargetSupportsIpv6AndLegacyForms');
+  testSplitHostPortKeepsUndefinedPort();
+  console.log('PASS testSplitHostPortKeepsUndefinedPort');
+  testWsReqInfoParsesIpv6HostHeader();
+  console.log('PASS testWsReqInfoParsesIpv6HostHeader');
+  await testConnectHandlerParsesBracketedIpv6Target();
+  console.log('PASS testConnectHandlerParsesBracketedIpv6Target');
+  await testConnectHandlerPipesDataToRealIpv6Origin();
+  console.log('PASS testConnectHandlerPipesDataToRealIpv6Origin');
+  await testPlainHttpForwardsToRealIpv6Origin();
+  console.log('PASS testPlainHttpForwardsToRealIpv6Origin');
+  await testConnectHandlerRejectsMalformedTarget();
+  console.log('PASS testConnectHandlerRejectsMalformedTarget');
   await testFetchRemoteResponseHonorsTimeout();
   console.log('PASS testFetchRemoteResponseHonorsTimeout');
   await testFetchRemoteResponseUsesProvidedAgent();

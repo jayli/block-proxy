@@ -12,6 +12,7 @@ writer 暴露 relay 与 `_force_close_rst()` 会碰到的 transport 成员，
 
 import asyncio
 import base64
+import ipaddress
 import logging
 
 logger = logging.getLogger("proxy_core")
@@ -309,7 +310,14 @@ class _H2Session:
     async def open_tunnel(self, host, port):
         if self._closed or self._draining:
             raise ConnectionError("HTTP/2 session not available")
-        authority = f"{host}:{port}"
+        # IPv6 字面量目标必须带方括号，否则 :authority 里的冒号会被当成端口分隔符
+        authority_host = host
+        try:
+            if ipaddress.ip_address(host).version == 6:
+                authority_host = f"[{host}]"
+        except ValueError:
+            pass
+        authority = f"{authority_host}:{port}"
         stream_id = self.conn.get_next_available_stream_id()
         reader = H2StreamReader(stream_id)
         reader.bind(self)

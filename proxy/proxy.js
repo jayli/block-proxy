@@ -981,7 +981,9 @@ function connectViaChainProxy(targetHost, targetPort, chainConfig) {
 }
 
 function httpConnect(socket, targetHost, targetPort, username, password, resolve, reject) {
-  let lines = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n`;
+  // IPv6 字面量目标必须带方括号，否则冒号会被当成端口分隔符
+  const authority = net.isIPv6(targetHost) ? `[${targetHost}]:${targetPort}` : `${targetHost}:${targetPort}`;
+  let lines = `CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n`;
   if (username) {
     const auth = Buffer.from(`${username}:${password}`).toString('base64');
     lines += `Proxy-Authorization: Basic ${auth}\r\n`;
@@ -1008,6 +1010,33 @@ function httpConnect(socket, targetHost, targetPort, username, password, resolve
   };
   socket.on('data', onData);
   socket.write(lines);
+}
+
+// 把 IPv6 字面量（含 :: 省略与 IPv4-mapped 后缀）展开成 16 字节网络序地址
+function expandIpv6Groups(addr) {
+  const buf = Buffer.alloc(16);
+  // IPv4-mapped（::ffff:1.2.3.4）：末尾点分十进制先转成两组十六进制
+  const v4Match = /^(.*:)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(addr);
+  let text = addr;
+  if (v4Match) {
+    const parts = v4Match[2].split('.').map(Number);
+    const hi = ((parts[0] << 8) | parts[1]).toString(16);
+    const lo = ((parts[2] << 8) | parts[3]).toString(16);
+    text = `${v4Match[1]}${hi}:${lo}`;
+  }
+  const emptyIdx = text.indexOf('::');
+  let groups;
+  if (emptyIdx !== -1) {
+    const head = text.slice(0, emptyIdx).split(':').filter(g => g !== '');
+    const tail = text.slice(emptyIdx + 2).split(':').filter(g => g !== '');
+    groups = head.concat(Array(8 - head.length - tail.length).fill('0')).concat(tail);
+  } else {
+    groups = text.split(':');
+  }
+  for (let i = 0; i < 8; i++) {
+    buf.writeUInt16BE(parseInt(groups[i] || '0', 16), i * 2);
+  }
+  return buf;
 }
 
 function socks5Connect(socket, targetHost, targetPort, username, password, resolve, reject) {
@@ -1076,6 +1105,15 @@ function socks5Connect(socket, targetHost, targetPort, username, password, resol
     }
   };
   function sendSocks5Request() {
+    // IPv6 字面量目标用 ATYP=0x04 + 16 字节打包；其余（域名/IPv4）仍用 ATYP=0x03
+    if (net.isIPv6(targetHost)) {
+      const req = Buffer.alloc(4 + 16 + 2);
+      req[0] = 0x05; req[1] = 0x01; req[2] = 0x00; req[3] = 0x04;
+      expandIpv6Groups(targetHost).copy(req, 4);
+      req.writeUInt16BE(Number(targetPort), 20);
+      socket.write(req);
+      return;
+    }
     const hostBytes = Buffer.from(targetHost, 'utf8');
     if (hostBytes.length > 255) {
       socket.destroy(new Error('SOCKS5 target host is too long'));

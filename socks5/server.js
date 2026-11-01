@@ -53,6 +53,22 @@ function getTicketKeys() {
   return fs.readFileSync(ticketKeyPath) || crypto.randomBytes(48);
 }
 
+// 把 16 字节 IPv6 地址格式化为全形（2001:db8:0:0:0:0:0:1）。
+// 不能用 /00/g 之类的字符串替换压缩：会把组内十六进制位损坏（2001 → 201）。
+// net.isIPv6 接受全形，net.connect / http.request 可直接用裸形连接。
+function formatIpv6Address(bytes) {
+  const groups = [];
+  for (let i = 0; i < 16; i += 2) {
+    groups.push(bytes.readUInt16BE(i).toString(16));
+  }
+  return groups.join(':');
+}
+
+// CONNECT 目标的 authority：IPv6 字面量必须带方括号，否则冒号会被当成端口分隔符
+function formatConnectAuthority(host, port) {
+  return net.isIPv6(host) ? `[${host}]:${port}` : `${host}:${port}`;
+}
+
 function parseAddress(buf, offset) {
   const atyp = buf[offset];
   let host, port, nextOffset;
@@ -67,11 +83,9 @@ function parseAddress(buf, offset) {
     port = buf.readUInt16BE(offset + 2 + len);
     nextOffset = offset + 2 + len + 2;
   } else if (atyp === 0x04) {
-    const ipv6Bytes = buf.slice(offset + 1, offset + 17);
-    host = '[' + ipv6Bytes.reduce((acc, byte, i) => {
-      if (i % 2 === 0 && i > 0) acc += ':';
-      return acc + byte.toString(16).padStart(2, '0');
-    }, '').replace(/00/g, '0').replace(/(^|:)0+([0-9a-f]+)/g, '$1$2') + ']';
+    // 返回裸 IPv6 地址（不带方括号）；转发给下游 8001 时由
+    // formatConnectAuthority 统一加括号
+    host = formatIpv6Address(buf.slice(offset + 1, offset + 17));
     port = buf.readUInt16BE(offset + 17);
     nextOffset = offset + 19;
   } else {
@@ -82,7 +96,8 @@ function parseAddress(buf, offset) {
 }
 
 function sendResponse(socket, status, atyp = 0x01, bindAddr = '0.0.0.0', bindPort = 0) {
-  const resp = Buffer.alloc(10);
+  // IPv6 响应体是 22 字节（4 头 + 16 地址 + 2 端口），10 字节 buffer 会越界
+  const resp = Buffer.alloc(atyp === 0x04 ? 22 : 10);
   resp[0] = 0x05;
   resp[1] = status;
   resp[2] = 0x00;
@@ -267,7 +282,8 @@ function createConnectionHandler(options) {
     };
 
     proxySocket = net.connect(downstreamProxyPort, downstreamProxyHost, () => {
-      const connectReq = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n\r\n`;
+      const authority = formatConnectAuthority(targetHost, targetPort);
+      const connectReq = `CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`;
       proxySocket.write(connectReq);
 
       const chunks = [];
@@ -836,7 +852,8 @@ function createHttpConnectHandler(options) {
     socket.on('timeout', () => socket.destroy());
 
     proxySocket = net.connect(downstreamProxyPort, downstreamProxyHost, () => {
-      proxySocket.write(`CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n\r\n`);
+      const authority = formatConnectAuthority(targetHost, targetPort);
+      proxySocket.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`);
 
       const chunks = [];
       let totalLen = 0;
@@ -1038,7 +1055,8 @@ function createHttp2ConnectHandler(options) {
     };
 
     proxySocket = net.connect(downstreamProxyPort, downstreamProxyHost, () => {
-      proxySocket.write(`CONNECT ${target.host}:${target.port} HTTP/1.1\r\nHost: ${target.host}:${target.port}\r\n\r\n`);
+      const authority = formatConnectAuthority(target.host, target.port);
+      proxySocket.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`);
 
       const chunks = [];
       let totalLen = 0;
@@ -1262,6 +1280,10 @@ module.exports._test = {
   createPublicProxyDispatcher,
   checkProxyAuthCredentials,
   parseConnectTarget,
+  parseAddress,
+  formatConnectAuthority,
+  formatIpv6Address,
+  sendResponse,
   DEFAULT_MAX_TCP_CONNECTS,
   SOCKS5_HANDSHAKE_TIMEOUT_MS,
   getOpenFdCount,

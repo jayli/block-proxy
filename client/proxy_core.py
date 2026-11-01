@@ -658,10 +658,56 @@ async def _socks5_handshake(reader, writer, server_config, dest_addr, dest_port)
         await reader.readexactly(16 + 2)
 
 
+def format_connect_target(host, port):
+    """CONNECT 的目标 authority：IPv6 字面量必须加方括号。
+
+    host 为裸地址（不带方括号）时才有意义；已带方括号的输入原样拼接。
+    """
+    try:
+        if ipaddress.ip_address(host).version == 6:
+            return f"[{host}]:{port}"
+    except ValueError:
+        pass
+    return f"{host}:{port}"
+
+
+def parse_http_authority(authority, default_port):
+    """解析 HTTP authority（host[:port]），返回 (host, port)。
+
+    IPv6 字面量按 RFC 3986 必须带方括号：`[2001:db8::1]:443`。返回的
+    host 是裸地址，可直接交给 getaddrinfo / open_connection（带方括号
+    会 ENOTFOUND）。解析失败或端口越界返回 (None, None)。
+    """
+    try:
+        if authority.startswith("["):
+            close = authority.find("]")
+            if close == -1:
+                return None, None
+            host = authority[1:close]
+            rest = authority[close + 1:]
+            if rest == "":
+                port = default_port
+            elif rest.startswith(":"):
+                port = int(rest[1:])
+            else:
+                return None, None
+        elif ":" in authority:
+            host, port_str = authority.rsplit(":", 1)
+            port = int(port_str)
+        else:
+            host, port = authority, default_port
+
+        if not host or not 0 < port <= 65535:
+            return None, None
+        return host, port
+    except (ValueError, IndexError):
+        return None, None
+
+
 async def _http_connect_handshake(reader, writer, server_config, dest_addr, dest_port):
     username = server_config["username"]
     password = server_config["password"]
-    target = f"{dest_addr}:{dest_port}"
+    target = format_connect_target(dest_addr, dest_port)
     lines = [f"CONNECT {target} HTTP/1.1", f"Host: {target}"]
     if username and password:
         import base64
@@ -2511,16 +2557,10 @@ class ProxyCore:
             method = parts[0].upper()
 
             if method == "CONNECT":
-                target = parts[1]
-                if ":" in target:
-                    host, port_str = target.rsplit(":", 1)
-                    port = int(port_str)
-                    # Strip IPv6 brackets
-                    if host.startswith("[") and host.endswith("]"):
-                        host = host[1:-1]
-                else:
-                    host = target
-                    port = 443
+                host, port = parse_http_authority(parts[1], 443)
+                if host is None:
+                    client_writer.close()
+                    return
 
                 while True:
                     header_line = await asyncio.wait_for(client_reader.readline(), timeout=LOCAL_HANDSHAKE_TIMEOUT)
@@ -2600,12 +2640,10 @@ class ProxyCore:
                         host_part = url_body[:slash_idx]
                         path = url_body[slash_idx:]
 
-                    if ":" in host_part:
-                        host, port_str = host_part.rsplit(":", 1)
-                        port = int(port_str)
-                    else:
-                        host = host_part
-                        port = 80
+                    host, port = parse_http_authority(host_part, 80)
+                    if host is None:
+                        client_writer.close()
+                        return
 
                     headers = []
                     while True:

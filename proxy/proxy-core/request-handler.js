@@ -281,8 +281,11 @@ function getWsReqInfo(wsReq) {
   if (!host) {
     throw new Error('missing Host header in WebSocket request');
   }
-  const hostName = host.split(':')[0];
-  const port = host.split(':')[1];
+  // Host 头可能是 IPv6 字面量（`[::1]:8080`），split(':') 会切碎它；
+  // 用括号感知解析，无端口时保持 undefined（与旧行为一致）。
+  const split = splitHostPort(host);
+  const hostName = split ? split.host : host.split(':')[0];
+  const port = split ? split.port : host.split(':')[1];
   const path = wsReq.url || '/';
   const isEncript = wsReq.connection && wsReq.connection.encrypted;
 
@@ -576,6 +579,58 @@ function getUserReqHandler(userRule) {
 }
 
 /**
+ * Split `host[:port]` into its parts, IPv6-literal aware.
+ *
+ * Accepts `[2001:db8::1]:443`, `[2001:db8::1]`, `example.com:443` and the
+ * non-standard unbracketed `2001:db8::1:443` (the last colon still separates
+ * the port). `port` is undefined when the input carries none. Returns null
+ * when the value cannot be parsed at all.
+ */
+function splitHostPort(value) {
+  if (!value || typeof value !== 'string') return null;
+
+  let host;
+  let portText;
+  if (value.startsWith('[')) {
+    const close = value.indexOf(']');
+    if (close === -1) return null;
+    host = value.slice(1, close);
+    const after = value.slice(close + 1);
+    if (after === '') portText = undefined;
+    else if (after.startsWith(':')) portText = after.slice(1);
+    else return null;
+  } else {
+    const idx = value.lastIndexOf(':');
+    if (idx === -1) {
+      host = value;
+      portText = undefined;
+    } else {
+      host = value.slice(0, idx);
+      portText = value.slice(idx + 1);
+    }
+  }
+
+  if (!host) return null;
+  if (portText === undefined) return { host, port: undefined };
+
+  const port = Number(portText);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+  return { host, port: String(port) };
+}
+
+/**
+ * Parse a CONNECT target (`host:port` / `[v6]:port` / bare host).
+ *
+ * Same shape as splitHostPort, except a missing port defaults to 443 —
+ * CONNECT without an explicit port means the default TLS port.
+ */
+function parseConnectTarget(target) {
+  const split = splitHostPort(target);
+  if (!split) return null;
+  return { host: split.host, port: split.port === undefined ? '443' : split.port };
+}
+
+/**
  * CONNECT request handler (no recorder).
  *
  * @param {object} userRule
@@ -587,8 +642,16 @@ function getConnectReqHandler(userRule, httpsServerMgr) {
   reqHandlerCtx.cltSockets = new Map();
 
   return function (req, cltSocket, head) {
-    const host = req.url.split(':')[0];
-    const targetPort = req.url.split(':')[1];
+    const parsedTarget = parseConnectTarget(req.url);
+    if (!parsedTarget) {
+      logUtil.printLog(`Invalid CONNECT target: ${req.url}`, logUtil.T_WARN);
+      cltSocket.write('HTTP/' + req.httpVersion + ' 400 Bad Request\r\n\r\n', () => {
+        cltSocket.destroy();
+      });
+      return;
+    }
+    const host = parsedTarget.host;
+    const targetPort = parsedTarget.port;
     const isTunnelConnect = reqHandlerCtx.isTunnelDomain && reqHandlerCtx.isTunnelDomain(host);
     let shouldIntercept;
     let interceptWsRequest = false;
@@ -1121,6 +1184,8 @@ RequestHandler._test = {
   fetchRemoteResponse,
   getWsReqInfo,
   stripAltSvcHeader,
+  parseConnectTarget,
+  splitHostPort,
 };
 
 module.exports = RequestHandler;

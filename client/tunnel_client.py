@@ -976,7 +976,14 @@ class TunnelClient:
         try:
             atyp = ATYP_DOMAIN
             try:
-                ipaddress.ip_address(host)
+                parsed = ipaddress.ip_address(host)
+                if parsed.version == 6:
+                    # 隧道帧协议目前只支持 IPv4/域名；IPv6 字面量目标在
+                    # 编码前直接失败，避免 encode_frame 里 IPv4 分支拿到
+                    # 带冒号的地址抛 ValueError
+                    raise Exception(
+                        f'IPv6 target {host} is not supported over the tunnel'
+                    )
                 atyp = ATYP_IPV4
             except ValueError:
                 pass
