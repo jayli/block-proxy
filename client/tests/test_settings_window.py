@@ -168,6 +168,97 @@ def test_select_tab_sets_window_frame_height_including_titlebar(tmp_path, monkey
     assert new_frame.origin.y + new_frame.size.height == old_top
 
 
+# ---------------------------------------------------------------------------
+# 行为：切 Tab 时窗口高度伸缩动画
+# ---------------------------------------------------------------------------
+
+
+def _make_ctrl(tmp_path, monkeypatch, panels=None, content_height=679):
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}")
+    monkeypatch.setattr(settings_window, "NSApp", _fake_app())
+
+    ctrl = settings_window.SettingsWindowController.__new__(
+        settings_window.SettingsWindowController
+    )
+    ctrl._config_path = str(config_path)
+    ctrl._current_tab = settings_window.PANEL_TAB_CONFIG
+    ctrl._last_request_seq = None
+    ctrl._panels = panels or _fake_panels_with_sizes()
+    ctrl._window = _FakeWindow(content_height)
+    ctrl._tab_buttons = {}
+    return ctrl
+
+
+def test_tab_switch_animation_duration_is_quarter_second():
+    """用户选定的动画时长：0.25 秒。"""
+    assert settings_window.TAB_SWITCH_ANIM_SEC == 0.25
+
+
+def test_tab_switch_animates_window_frame_instead_of_jumping(tmp_path, monkeypatch):
+    """切 Tab 走 NSAnimationContext 动画，不用 setFrame_display_animate_ 瞬变。
+
+    2026-11-01 实测：setFrame_display_animate_(..., animate=True) 在本机根本不动画
+    （高度直接跳到目标值，0ms），只有 animator().setFrame_display_() 会插值。"""
+    ctx = _FakeAnimationContext()
+    monkeypatch.setattr(settings_window, "NSAnimationContext", ctx)
+
+    ctrl = _make_ctrl(tmp_path, monkeypatch)
+    ctrl._select_tab(settings_window.PANEL_TAB_ROUTING)
+
+    assert ctrl._window.instant_frames == [], "不应再用瞬变的 setFrame_display_animate_"
+    assert len(ctrl._window.animated_frames) == 1, "应通过 animator() 动画改 frame"
+    assert ctx.begins == 1 and ctx.ends == 1, "动画必须包在 begin/endGrouping 里"
+    assert ctx.durations == [settings_window.TAB_SWITCH_ANIM_SEC]
+
+
+def test_incoming_panel_is_glued_below_tab_bar_before_animating(tmp_path, monkeypatch):
+    """动画开始前把新面板顶边粘到 Tab 栏正下方。
+
+    2026-11-01 实测：面板若保持 y=0 贴底锚定，窗口变高时新面板会顶进 Tab 栏
+    （最多重叠 129px）；单纯改成贴顶锚定又会在收缩时留出 141px 空白。
+    两者都不可接受，必须按「旧内容区高」重定位一次再动画。"""
+    ctx = _FakeAnimationContext()
+    monkeypatch.setattr(settings_window, "NSAnimationContext", ctx)
+
+    ctrl = _make_ctrl(tmp_path, monkeypatch, content_height=679)
+    ctrl._select_tab(settings_window.PANEL_TAB_ROUTING)
+
+    panel = ctrl._panels[settings_window.PANEL_TAB_ROUTING]
+    assert panel.frames, "动画前必须重定位新面板"
+    origin, size = panel.frames[0]
+    _pw, ph = panel.panelSize()
+    assert size == (_pw, ph)
+    # 顶边 = 旧内容区高 - TAB_BAR_HEIGHT，即紧贴 Tab 栏下沿
+    assert origin[1] + ph == 679 - settings_window.TAB_BAR_HEIGHT
+
+
+def test_panels_anchor_to_top_so_they_follow_the_growing_window():
+    """面板必须挂 NSViewMinYMargin（贴顶锚定），否则窗口变高时面板留在底部、
+    与 Tab 栏之间裂开一道缝。锚定在 _build_window 里设（真实窗口下的行为
+    由 tests/smoke_settings_window.py 验证）。"""
+    source = os.path.join(os.path.dirname(__file__), "..", "settings_window.py")
+    text = open(source).read()
+    panel_block = text.split("for tab, panel in self._panels.items():")[1].split(
+        "content.addSubview_(view)"
+    )[0]
+    assert "setAutoresizingMask_(NSViewMinYMargin)" in panel_block
+    assert "setAutoresizingMask_(0)" not in panel_block
+
+
+def test_select_tab_without_resize_skips_animation(tmp_path, monkeypatch):
+    """初始化（resize=False）时不动画、不改 frame，直接按目标高度布局。"""
+    ctx = _FakeAnimationContext()
+    monkeypatch.setattr(settings_window, "NSAnimationContext", ctx)
+
+    ctrl = _make_ctrl(tmp_path, monkeypatch)
+    ctrl._select_tab(settings_window.PANEL_TAB_CONFIG, resize=False)
+
+    assert ctrl._window.instant_frames == []
+    assert ctrl._window.animated_frames == []
+    assert ctx.begins == 0
+
+
 def test_poll_switches_tab_on_new_seq(tmp_path, monkeypatch):
     """轮询到新 seq 的请求时切 Tab 并前置窗口。"""
     config_path = tmp_path / "config.json"
@@ -231,8 +322,14 @@ def test_poll_ignores_request_seen_at_startup(tmp_path, monkeypatch):
 
 
 class _FakePanel:
+    def __init__(self, size=(400, 300)):
+        self._size = size
+        self.frames = []
+        self.masks = []
+        self.hidden = None
+
     def panelSize(self):
-        return (400, 300)
+        return self._size
 
     def view(self):
         return self
@@ -241,10 +338,10 @@ class _FakePanel:
         self.hidden = hidden
 
     def setFrame_(self, frame):
-        pass
+        self.frames.append(frame)
 
     def setAutoresizingMask_(self, mask):
-        pass
+        self.masks.append(mask)
 
 
 def _fake_panels():
@@ -255,6 +352,36 @@ def _fake_panels():
     }
 
 
+def _fake_panels_with_sizes():
+    """三个高度不同的面板，用于验证伸缩动画的几何。"""
+    return {
+        settings_window.PANEL_TAB_CONFIG: _FakePanel((420, 615)),
+        settings_window.PANEL_TAB_ROUTING: _FakePanel((460, 480)),
+        settings_window.PANEL_TAB_SUPER_DNS: _FakePanel((520, 430)),
+    }
+
+
+class _FakeAnimationContext:
+    """记录 NSAnimationContext 的分组与时长设置。"""
+
+    def __init__(self):
+        self.begins = 0
+        self.ends = 0
+        self.durations = []
+
+    def beginGrouping(self):
+        self.begins += 1
+
+    def endGrouping(self):
+        self.ends += 1
+
+    def currentContext(self):
+        return self
+
+    def setDuration_(self, duration):
+        self.durations.append(duration)
+
+
 def _fake_app():
     return type("App", (), {
         "stopModal": staticmethod(lambda: None),
@@ -263,16 +390,31 @@ def _fake_app():
 
 
 class _FakeWindow:
-    def __init__(self):
+    def __init__(self, content_height=400):
         self.closed = False
         self.brought_to_front = False
         self.title = None
         self._frame = _FakeFrame()
+        self._content = _FakeContentView(content_height)
+        self.instant_frames = []
+        self.animated_frames = []
+        self._animator = _FakeAnimator(self)
 
     def frame(self):
         return self._frame
 
+    def contentView(self):
+        return self._content
+
+    def animator(self):
+        return self._animator
+
     def setFrame_display_animate_(self, frame, display, animate):
+        self.instant_frames.append(frame)
+        self._frame = _FakeFrame(frame)
+
+    def _apply_animated_frame(self, frame):
+        self.animated_frames.append(frame)
         self._frame = _FakeFrame(frame)
 
     def setTitle_(self, title):
@@ -283,6 +425,22 @@ class _FakeWindow:
 
     def close(self):
         self.closed = True
+
+
+class _FakeAnimator:
+    def __init__(self, window):
+        self._window = window
+
+    def setFrame_display_(self, frame, display):
+        self._window._apply_animated_frame(frame)
+
+
+class _FakeContentView:
+    def __init__(self, height):
+        self._frame = _FakeFrame(((0, 0), (settings_window.WINDOW_WIDTH, height)))
+
+    def frame(self):
+        return self._frame
 
 
 class _FakeFrame:

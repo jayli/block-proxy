@@ -137,7 +137,7 @@ main.py (入口, 单实例, 崩溃重启) → app.py (PyObjC 状态栏)
 - 私有地址直连 (127/8, 10/8, 172.16/12, 192.168/16), 可配置关闭；三种上游模式: SOCKS5 over TLS / HTTP CONNECT / UDP ASSOCIATE
 - DoH 解析节点: 默认 `dns.alidns.com` + bootstrap `223.5.5.5,223.6.6.6`
 - 窗口为独立进程（Nuitka 编译后 `sys.executable` 非 Python 解释器, 用 `subprocess.Popen` + 系统 Python）
-- 合并设置窗口（`settings_window.py`）: 节点配置/分流规则/Super DNS 三面板合一，顶部大 Tab（`assets/` 图标在上 + 文字在下，`setTemplate_(True)` 跟随浅/深色）；面板只建控件不建窗口不写盘，「保存」由宿主窗口统一编排——节点配置 + 分流规则当一个事务一起落盘再关窗（主进程只重连一次），Super DNS 的「保存」仍只写域名文件不关窗；菜单三项都开同一窗口，已打开时把 `{tab, seq}` 写进 `ui_state.json` 的 `panel_request`，窗口 0.3s 轮询到 seq 变化就切 Tab 并前置（开窗时把文件里已有 seq 记为已见过，避免陈旧请求抢 Tab）
+- 合并设置窗口（`settings_window.py`）: 节点配置/分流规则/Super DNS 三面板合一，顶部大 Tab（`assets/` 图标在上 + 文字在下，`setTemplate_(True)` 跟随浅/深色）；面板只建控件不建窗口不写盘，「保存」由宿主窗口统一编排——节点配置 + 分流规则当一个事务一起落盘再关窗（主进程只重连一次），Super DNS 的「保存」仍只写域名文件不关窗；菜单三项都开同一窗口，已打开时把 `{tab, seq}` 写进 `ui_state.json` 的 `panel_request`，窗口 0.3s 轮询到 seq 变化就切 Tab 并前置（开窗时把文件里已有 seq 记为已见过，避免陈旧请求抢 Tab）；切 Tab 时窗口顶边不动、底边用 `NSAnimationContext` 平滑伸缩到新面板高度（0.25s，`setFrame_display_animate_` 的 animate 参数实测不插值），面板与 Tab 栏按钮都挂 `NSViewMinYMargin` 贴顶锚定，动画前把新面板顶边粘到 Tab 栏正下方，全程间距恒定（否则会顶进 Tab 栏或裂开缝隙）
 - 系统唤醒恢复: socket 探测端口存活 + 隧道线程状态恢复, 等 3s 网络稳定后重试
 - 事件循环看门狗: `proxy_core.py` 每秒心跳，主循环卡死超过 5s 就把线程栈 dump 进 crash.log；旧 loop 线程超过 `ORPHAN_THREAD_GIVEUP_SECONDS`(30s) 判定僵死，本进程内不再自动重启，提示用户退出重开
 - Nuitka 构建后处理: `build.sh` 自动重命名可执行文件、修正 Info.plist (CFBundleExecutable, LSUIElement)；状态栏图标始终 `setTemplate_(True)`（单色黑+alpha, 系统按浅/深色模式自动反白, 兼容 Tahoe Liquid Glass）

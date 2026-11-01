@@ -27,6 +27,7 @@ from Foundation import NSObject, NSRunLoop, NSTimer
 from AppKit import (
     NSApplication,
     NSApplicationActivationPolicyAccessory,
+    NSAnimationContext,
     NSWindow,
     NSFloatingWindowLevel,
     NSWindowStyleMaskTitled,
@@ -74,6 +75,11 @@ TAB_BAR_MARGIN_X = 12
 TAB_BAR_GAP = 8
 TAB_BAR_INSET_Y = 6
 TAB_FONT_SIZE = 13
+
+# 切 Tab 时窗口高度伸缩动画的时长（秒）。
+# 必须走 NSAnimationContext + animator()：实测 setFrame_display_animate_(..., True, True)
+# 在本机不会插值，高度直接跳到目标值。
+TAB_SWITCH_ANIM_SEC = 0.25
 
 # 窗口宽度固定（最宽面板 520 + 左右边距），高度随 Tab 自适应
 WINDOW_WIDTH = 560
@@ -248,13 +254,14 @@ class SettingsWindowController(NSObject):
 
         content = win.contentView()
 
-        # 面板容器：固定尺寸贴在内容区底部（窗口非用户可缩放，只在切 Tab 时
-        # 由本控制器编程式改高度），水平居中
+        # 面板容器：水平居中，顶边贴着 Tab 栏下沿。切 Tab 时窗口高度会动画伸缩，
+        # 面板挂 NSViewMinYMargin（贴顶锚定）才能跟着内容区顶边走，
+        # 否则窗口变高时面板留在底部、与 Tab 栏之间裂开一道缝。
         for tab, panel in self._panels.items():
             pw, ph = panel.panelSize()
             view = panel.view()
             view.setFrame_((((WINDOW_WIDTH - pw) / 2, 0), (pw, ph)))
-            view.setAutoresizingMask_(0)
+            view.setAutoresizingMask_(NSViewMinYMargin)
             view.setHidden_(True)
             content.addSubview_(view)
 
@@ -311,10 +318,28 @@ class SettingsWindowController(NSObject):
             self._select_tab(tab)
 
     def _select_tab(self, tab, resize=True):
-        """切到指定面板；resize=True 时保持窗口顶边不动、底边伸缩。"""
+        """切到指定面板；resize=True 时窗口顶边不动、底边平滑伸缩到新高度。
+
+        动画期间不能重排 Tab 栏：按钮和面板都挂了 NSViewMinYMargin（贴顶锚定），
+        会自己跟着内容区顶边走；此时按目标高度调 _layout_tab_bar 反而会把按钮
+        摆到旧高度下不存在的位置。
+        """
         if tab not in PANEL_TABS:
             return
+        # 先取动画前的内容区高：面板要按它定位，取晚了就是目标高
+        old_content_h = self._window.contentView().frame().size.height
         self._current_tab = tab
+
+        incoming = self._panels[tab]
+        pw, ph = incoming.panelSize()
+        if resize:
+            # 把新面板顶边粘到 Tab 栏正下方。不粘的话：贴底锚定时窗口变高会把
+            # 面板顶进 Tab 栏（实测重叠 129px），单纯贴顶锚定时窗口变矮又会
+            # 在两者之间留白（实测 141px）。粘好后动画全程间距恒定，
+            # 且动画结束时面板恰好落回 y=0 的静止位置。
+            incoming.view().setFrame_(
+                (((WINDOW_WIDTH - pw) / 2, old_content_h - TAB_BAR_HEIGHT - ph), (pw, ph))
+            )
 
         for other, panel in self._panels.items():
             panel.view().setHidden_(other != tab)
@@ -324,19 +349,24 @@ class SettingsWindowController(NSObject):
         self._apply_tab_styles()
 
         content_h = self._content_height(tab)
-        if resize:
-            frame = self._window.frame()
-            # setFrame_ 收的是窗口 frame 高（含标题栏），而布局数学用的是
-            # 内容区高；不换算会让内容区矮一个标题栏，Tab 栏浮到内容区顶部之上
-            frame_h = NSWindow.frameRectForContentRect_styleMask_(
-                ((0, 0), (WINDOW_WIDTH, content_h)), WINDOW_STYLE
-            ).size.height
-            # 顶边不动：新 origin.y = 旧 origin.y + 旧高 - 新高
-            new_y = frame.origin.y + frame.size.height - frame_h
-            self._window.setFrame_display_animate_(
-                ((frame.origin.x, new_y), (WINDOW_WIDTH, frame_h)), True, False
-            )
-        self._layout_tab_bar(content_h)
+        if not resize:
+            self._layout_tab_bar(content_h)
+            return
+
+        frame = self._window.frame()
+        # setFrame_ 收的是窗口 frame 高（含标题栏），而布局数学用的是
+        # 内容区高；不换算会让内容区矮一个标题栏，Tab 栏浮到内容区顶部之上
+        frame_h = NSWindow.frameRectForContentRect_styleMask_(
+            ((0, 0), (WINDOW_WIDTH, content_h)), WINDOW_STYLE
+        ).size.height
+        # 顶边不动：新 origin.y = 旧 origin.y + 旧高 - 新高
+        new_y = frame.origin.y + frame.size.height - frame_h
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.currentContext().setDuration_(TAB_SWITCH_ANIM_SEC)
+        self._window.animator().setFrame_display_(
+            ((frame.origin.x, new_y), (WINDOW_WIDTH, frame_h)), True
+        )
+        NSAnimationContext.endGrouping()
 
     def show(self):
         self._window.makeKeyAndOrderFront_(None)
