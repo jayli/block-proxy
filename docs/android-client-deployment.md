@@ -172,7 +172,7 @@ nas.local
 
 - 检查设备与服务端的网络连通性：`adb shell ping <server_ip>`
 - 确认 tunnel 端口（8003）未被防火墙拦截
-- 检查服务端是否正在运行：`curl http://<server_ip>:8004/api/status`
+- 检查服务端是否正在运行：`curl -k https://<server_ip>:8004/api/status`
 
 ### 认证失败（AuthFailed）
 

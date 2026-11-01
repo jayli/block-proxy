@@ -28,6 +28,9 @@ cert/socks5_tls.key
 cert/socks5_tls.crt
 cert/tunnel_tls.key
 cert/tunnel_tls.crt
+# 8004 管理面板自签证书（SAN 含本机内网 IP）
+cert/express_tls.key
+cert/express_tls.crt
 
 # MITM 根证书（服务器本地生成与保存，绝不提交；泄露即可伪造任意站点）
 cert/rootCA.key

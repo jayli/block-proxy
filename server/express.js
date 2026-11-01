@@ -2,6 +2,7 @@
 const express = require('express');
 const fs = require('fs');
 const crypto = require('crypto');
+const https = require('https');
 const _fs = require('../proxy/fs.js');
 const path = require('path');
 const util = require('./util');
@@ -12,11 +13,34 @@ const tempCredentials = require('../proxy/temp-credentials.js');
 const authBypassHosts = require('../proxy/auth-bypass-hosts.js');
 const { exec, execSync } = require('child_process');
 const LocalProxy = require('../proxy/proxy');
+const { ensurePanelCert } = require('../cert/generator');
 
 const app = express();
 let PORT = 8004; // 默认端口，可通过 init(port) 覆盖
+let server = null; // https.Server 实例，测试里用来关掉监听
 const DEV = process.env.BLOCK_PROXY_DEV || 0;
 const configPath = path.join(__dirname, '../config.json');
+
+// 8004 管理面板的 TLS 证书：cert/express_tls.{key,crt}
+const PANEL_KEY_PATH = path.join(__dirname, '../cert/express_tls.key');
+const PANEL_CRT_PATH = path.join(__dirname, '../cert/express_tls.crt');
+
+// 读面板证书；调用方负责先确保文件存在。
+// Docker 下 cert/ 可能是宿主挂载目录，挂载晚于进程起来时首次读盘会失败，
+// 因此失败后短暂等待再重试一次，仍然失败就把错误抛给调用方。
+function readPanelTlsOptions(attempt = 0) {
+  try {
+    return {
+      key: fs.readFileSync(PANEL_KEY_PATH),
+      cert: fs.readFileSync(PANEL_CRT_PATH),
+      minVersion: 'TLSv1.2'
+    };
+  } catch (err) {
+    if (attempt >= 1) throw err;
+    return new Promise(resolve => setTimeout(resolve, 1000))
+      .then(() => readPanelTlsOptions(attempt + 1));
+  }
+}
 
 // 启动时生成随机密钥，用于签发认证 token
 const TOKEN_SECRET = crypto.randomBytes(32).toString('hex');
@@ -557,10 +581,17 @@ app.get((req, res) => {
 });
 
 module.exports = {
-  init: function(port) {
+  init: async function(port) {
     if (port) PORT = port;
-    // 启动服务器
-    app.listen(PORT, async () => {
+
+    // 面板固定跑 HTTPS：没有可用证书就自动生成一对
+    // （不存在/残缺/无法解析/公私钥不配对/已过期/未覆盖当前内网 IP 都算不可用）
+    await ensurePanelCert(PANEL_KEY_PATH, PANEL_CRT_PATH);
+    const tlsOptions = await readPanelTlsOptions();
+
+    // 启动服务器（纯 HTTPS 单栈，同端口不再接受明文，不用 http→https 跳转兜底）
+    server = https.createServer(tlsOptions, app);
+    server.listen(PORT, async () => {
       // 如果是开发环境，则启动SSR服务，开启端口3000
       if (DEV === '1') {
         const child = exec('npm run craco', { cwd: path.join(__dirname,'../') });
@@ -582,11 +613,22 @@ module.exports = {
       // 启动本地代理
       await LocalProxy.init();
       var localIp = domain.getLocalIp();
-      console.log(`✅ \x1b[32m后台配置面板启动 → http://${localIp}:${PORT}\x1b[0m`);
+      console.log(`✅ \x1b[32m后台配置面板启动 → https://${localIp}:${PORT}\x1b[0m`);
+      console.log('   （自签证书，浏览器首次访问会提示不受信任，可忽略或安装 cert/express_tls.crt）');
     });
+
+    return server;
+  },
+  // 供测试关闭监听；生产进程不调用
+  close: function() {
+    if (!server) return Promise.resolve();
+    return new Promise(resolve => server.close(resolve));
   },
   _test: {
     validateImportedConfig,
+    readPanelTlsOptions,
+    PANEL_KEY_PATH,
+    PANEL_CRT_PATH,
     app
   }
 };

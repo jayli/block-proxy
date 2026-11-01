@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (and other agents via the AGENTS.md s
 
 ### Development
 - `pnpm i` – 安装依赖 (pnpm preferred)
-- `npm run dev` – 即 `BLOCK_PROXY_DEV=1 npm run express`：全栈（Express + proxy + SOCKS5 + tunnel），且 Express 启动后会自动 spawn `npm run craco`（React dev server :3000, `/api` → 8004），无需另开终端；该变量只在 `server/express.js` 里读取
+- `npm run dev` – 即 `BLOCK_PROXY_DEV=1 npm run express`：全栈（Express + proxy + SOCKS5 + tunnel），且 Express 启动后会自动 spawn `npm run craco`（React dev server :3000，`/api` 经 `craco.config.js` 以 HTTPS + 忽略证书校验转发到 8004），无需另开终端；该变量只在 `server/express.js` 里读取
 - `npm run start` / `npm run express` – 后端 + 代理（生产）；`npm run proxy` / `npm run socks5` – 仅代理 / 仅 SOCKS5
 
 ### Testing
@@ -52,7 +52,7 @@ MITM proxy for parental control & ad blocking. Node.js + React + proxy-core (Any
 | 8001 | 内网 HTTP proxy (mandatory, proxy-core) |
 | 8002 | 公网代理 SOCKS5 / HTTP CONNECT over TLS (optional；ALPN 协商出 h2 时同连接多路复用 CONNECT 流，否则按首字节分发) |
 | 8003 | Tunnel server (reverse tunnel, HTTP/2 + allowHTTP1) |
-| 8004 | Express admin API |
+| 8004 | Express admin API（HTTPS，自签证书） |
 | 3000 | React dev server (dev only) |
 
 ### Entry Points
@@ -72,7 +72,7 @@ Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 / HTTP 
   - 剥离 MITM 响应中的 `Alt-Svc` 头，防止客户端学到 h3/QUIC 入口绕过 TCP 代理
 - **SOCKS5** (`/socks5/`) – 8002 公网代理端口，SOCKS5 over TLS + UDP over TCP(自定义帧) + HTTP CONNECT over TLS + HTTP/2 CONNECT(ALPN h2 多路复用): `server.js`(`createPublicProxyDispatcher` 按 ALPN/首字节分发、`createHttpConnectHandler` HTTP/1.1 隧道、`createHttp2ConnectHandler` 解密的 TLSSocket 交给内置 `http2.createServer()` 处理 CONNECT 流), `start.js`, `test_tls_reuse.js`; 客户端 `client/proxy_core.py` + `client/h2_upstream.py` (asyncio 实现)
 - **Tunnel** (`/tunnel/`) – xhttp 传输协议（HTTP POST 上行 + SSE 下行）: `server.js`(HTTP/2 入口), `xhttpHandler.js`(核心处理器), `uploadQueue.js`(上行帧重排序), `protocol.js`(帧编解码), `manager.js`(连接生命周期), `sseControl.js`(旧 SSE 适配), `disguiseResponse.js`(HTTPS 伪装)
-- **Server** (`/server/`) – Express API (8004), 托管 React build, token cookie 认证: `start.js`, `express.js`, `timestampConsole.js`, `util.js`
+- **Server** (`/server/`) – Express API (8004, **固定 HTTPS**，自签证书 `cert/express_tls.{crt,key}` 由 `cert/generator.js#ensurePanelCert()` 在启动时校验后按需生成、SAN 含本机内网 IP；不再监听明文，旧 `http://` 链接需改为 `https://`)，托管 React build, token cookie 认证: `start.js`, `express.js`, `timestampConsole.js`, `util.js`
 - **Frontend** (`/src/`) – CRA + CRACO 管理界面, `App.js` 主组件
 - **CLI** (`/bin/start.js`) – 全局入口, 失败自动重启, 退出清理全局配置
 - **Certs** (`/cert/`) – MITM 根证书 `rootCA.key`/`rootCA.crt` **不进 git、不进 npm 包**，由本机生成：`startProxyServer()` 先调 `cert/generator.js#ensureRootCA()`（缺失或残缺就重新生成一对，30 年 RSA-2048，私钥 0600），再由 `proxy.js#ensureRootCA()` 按 SHA-256 指纹同步到 `certificates/`（根证书变了会清空已签发的域名证书缓存）；也可手动 `node cert/generator.js`，全新克隆里的测试靠 `test/helpers/ensure-root-ca.js` 补齐。Docker 镜像不内置根证书，要跨容器重建保留同一把 CA 须挂载 `/app/cert`。隧道 TLS 默认复用 `cert/socks5_tls.{crt,key}`（缺失时 `ensureTempCert` 自签 ECC P-256）

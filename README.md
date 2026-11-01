@@ -52,7 +52,7 @@ pm2 start block-proxy --interpreter bash
 
 或者直接进项目目录：`pm2 start npm --name "block-proxy" -- run start`
 
-首次启动后访问 `http://代理IP:8004` 进入后台配置面板。
+首次启动后访问 `https://代理IP:8004` 进入后台配置面板（自签证书，浏览器首次会提示不受信任，忽略即可）。
 
 ## 代理服务端口说明
 
@@ -61,7 +61,7 @@ pm2 start block-proxy --interpreter bash
 | 8001 | HTTP 代理端口 | 不可 |
 | 8002 | Socks5 / HTTP over TLS 公网代理端口 | 可 |
 | 8003 | 隧道代理端口（TLS） | 可 |
-| 8004 | 后台配置面板 | 可 |
+| 8004 | 后台配置面板（HTTPS） | 可 |
 
 ## 服务端启动隧道代理
 

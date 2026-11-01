@@ -1,5 +1,4 @@
 // craco 具体的配置，只给开发环境使用
-const http = require('http');
 const https = require('https');
 const { URL } = require('url');
 const fs = require('fs');
@@ -23,13 +22,16 @@ module.exports = {
     devServerConfig.onBeforeSetupMiddleware = (devServer) => {
 
       // get/post /api/config...
+      // 8004 面板固定跑 HTTPS（自签证书），所以这里必须用 https 并忽略证书校验，
+      // 否则 dev 模式下所有 /api 转发都会因 TLS 握手失败而打不开数据。
       devServer.app.use('/api', async (req, res) => {
-        const proxyReq = http.request({
+        const proxyReq = https.request({
           hostname: 'localhost',
           port: expressPort,
           path: '/api' + req.url,  // 关键修改：添加缺失的 /api 前缀
           method: req.method,
-          headers: req.headers
+          headers: req.headers,
+          rejectUnauthorized: false
         }, (proxyRes) => {
           res.writeHead(proxyRes.statusCode, proxyRes.headers);
           proxyRes.pipe(res);
