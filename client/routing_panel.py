@@ -1,87 +1,46 @@
 """
-BlockProxyClient routing rules window.
+BlockProxyClient 分流规则面板。
 Pure PyObjC implementation (no tkinter dependency).
-Launched as a subprocess from the main status bar app.
+
+面板本身不建窗口、不写盘：控件建进外部传入的容器 NSView，
+保存时由宿主窗口（settings_window.py）调用 apply_to() 改 config dict。
+内部三个 tab（直连规则 / 代理规则 / 规则查询）与合并前完全一致。
 """
 
 import os
-import sys
-
-if __name__ == "__main__":
-    _script_dir = os.path.dirname(os.path.abspath(__file__))
-    while _script_dir in sys.path:
-        sys.path.remove(_script_dir)
-    sys.path.append(_script_dir)
 
 import ipaddress
 import json
 import objc
-import platform
 import re
 import threading
 
 from Foundation import NSObject
 from AppKit import (
-    NSApplication,
-    NSApplicationActivationPolicyAccessory,
-    NSWindow,
-    NSFloatingWindowLevel,
-    NSWindowStyleMaskTitled,
-    NSWindowStyleMaskClosable,
-    NSWindowStyleMaskMiniaturizable,
-    NSBackingStoreBuffered,
+    NSView,
     NSTextField,
     NSButton,
     NSButtonTypeSwitch,
     NSPopUpButton,
     NSTabView,
     NSTabViewItem,
-    NSView,
-    NSApp,
     NSScrollView,
     NSTextView,
     NSBezelBorder,
     NSFont,
     NSColor,
-    NSMenu,
-    NSMenuItem,
     NSAlert,
 )
 from geodata_loader import GeodataLoader
 
+from config import read_ui_state, write_ui_state
+
 
 BEZEL_ROUNDED = 1
-WINDOW_STYLE = (
-    NSWindowStyleMaskTitled
-    | NSWindowStyleMaskClosable
-    | NSWindowStyleMaskMiniaturizable
-)
 
-
-def _setup_minimal_menu():
-    """Create a minimal main menu with Edit items so Cmd+C/V/X/A/Z work."""
-    main_menu = NSMenu.alloc().initWithTitle_("MainMenu")
-
-    app_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("", "", "")
-    main_menu.addItem_(app_item)
-    app_menu = NSMenu.alloc().initWithTitle_("")
-    app_item.setSubmenu_(app_menu)
-
-    edit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Edit", "", "")
-    main_menu.addItem_(edit_item)
-    edit_menu = NSMenu.alloc().initWithTitle_("Edit")
-    edit_item.setSubmenu_(edit_menu)
-
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Undo", "undo:", "z")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Redo", "redo:", "Z")
-    edit_menu.addItem_(NSMenuItem.separatorItem())
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Cut", "cut:", "x")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Copy", "copy:", "c")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Paste", "paste:", "v")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Select All", "selectAll:", "a")
-
-    NSApp.setMainMenu_(main_menu)
-
+# 面板内容尺寸：与合并前独立窗口「分流规则」的 contentView 完全一致
+PANEL_WIDTH = 460
+PANEL_HEIGHT = 480
 
 # 分流面板的三个 tab，用稳定标识（而不是中文标题）记录状态
 ROUTING_TAB_DIRECT = "direct"
@@ -203,12 +162,7 @@ def routing_state_path(config_path):
 
 def load_routing_tab(config_path):
     """读上次关闭分流面板时选中的 tab；文件缺失/损坏/取值非法时回退到直连规则。"""
-    try:
-        with open(routing_state_path(config_path), "r") as f:
-            data = json.load(f)
-        tab = data.get("routing_tab")
-    except Exception:
-        return DEFAULT_ROUTING_TAB
+    tab = read_ui_state(config_path).get("routing_tab")
     return tab if tab in ROUTING_TABS else DEFAULT_ROUTING_TAB
 
 
@@ -216,77 +170,22 @@ def save_routing_tab(config_path, tab):
     """记录选中的 tab（合并写入，保留其它窗口的状态）。返回是否写入成功。"""
     if tab not in ROUTING_TABS:
         return False
-    path = routing_state_path(config_path)
-    data = {}
-    try:
-        with open(path, "r") as f:
-            loaded = json.load(f)
-        if isinstance(loaded, dict):
-            data = loaded
-    except Exception:
-        pass
-    if data.get("routing_tab") == tab:
-        return True
-    data["routing_tab"] = tab
-    try:
-        tmp = path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(data, f, indent=2)
-        os.replace(tmp, path)
-    except Exception:
-        return False
-    return True
+    return write_ui_state(config_path, {"routing_tab": tab})
 
 
-def _center_on_mouse_screen(w, h):
-    if platform.system() == "Darwin":
-        try:
-            from AppKit import NSScreen, NSEvent
-            mouse_loc = NSEvent.mouseLocation()
-            primary_h = NSScreen.screens()[0].frame().size.height
-            for screen in NSScreen.screens():
-                sf = screen.frame()
-                if (
-                    sf.origin.x <= mouse_loc.x < sf.origin.x + sf.size.width
-                    and sf.origin.y <= mouse_loc.y < sf.origin.y + sf.size.height
-                ):
-                    vf = screen.visibleFrame()
-                    x = int(vf.origin.x + (vf.size.width - w) / 2)
-                    y = int(
-                        primary_h
-                        - vf.origin.y
-                        - vf.size.height
-                        + (vf.size.height - h) / 2
-                    )
-                    return x, y
-        except Exception:
-            pass
-    return None
+class _RoutingTabDelegate(NSObject):
+    """记录当前选中的内层 tab（切换即记录，窗口没正常关闭也不丢状态）。"""
 
-
-class _RoutingWindowDelegate(NSObject):
-    """记录当前选中的 tab，然后结束模态循环。"""
-
-    def initWithTabView_configPath_(self, tab_view, config_path):
-        self = objc.super(_RoutingWindowDelegate, self).init()
+    def initWithConfigPath_(self, config_path):
+        self = objc.super(_RoutingTabDelegate, self).init()
         if self is None:
             return None
-        self._tab_view = tab_view
         self._config_path = config_path
         self._last_saved_tab = None
         return self
 
     def tabView_didSelectTabViewItem_(self, tab_view, item):
-        # 切换即记录，即使窗口没正常关闭也不会丢掉状态
-        self._rememberSelectedTab()
-
-    def windowWillClose_(self, notification):
-        self._rememberSelectedTab()
-        NSApp.stopModal()
-
-    def _rememberSelectedTab(self):
         try:
-            item = self._tab_view.selectedTabViewItem()
             tab = str(item.identifier())
         except Exception:
             return
@@ -309,43 +208,40 @@ def _parse_rules_text(text):
     return lines
 
 
-class RoutingWindowController(NSObject):
+class RoutingPanel(NSObject):
+    """分流规则面板：把控件建进自己的容器 view，apply_to() 写回 config dict。"""
 
-    def initWithConfigPath_(self, config_path):
-        self = objc.super(RoutingWindowController, self).init()
+    def initWithConfig_configPath_(self, config, config_path):
+        self = objc.super(RoutingPanel, self).init()
         if self is None:
             return None
+        self._config = config
         self._config_path = config_path
-        with open(config_path, "r") as f:
-            self._config = json.load(f)
-        self._routing = self._config.get("routing", {
+        self._routing = config.get("routing", {
             "enabled": False,
             "direct_rules": [],
             "proxy_rules": [],
             "default": "proxy",
         })
-        self._build_window()
+        self._save_target = None
+        self._build_view()
         return self
 
-    def _build_window(self):
+    def setSaveTarget_(self, target):
+        """宿主窗口注册自己，「保存」按钮转发给它。"""
+        self._save_target = target
+
+    def panelSize(self):
+        return (PANEL_WIDTH, PANEL_HEIGHT)
+
+    def view(self):
+        return self._container
+
+    def _build_view(self):
         routing = self._routing
-        w, h = 460, 480
-        pos = _center_on_mouse_screen(w, h)
-        if pos is None:
-            from AppKit import NSScreen
-            x = int((NSScreen.mainScreen().frame().size.width - w) / 2)
-            y = int((NSScreen.mainScreen().frame().size.height - h) / 2)
-        else:
-            x, y = pos
-
-        origin = ((x, y), (w, h))
-        win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            origin, WINDOW_STYLE, NSBackingStoreBuffered, False
-        )
-        win.setTitle_("分流规则")
-        win.setLevel_(NSFloatingWindowLevel)
-
-        content = win.contentView()
+        w, h = PANEL_WIDTH, PANEL_HEIGHT
+        content = NSView.alloc().initWithFrame_(((0, 0), (w, h)))
+        self._container = content
         p = 15
 
         # ---- bottom bar (114px): default | 6px | checkbox | 8px | save+hint ----
@@ -387,7 +283,7 @@ class RoutingWindowController(NSObject):
         btn.setTitle_("保存")
         btn.setBezelStyle_(BEZEL_ROUNDED)
         btn.setTarget_(self)
-        btn.setAction_("saveAndClose:")
+        btn.setAction_("saveClicked:")
         content.addSubview_(btn)
 
         check_btn = NSButton.alloc().initWithFrame_(((w - 220, 23), (100, 28)))
@@ -427,15 +323,12 @@ class RoutingWindowController(NSObject):
 
         self._tab_view = tab
         tab.selectTabViewItemWithIdentifier_(load_routing_tab(self._config_path))
-        self._delegate_ref = _RoutingWindowDelegate.alloc().initWithTabView_configPath_(
-            tab, self._config_path
+        self._tab_delegate = _RoutingTabDelegate.alloc().initWithConfigPath_(
+            self._config_path
         )
-        tab.setDelegate_(self._delegate_ref)
-        win.setDelegate_(self._delegate_ref)
+        tab.setDelegate_(self._tab_delegate)
 
         self._updateRoutingHint()
-
-        self._window = win
 
     def _add_tab(self, tab_view, identifier, title, rules):
         # Use the tab view's content rect — this already excludes the tab bar
@@ -593,25 +486,19 @@ class RoutingWindowController(NSObject):
                 hint = "（未启用分流，流量全部走直连）"
         self._routing_hint.setStringValue_(hint)
 
-    def show(self):
-        self._window.center()
-        self._window.makeKeyAndOrderFront_(None)
-        NSApp.activateIgnoringOtherApps_(True)
+    def saveClicked_(self, sender):
+        if self._save_target is not None:
+            self._save_target.saveAll_(sender)
 
-    def saveAndClose_(self, sender):
-        config = self._config
+    def apply_to(self, config):
+        """把面板当前状态写进 config dict（不落盘、不关窗）。"""
         config["routing"] = {
             "enabled": bool(self._enabled_cb.state()),
             "direct_rules": _parse_rules_text(self._direct_text.string()),
             "proxy_rules": _parse_rules_text(self._proxy_text.string()),
             "default": self._default_popup.titleOfSelectedItem(),
         }
-
-        with open(self._config_path, "w") as f:
-            json.dump(config, f, indent=2)
-
-        self._window.close()
-        NSApp.stopModal()
+        return config
 
     def checkRules_(self, sender):
         sender.setEnabled_(False)
@@ -799,22 +686,3 @@ class RoutingWindowController(NSObject):
         self._q_result_text.scrollRangeToVisible_((0, 0))
         self._q_domain_btn.setEnabled_(True)
         self._q_geosite_btn.setEnabled_(True)
-
-
-def show_routing_window(config_path):
-    ctrl = RoutingWindowController.alloc().initWithConfigPath_(config_path)
-    if ctrl is None:
-        return
-    ctrl.show()
-    NSApp.runModalForWindow_(ctrl._window)
-
-
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python routing_window.py <config_path>")
-        sys.exit(1)
-
-    app = NSApplication.sharedApplication()
-    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-    _setup_minimal_menu()
-    show_routing_window(sys.argv[1])

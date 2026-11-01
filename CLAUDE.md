@@ -124,8 +124,8 @@ main.py (入口, 单实例, 崩溃重启) → app.py (PyObjC 状态栏)
   ├── proxy_core.py (asyncio SOCKS5/HTTP + UDP over TCP) / h2_upstream.py (8002 HTTP/2 CONNECT 复用池) / tunnel_client.py (xhttp 隧道 + 自动重连) / health_policy.py (健康检查重启窗口守卫)
   ├── node_connect.py (节点连接: DoH 解析 → 多 IP 尝试 → TLS SNI 被安全软件拦截时降级不发 SNI, cert pin TOFU)
   ├── routing.py / geodata_loader.py / proto_parser.py (geosite/geoip 分流) / doh_resolver.py (DoH 解析节点)
-  ├── super_dns_control.py / super_dns_window.py (Super DNS 域名管理)
-  ├── config.py (~/Library/Application Support/BlockProxyClient/) + config_window.py / routing_window.py / log_window.py (PyObjC 独立进程)
+  ├── super_dns_control.py / super_dns_panel.py (Super DNS 域名管理)
+  ├── config.py (~/Library/Application Support/BlockProxyClient/) + settings_window.py (合并设置窗口: config_panel.py / routing_panel.py / super_dns_panel.py 三面板合一, 顶部大 Tab 切换) / log_window.py (PyObjC 独立进程)
   ├── autostart.py (LaunchAgent) / logger.py (访问/崩溃日志) / system_proxy.py (networksetup)
   └── traffic_stats.py / traffic_view.py / requirements.txt / watch-icons.js / scripts/ / geodata/ / tests/
 ```
@@ -137,6 +137,7 @@ main.py (入口, 单实例, 崩溃重启) → app.py (PyObjC 状态栏)
 - 私有地址直连 (127/8, 10/8, 172.16/12, 192.168/16), 可配置关闭；三种上游模式: SOCKS5 over TLS / HTTP CONNECT / UDP ASSOCIATE
 - DoH 解析节点: 默认 `dns.alidns.com` + bootstrap `223.5.5.5,223.6.6.6`
 - 窗口为独立进程（Nuitka 编译后 `sys.executable` 非 Python 解释器, 用 `subprocess.Popen` + 系统 Python）
+- 合并设置窗口（`settings_window.py`）: 节点配置/分流规则/Super DNS 三面板合一，顶部大 Tab（`assets/` 图标在上 + 文字在下，`setTemplate_(True)` 跟随浅/深色）；面板只建控件不建窗口不写盘，「保存」由宿主窗口统一编排——节点配置 + 分流规则当一个事务一起落盘再关窗（主进程只重连一次），Super DNS 的「保存」仍只写域名文件不关窗；菜单三项都开同一窗口，已打开时把 `{tab, seq}` 写进 `ui_state.json` 的 `panel_request`，窗口 0.3s 轮询到 seq 变化就切 Tab 并前置（开窗时把文件里已有 seq 记为已见过，避免陈旧请求抢 Tab）
 - 系统唤醒恢复: socket 探测端口存活 + 隧道线程状态恢复, 等 3s 网络稳定后重试
 - 事件循环看门狗: `proxy_core.py` 每秒心跳，主循环卡死超过 5s 就把线程栈 dump 进 crash.log；旧 loop 线程超过 `ORPHAN_THREAD_GIVEUP_SECONDS`(30s) 判定僵死，本进程内不再自动重启，提示用户退出重开
 - Nuitka 构建后处理: `build.sh` 自动重命名可执行文件、修正 Info.plist (CFBundleExecutable, LSUIElement)；状态栏图标始终 `setTemplate_(True)`（单色黑+alpha, 系统按浅/深色模式自动反白, 兼容 Tahoe Liquid Glass）

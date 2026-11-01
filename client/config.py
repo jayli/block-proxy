@@ -45,6 +45,43 @@ DEFAULT_CONFIG_DIR = os.path.expanduser(
     "~/Library/Application Support/BlockProxyClient"
 )
 
+# 界面状态文件（与 config.json 同级）。刻意与运行配置分开：记住选中 tab、
+# 主进程向已打开的设置窗口投递跳转请求，都不该写 config.json 触发客户端重连。
+UI_STATE_FILENAME = "ui_state.json"
+
+
+def ui_state_path(config_path):
+    return os.path.join(os.path.dirname(os.path.abspath(config_path)), UI_STATE_FILENAME)
+
+
+def read_ui_state(config_path):
+    """读界面状态；文件缺失/损坏/不是 dict 时返回空 dict。"""
+    try:
+        with open(ui_state_path(config_path), "r") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_ui_state(config_path, updates):
+    """合并写入若干键（保留其它窗口的状态）。返回是否写入成功。"""
+    if not isinstance(updates, dict) or not updates:
+        return False
+    path = ui_state_path(config_path)
+    data = read_ui_state(config_path)
+    if all(data.get(k) == v for k, v in updates.items()):
+        return True
+    data.update(updates)
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, path)
+    except Exception:
+        return False
+    return True
+
 
 def _force_allow_insecure(data):
     server = data.get("server")

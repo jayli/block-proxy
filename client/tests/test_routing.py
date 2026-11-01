@@ -396,7 +396,7 @@ class TestConnectTargetRouting:
             mock_direct.assert_not_called()
 
 
-from routing_window import _parse_rules_text, _rules_to_text, validate_rules
+from routing_panel import _parse_rules_text, _rules_to_text, validate_rules
 
 
 class TestRoutingWindowUtils:
@@ -423,7 +423,7 @@ class TestRoutingWindowUtils:
 
 
 class TestValidateRules:
-    """Tests for validate_rules — the rule validation function used by routing_window."""
+    """Tests for validate_rules — the rule validation function used by routing_panel."""
 
     @staticmethod
     def _load_tags():
@@ -548,7 +548,7 @@ class TestValidateRules:
 
 import json
 
-from routing_window import (
+from routing_panel import (
     ROUTING_TAB_DIRECT,
     ROUTING_TAB_PROXY,
     ROUTING_TAB_QUERY,

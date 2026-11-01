@@ -92,6 +92,20 @@ def _calls_threading_thread(node):
     return False
 
 
+def _references_attr(node, attr_name):
+    for child in ast.walk(node):
+        if isinstance(child, ast.Attribute) and child.attr == attr_name:
+            return True
+    return False
+
+
+def _references_name(node, name):
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and child.id == name:
+            return True
+    return False
+
+
 def _class_node(tree, class_name):
     return next(
         node
@@ -100,26 +114,14 @@ def _class_node(tree, class_name):
     )
 
 
-def _popen_first_arg_name(node):
-    for child in ast.walk(node):
-        if (
-            isinstance(child, ast.Call)
-            and isinstance(child.func, ast.Attribute)
-            and child.func.attr == "Popen"
-            and child.args
-            and isinstance(child.args[0], ast.List)
-            and child.args[0].elts
-            and isinstance(child.args[0].elts[0], ast.Name)
-        ):
-            return child.args[0].elts[0].id
-    return None
-
-
-def test_show_config_window_reloads_disk_config_before_saving():
+def _app_controller():
     source = Path(__file__).parents[1].joinpath("app.py").read_text()
-    tree = ast.parse(source)
-    app_controller = _class_node(tree, "AppController")
-    body = _method_body(app_controller, "_show_config_window")
+    return source, _class_node(ast.parse(source), "AppController")
+
+
+def test_show_settings_window_reloads_disk_config_before_saving():
+    _source, app_controller = _app_controller()
+    body = _method_body(app_controller, "_show_settings_window")
 
     load_index = next(
         (i for i, node in enumerate(body) if _is_config_call(node, "load")),
@@ -135,10 +137,43 @@ def test_show_config_window_reloads_disk_config_before_saving():
     assert load_index < save_index
 
 
+def test_three_menu_items_open_merged_settings_window_with_their_tab():
+    """节点配置 / 分流规则 / Super DNS 三个菜单项都打开同一个合并窗口，各带自己的 Tab。"""
+    _source, app_controller = _app_controller()
+
+    for method, tab_const in [
+        ("openConfig_", "PANEL_TAB_CONFIG"),
+        ("openRouting_", "PANEL_TAB_ROUTING"),
+        ("openSuperDns_", "PANEL_TAB_SUPER_DNS"),
+    ]:
+        body = _method_body(app_controller, method)
+        assert any(_calls_self_method(node, "_show_settings_window") for node in body)
+        assert any(_references_name(node, tab_const) for node in body)
+
+
+def test_show_settings_window_posts_jump_request_when_already_open():
+    """窗口已打开时投递跳转请求（切 Tab），而不是再开一个窗口。"""
+    source, app_controller = _app_controller()
+    body = _method_body(app_controller, "_show_settings_window")
+
+    assert any(_calls_name(node, "request_panel_tab") for node in body)
+    assert any(_references_attr(node, "_settings_proc") for node in body)
+    assert "settings_window.py" in source
+
+
+def test_app_uses_single_settings_proc_handle():
+    """三个独立 proc 句柄合并成一个 _settings_proc。"""
+    source, app_controller = _app_controller()
+    init_body = _method_body(app_controller, "init")
+
+    assert any(_assigns_self_attr(node, "_settings_proc") for node in init_body)
+    assert "_config_proc" not in source
+    assert "_routing_proc" not in source
+    assert "_super_dns_proc" not in source
+
+
 def test_app_registers_proxy_pin_callback_and_pending_state():
-    source = Path(__file__).parents[1].joinpath("app.py").read_text()
-    tree = ast.parse(source)
-    app_controller = _class_node(tree, "AppController")
+    _source, app_controller = _app_controller()
     init_body = _method_body(app_controller, "init")
 
     assert any(_assigns_self_attr(node, "_pin_mismatch_pending") for node in init_body)
@@ -179,9 +214,7 @@ def test_app_pin_mismatch_alert_updates_pin_or_persists_error_state():
 
 
 def test_wake_handler_checks_local_proxy_without_full_disconnect():
-    source = Path(__file__).parents[1].joinpath("app.py").read_text()
-    tree = ast.parse(source)
-    app_controller = _class_node(tree, "AppController")
+    _source, app_controller = _app_controller()
     body = _method_body(app_controller, "onSystemDidWake_")
 
     assert any(
@@ -192,9 +225,7 @@ def test_wake_handler_checks_local_proxy_without_full_disconnect():
 
 
 def test_system_wake_starts_reconnect_worker_thread():
-    source = Path(__file__).parents[1].joinpath("app.py").read_text()
-    tree = ast.parse(source)
-    app_controller = _class_node(tree, "AppController")
+    _source, app_controller = _app_controller()
     body = _method_body(app_controller, "onSystemDidWake_")
 
     assert any(
@@ -215,9 +246,7 @@ def test_screens_did_wake_registers_observer_and_recycles():
     """屏幕点亮事件：注册 NSWorkspaceScreensDidWakeNotification 观察者，
     回调中静默重启本地 SOCKS/HTTP listener（类似 recycle 机制，
     清空 EDR 审查的旧连接会话），不触碰 tunnel 与完整代理状态。"""
-    source = Path(__file__).parents[1].joinpath("app.py").read_text()
-    tree = ast.parse(source)
-    app_controller = _class_node(tree, "AppController")
+    source, app_controller = _app_controller()
 
     # 观察者注册（_observe_system_events 或 init 区域）
     assert "NSWorkspaceScreensDidWakeNotification" in source
@@ -248,9 +277,7 @@ def test_screens_did_wake_registers_observer_and_recycles():
 
 def test_screens_did_wake_does_not_reference_system_wake_local_worker():
     """屏幕点亮回调不应引用 onSystemDidWake_ 的局部 _do_reconnect。"""
-    source = Path(__file__).parents[1].joinpath("app.py").read_text()
-    tree = ast.parse(source)
-    app_controller = _class_node(tree, "AppController")
+    _source, app_controller = _app_controller()
     body = _method_body(app_controller, "onScreensDidWake_")
 
     for node in ast.walk(ast.Module(body=body, type_ignores=[])):
@@ -261,12 +288,10 @@ def test_screens_did_wake_does_not_reference_system_wake_local_worker():
 
 
 def test_wake_fd_recycle_branch_deduplicates_screen_wake_recycle():
-    source = Path(__file__).parents[1].joinpath("app.py").read_text()
-    tree = ast.parse(source)
-    app_controller = _class_node(tree, "AppController")
+    _source, app_controller = _app_controller()
     body = _method_body(app_controller, "_ensure_local_proxy_after_wake")
 
-    assert "already recycled after screens wake" in source
+    assert "already recycled after screens wake" in _source
     assert any(
         isinstance(node, ast.Attribute)
         and node.attr == "_last_proxy_reconnect_time"
@@ -275,9 +300,7 @@ def test_wake_fd_recycle_branch_deduplicates_screen_wake_recycle():
 
 
 def test_application_terminate_removes_screen_wake_observer():
-    source = Path(__file__).parents[1].joinpath("app.py").read_text()
-    tree = ast.parse(source)
-    app_controller = _class_node(tree, "AppController")
+    _source, app_controller = _app_controller()
     body = _method_body(app_controller, "applicationWillTerminate_")
 
     assert any(
@@ -288,9 +311,7 @@ def test_application_terminate_removes_screen_wake_observer():
 
 
 def test_toggle_proxy_disconnect_uses_background_shutdown():
-    source = Path(__file__).parents[1].joinpath("app.py").read_text()
-    tree = ast.parse(source)
-    app_controller = _class_node(tree, "AppController")
+    _source, app_controller = _app_controller()
 
     toggle_body = _method_body(app_controller, "toggleProxy_")
     assert any(
@@ -303,9 +324,7 @@ def test_toggle_proxy_disconnect_uses_background_shutdown():
 
 
 def test_connect_shows_disabled_connecting_state_until_terminal_state():
-    source = Path(__file__).parents[1].joinpath("app.py").read_text()
-    tree = ast.parse(source)
-    app_controller = _class_node(tree, "AppController")
+    _source, app_controller = _app_controller()
 
     connect_body = _method_body(app_controller, "_connect")
     assert any(_calls_self_method(node, "_begin_connecting") for node in connect_body)
@@ -336,32 +355,8 @@ def test_routing_menu_uses_title_state_instead_of_checkmark():
     )
 
 
-def test_super_dns_menu_opens_dedicated_subprocess_window():
-    source_path = Path(__file__).parents[1].joinpath("app.py")
-    source = source_path.read_text()
-    tree = ast.parse(source)
-    app_controller = _class_node(tree, "AppController")
-
-    init_body = _method_body(app_controller, "init")
-    open_body = _method_body(app_controller, "openSuperDns_")
-    show_body = _method_body(app_controller, "_show_super_dns_window")
-
-    assert "Super DNS..." in source
-    assert "super_dns_window.py" in source
-    assert any(
-        isinstance(child, ast.Attribute)
-        and child.attr == "_super_dns_proc"
-        for node in init_body
-        for child in ast.walk(node)
-    )
-    assert any(_calls_self_method(node, "_show_super_dns_window") for node in open_body)
-    assert _popen_first_arg_name(ast.Module(body=show_body, type_ignores=[])) == (
-        "python_path"
-    )
-
-
-def test_super_dns_window_creates_nsapplication_before_menu_setup():
-    source_path = Path(__file__).parents[1].joinpath("super_dns_window.py")
+def test_settings_window_creates_nsapplication_before_menu_setup():
+    source_path = Path(__file__).parents[1].joinpath("settings_window.py")
     source = source_path.read_text()
     main_block = source[source.rindex('if __name__ == "__main__":'):]
 
@@ -371,8 +366,8 @@ def test_super_dns_window_creates_nsapplication_before_menu_setup():
     assert shared_app_index < setup_menu_index
 
 
-def test_super_dns_window_has_docs_link_and_colored_status_dot():
-    source_path = Path(__file__).parents[1].joinpath("super_dns_window.py")
+def test_super_dns_panel_has_docs_link_and_colored_status_dot():
+    source_path = Path(__file__).parents[1].joinpath("super_dns_panel.py")
     source = source_path.read_text()
 
     assert "https://www.npmjs.com/package/super-dns" in source
@@ -384,10 +379,7 @@ def test_super_dns_window_has_docs_link_and_colored_status_dot():
 
 
 def test_super_dns_menu_title_reflects_running_state():
-    source_path = Path(__file__).parents[1].joinpath("app.py")
-    source = source_path.read_text()
-    tree = ast.parse(source)
-    app_controller = _class_node(tree, "AppController")
+    source, app_controller = _app_controller()
 
     menu_open_body = _method_body(app_controller, "_on_menu_open")
     update_body = _method_body(app_controller, "_update_super_dns_menu_title")
@@ -406,8 +398,8 @@ def test_super_dns_menu_title_reflects_running_state():
     )
 
 
-def test_super_dns_window_title_describes_domain_list():
-    source_path = Path(__file__).parents[1].joinpath("super_dns_window.py")
+def test_settings_window_super_dns_tab_describes_domain_list():
+    source_path = Path(__file__).parents[1].joinpath("settings_window.py")
     source = source_path.read_text()
 
-    assert 'win.setTitle_("Super DNS - 防止 DNS 污染的域名列表")' in source
+    assert '"window_title": "Super DNS - 防止 DNS 污染的域名列表"' in source

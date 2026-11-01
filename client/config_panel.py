@@ -1,21 +1,12 @@
 """
-BlockProxyClient configuration window.
+BlockProxyClient 节点配置面板。
 Pure PyObjC implementation (no tkinter dependency).
-Launched as a subprocess from the main status bar app.
+
+面板本身不建窗口、不写盘：控件建进外部传入的容器 NSView，
+保存时由宿主窗口（settings_window.py）调用 apply_to() 改 config dict。
 """
 
-import os
-import sys
-
-if __name__ == "__main__":
-    _script_dir = os.path.dirname(os.path.abspath(__file__))
-    while _script_dir in sys.path:
-        sys.path.remove(_script_dir)
-    sys.path.append(_script_dir)
-
-import json
 import objc
-import platform
 
 # allowInsecure 钉死为 True（节点自签证书，身份校验由证书指纹承担）；
 # 取值从 config 模块引入，避免两处常量漂移。
@@ -23,26 +14,15 @@ from config import ALLOW_INSECURE_FORCED
 
 from Foundation import NSObject
 from AppKit import (
-    NSApplication,
-    NSApplicationActivationPolicyAccessory,
-    NSWindow,
-    NSFloatingWindowLevel,
-    NSWindowStyleMaskTitled,
-    NSWindowStyleMaskClosable,
-    NSWindowStyleMaskMiniaturizable,
-    NSBackingStoreBuffered,
+    NSView,
     NSTextField,
     NSSecureTextField,
     NSButton,
     NSButtonTypeSwitch,
     NSFont,
-    NSMenu,
-    NSMenuItem,
     NSPopUpButton,
     NSBox,
     NSColor,
-    NSScreen,
-    NSApp,
     NSOnState,
     NSOffState,
 )
@@ -51,84 +31,42 @@ from AppKit import (
 BEZEL_SQUARE = 1  # NSTextFieldSquareBezel
 BEZEL_ROUNDED = 1  # NSRoundedBezelStyle
 TEXT_RIGHT = 2  # NSRightTextAlignment
-WINDOW_STYLE = (
-    NSWindowStyleMaskTitled
-    | NSWindowStyleMaskClosable
-    | NSWindowStyleMaskMiniaturizable
-)
 
-def _setup_minimal_menu():
-    """Create a minimal main menu with Edit items so Cmd+C/V/X/A/Z work."""
-    main_menu = NSMenu.alloc().initWithTitle_("MainMenu")
-
-    app_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("", "", "")
-    main_menu.addItem_(app_item)
-    app_menu = NSMenu.alloc().initWithTitle_("")
-    app_item.setSubmenu_(app_menu)
-
-    edit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Edit", "", "")
-    main_menu.addItem_(edit_item)
-    edit_menu = NSMenu.alloc().initWithTitle_("Edit")
-    edit_item.setSubmenu_(edit_menu)
-
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Undo", "undo:", "z")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Redo", "redo:", "Z")
-    edit_menu.addItem_(NSMenuItem.separatorItem())
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Cut", "cut:", "x")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Copy", "copy:", "c")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Paste", "paste:", "v")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Select All", "selectAll:", "a")
-
-    NSApp.setMainMenu_(main_menu)
-
+# 面板内容尺寸：与合并前独立窗口「节点配置」的 contentView 完全一致，
+# 布局常量原样保留，合并后像素级不变。
+PANEL_WIDTH = 420
+PANEL_HEIGHT = 615
 
 PROTOCOLS = [("socks5", "socks5"), ("http", "http"), ("tunnel", "隧道(双向)")]
 
 
-def _center_on_mouse_screen(w, h):
-    if platform.system() == "Darwin":
-        try:
-            from AppKit import NSScreen, NSEvent
-            mouse_loc = NSEvent.mouseLocation()
-            primary_h = NSScreen.screens()[0].frame().size.height
-            for screen in NSScreen.screens():
-                sf = screen.frame()
-                if (
-                    sf.origin.x <= mouse_loc.x < sf.origin.x + sf.size.width
-                    and sf.origin.y <= mouse_loc.y < sf.origin.y + sf.size.height
-                ):
-                    vf = screen.visibleFrame()
-                    x = int(vf.origin.x + (vf.size.width - w) / 2)
-                    y = int(
-                        primary_h
-                        - vf.origin.y
-                        - vf.size.height
-                        + (vf.size.height - h) / 2
-                    )
-                    return x, y
-        except Exception:
-            pass
-    return None
+class ConfigPanel(NSObject):
+    """节点配置面板：把控件建进自己的容器 view，apply_to() 写回 config dict。"""
 
-
-class _ConfigWindowDelegate(NSObject):
-    def windowWillClose_(self, notification):
-        NSApp.stopModal()
-
-
-class ConfigWindowController(NSObject):
-
-    def initWithConfigPath_(self, config_path):
-        self = objc.super(ConfigWindowController, self).init()
+    def initWithConfig_(self, config):
+        self = objc.super(ConfigPanel, self).init()
         if self is None:
             return None
-        self._config_path = config_path
-        with open(config_path, "r") as f:
-            self._config = json.load(f)
-        self._build_window()
+        self._config = config
+        self._save_target = None
+        self._build_view()
         return self
 
-    def _build_window(self):
+    def setSaveTarget_(self, target):
+        """宿主窗口注册自己，「保存」按钮转发给它。"""
+        self._save_target = target
+
+    def saveClicked_(self, sender):
+        if self._save_target is not None:
+            self._save_target.saveAll_(sender)
+
+    def panelSize(self):
+        return (PANEL_WIDTH, PANEL_HEIGHT)
+
+    def view(self):
+        return self._container
+
+    def _build_view(self):
         config = self._config
         server_cfg = config.get("server", {})
         tunnel_cfg = config.get("tunnel", {})
@@ -146,23 +84,9 @@ class ConfigWindowController(NSObject):
             bool(server_cfg.get("tls", True)),
         )
 
-        w, h = 420, 615
-        pos = _center_on_mouse_screen(w, h)
-        if pos is None:
-            x = (NSScreen.mainScreen().frame().size.width - w) // 2
-            y = (NSScreen.mainScreen().frame().size.height - h) // 2
-        else:
-            x, y = pos
-
-        origin = ((x, y), (w, h))
-        win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            origin, WINDOW_STYLE, NSBackingStoreBuffered, False
-        )
-        win.setTitle_("节点配置")
-        win.setLevel_(NSFloatingWindowLevel)
-        win.setDelegate_(self._delegate())
-
-        content = win.contentView()
+        w, h = PANEL_WIDTH, PANEL_HEIGHT
+        content = NSView.alloc().initWithFrame_(((0, 0), (w, h)))
+        self._container = content
 
         # Left column width, control offsets, field width
         LX, CX, FW = 12, 130, 270
@@ -336,15 +260,14 @@ class ConfigWindowController(NSObject):
         self._autostart_cb = checkbox(y_pos, "开机启动", config.get("autostart", False))
         y_pos -= row_h + 10
 
-        # Save button
+        # Save button：位置与合并前一致；动作交给宿主窗口（合并保存两块 config）
         btn = NSButton.alloc().initWithFrame_(((w // 2 - 50, y_pos), (100, 28)))
         btn.setTitle_("保存")
         btn.setBezelStyle_(BEZEL_ROUNDED)
         btn.setTarget_(self)
-        btn.setAction_("saveAndClose:")
+        btn.setAction_("saveClicked:")
         content.addSubview_(btn)
-
-        self._window = win
+        self._save_btn = btn
 
     # ------------------------------------------------------------------
     # Protocol change callback
@@ -443,27 +366,18 @@ class ConfigWindowController(NSObject):
         self._refresh_cert_bind_ui()
 
     # ------------------------------------------------------------------
-    # Delegate / show / save
+    # Save
     # ------------------------------------------------------------------
 
-    def _delegate(self):
-        delegate = _ConfigWindowDelegate.alloc().init()
-        self._delegate_ref = delegate  # keep alive
-        return delegate
+    def commit_active_editing(self):
+        """把正在编辑的文本框内容提交到控件（否则读 stringValue 会拿到旧值）。"""
+        win = self._container.window() if self._container else None
+        if win is not None:
+            win.makeFirstResponder_(None)
 
-    def show(self):
-        self._window.center()
-        self._window.makeKeyAndOrderFront_(None)
-        NSApp.activateIgnoringOtherApps_(True)
-
-    def _commit_active_editing(self):
-        if hasattr(self, "_window"):
-            self._window.makeFirstResponder_(None)
-
-    def saveAndClose_(self, sender):
-        self._commit_active_editing()
-        with open(self._config_path, "r") as f:
-            config = json.load(f)
+    def apply_to(self, config):
+        """把面板当前状态写进 config dict（不落盘、不关窗）。"""
+        self.commit_active_editing()
         config.setdefault("server", {})
         config.setdefault("local", {})
 
@@ -525,35 +439,4 @@ class ConfigWindowController(NSObject):
                 getattr(self, "_cert_pin_mismatch", False)
             )
 
-        with open(self._config_path, "w") as f:
-            json.dump(config, f, indent=2)
-
-        from autostart import sync
-        sync(getattr(self, "_app_path", None), config["autostart"])
-
-        self._window.close()
-        NSApp.stopModal()
-
-
-def show_config_window(config_path, app_path=None):
-    ctrl = ConfigWindowController.alloc().initWithConfigPath_(config_path)
-    if ctrl is None:
-        return
-    ctrl._app_path = app_path
-    ctrl.show()
-    NSApp.runModalForWindow_(ctrl._window)
-
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("config_path")
-    parser.add_argument("--app-path", default=None)
-    args = parser.parse_args()
-
-    from AppKit import NSScreen
-
-    app = NSApplication.sharedApplication()
-    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-    _setup_minimal_menu()
-    show_config_window(args.config_path, args.app_path)
+        return config

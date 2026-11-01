@@ -1,29 +1,16 @@
 """
-BlockProxyClient Super DNS domains window.
-Launched as a subprocess from the main status bar app.
+BlockProxyClient Super DNS 域名列表面板。
+Pure PyObjC implementation (no tkinter dependency).
+
+面板本身不建窗口：控件建进外部传入的容器 NSView。
+「保存」只写 ~/.config/super-dns/domains 并提示，不关窗（与合并前一致）。
 """
-
-import os
-import sys
-
-if __name__ == "__main__":
-    _script_dir = os.path.dirname(os.path.abspath(__file__))
-    while _script_dir in sys.path:
-        sys.path.remove(_script_dir)
-    sys.path.append(_script_dir)
 
 import objc
 
 from Foundation import NSObject, NSURL, NSMutableAttributedString
 from AppKit import (
-    NSApplication,
-    NSApplicationActivationPolicyAccessory,
-    NSWindow,
-    NSFloatingWindowLevel,
-    NSWindowStyleMaskTitled,
-    NSWindowStyleMaskClosable,
-    NSWindowStyleMaskMiniaturizable,
-    NSBackingStoreBuffered,
+    NSView,
     NSTextField,
     NSButton,
     NSScrollView,
@@ -31,10 +18,7 @@ from AppKit import (
     NSBezelBorder,
     NSFont,
     NSColor,
-    NSMenu,
-    NSMenuItem,
     NSAlert,
-    NSApp,
     NSWorkspace,
     NSForegroundColorAttributeName,
 )
@@ -49,65 +33,35 @@ from super_dns_control import (
 
 BEZEL_ROUNDED = 1
 SUPER_DNS_DOCS_URL = "https://www.npmjs.com/package/super-dns"
-WINDOW_STYLE = (
-    NSWindowStyleMaskTitled
-    | NSWindowStyleMaskClosable
-    | NSWindowStyleMaskMiniaturizable
-)
+
+# 面板内容尺寸：与合并前独立窗口「Super DNS」的 contentView 完全一致
+PANEL_WIDTH = 520
+PANEL_HEIGHT = 430
 
 
-def _setup_minimal_menu():
-    main_menu = NSMenu.alloc().initWithTitle_("MainMenu")
-
-    app_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("", "", "")
-    main_menu.addItem_(app_item)
-    app_menu = NSMenu.alloc().initWithTitle_("")
-    app_item.setSubmenu_(app_menu)
-
-    edit_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Edit", "", "")
-    main_menu.addItem_(edit_item)
-    edit_menu = NSMenu.alloc().initWithTitle_("Edit")
-    edit_item.setSubmenu_(edit_menu)
-
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Undo", "undo:", "z")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Redo", "redo:", "Z")
-    edit_menu.addItem_(NSMenuItem.separatorItem())
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Cut", "cut:", "x")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Copy", "copy:", "c")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Paste", "paste:", "v")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Select All", "selectAll:", "a")
-
-    NSApp.setMainMenu_(main_menu)
-
-
-class _SuperDnsWindowDelegate(NSObject):
-    def windowWillClose_(self, notification):
-        NSApp.stopModal()
-
-
-class SuperDnsWindowController(NSObject):
+class SuperDnsPanel(NSObject):
+    """Super DNS 面板：把控件建进自己的容器 view。"""
 
     def init(self):
-        self = objc.super(SuperDnsWindowController, self).init()
+        self = objc.super(SuperDnsPanel, self).init()
         if self is None:
             return None
         self._running_pid = None
-        self._build_window()
+        self._build_view()
         self._load_domains()
         self._refresh_status()
         return self
 
-    def _build_window(self):
-        w, h = 520, 430
-        origin = ((0, 0), (w, h))
-        win = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            origin, WINDOW_STYLE, NSBackingStoreBuffered, False
-        )
-        win.setTitle_("Super DNS - 防止 DNS 污染的域名列表")
-        win.setLevel_(NSFloatingWindowLevel)
-        win.setDelegate_(self._delegate())
+    def panelSize(self):
+        return (PANEL_WIDTH, PANEL_HEIGHT)
 
-        content = win.contentView()
+    def view(self):
+        return self._container
+
+    def _build_view(self):
+        w, h = PANEL_WIDTH, PANEL_HEIGHT
+        content = NSView.alloc().initWithFrame_(((0, 0), (w, h)))
+        self._container = content
         p = 15
 
         dot = NSTextField.labelWithString_("●")
@@ -182,13 +136,6 @@ class SuperDnsWindowController(NSObject):
         content.addSubview_(stop_btn)
         self._stop_btn = stop_btn
 
-        self._window = win
-
-    def _delegate(self):
-        delegate = _SuperDnsWindowDelegate.alloc().init()
-        self._delegate_ref = delegate
-        return delegate
-
     def _load_domains(self):
         self._domains_text.setString_(read_domains_file())
         self._domains_text.scrollRangeToVisible_((0, 0))
@@ -223,11 +170,6 @@ class SuperDnsWindowController(NSObject):
         alert.setAlertStyle_(style)
         alert.addButtonWithTitle_("确定")
         alert.runModal()
-
-    def show(self):
-        self._window.center()
-        self._window.makeKeyAndOrderFront_(None)
-        NSApp.activateIgnoringOtherApps_(True)
 
     def saveDomains_(self, sender):
         try:
@@ -279,16 +221,3 @@ class SuperDnsWindowController(NSObject):
 
         detail = (result.stderr or result.stdout or "").strip()
         self._show_alert("执行失败", detail or f"super-dns {action} 返回失败", style=2)
-
-
-def show_super_dns_window():
-    controller = SuperDnsWindowController.alloc().init()
-    controller.show()
-    NSApp.runModalForWindow_(controller._window)
-
-
-if __name__ == "__main__":
-    app = NSApplication.sharedApplication()
-    app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-    _setup_minimal_menu()
-    show_super_dns_window()

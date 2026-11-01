@@ -68,7 +68,7 @@ $PYTHON -m nuitka \
     --include-data-files=app.py=app.py \
     --include-data-files=autostart.py=autostart.py \
     --include-data-files=config.py=config.py \
-    --include-data-files=config_window.py=config_window.py \
+    --include-data-files=config_panel.py=config_panel.py \
     --include-data-files=doh_resolver.py=doh_resolver.py \
     --include-data-files=geodata_loader.py=geodata_loader.py \
     --include-data-files=h2_upstream.py=h2_upstream.py \
@@ -79,14 +79,16 @@ $PYTHON -m nuitka \
     --include-data-files=proto_parser.py=proto_parser.py \
     --include-data-files=proxy_core.py=proxy_core.py \
     --include-data-files=routing.py=routing.py \
-    --include-data-files=routing_window.py=routing_window.py \
-    --include-data-files=system_proxy.py=system_proxy.py \
+    --include-data-files=routing_panel.py=routing_panel.py \
+    --include-data-files=settings_window.py=settings_window.py \
     --include-data-files=super_dns_control.py=super_dns_control.py \
-    --include-data-files=super_dns_window.py=super_dns_window.py \
+    --include-data-files=super_dns_panel.py=super_dns_panel.py \
+    --include-data-files=system_proxy.py=system_proxy.py \
     --include-data-files=traffic_stats.py=traffic_stats.py \
     --include-data-files=traffic_view.py=traffic_view.py \
     --include-data-files=tunnel_client.py=tunnel_client.py \
     --include-data-dir=geodata=geodata \
+    --include-data-dir=assets=assets \
     --include-package=websockets \
     --enable-plugin=no-qt \
     --output-dir="$DIST_DIR" \

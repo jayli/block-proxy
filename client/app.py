@@ -36,6 +36,12 @@ from AppKit import (
 )
 
 from config import Config
+from settings_window import (
+    PANEL_TAB_CONFIG,
+    PANEL_TAB_ROUTING,
+    PANEL_TAB_SUPER_DNS,
+    request_panel_tab,
+)
 from proxy_core import (
     LOCAL_PROXY_FD_RECYCLE_THRESHOLD,
     ORPHAN_THREAD_GIVEUP_SECONDS,
@@ -98,9 +104,7 @@ class AppController(NSObject):
         self.tunnel_client = None
         self.sys_proxy = SystemProxy()
         self.connected = False
-        self._config_proc = None
-        self._routing_proc = None
-        self._super_dns_proc = None
+        self._settings_proc = None
         self._log_proc = None
         self._measuring = False
         self._edr_blocked = False
@@ -542,19 +546,13 @@ class AppController(NSObject):
     # ------------------------------------------------------------------
 
     def openConfig_(self, sender):
-        if self._config_proc and self._config_proc.poll() is None:
-            return
-        self._show_config_window()
+        self._show_settings_window(PANEL_TAB_CONFIG)
 
     def openRouting_(self, sender):
-        if self._routing_proc and self._routing_proc.poll() is None:
-            return
-        self._show_routing_window()
+        self._show_settings_window(PANEL_TAB_ROUTING)
 
     def openSuperDns_(self, sender):
-        if self._super_dns_proc and self._super_dns_proc.poll() is None:
-            return
-        self._show_super_dns_window()
+        self._show_settings_window(PANEL_TAB_SUPER_DNS)
 
     def openLog_(self, sender):
         self._open_log_window("access")
@@ -579,20 +577,29 @@ class AppController(NSObject):
                 return p
         return "python3"
 
-    def _show_config_window(self):
+    def _show_settings_window(self, tab):
+        """打开合并设置窗口并定位到指定 Tab；已在打开则投递跳转请求。
+
+        三个面板共用一个子进程窗口，所以只有一个 proc 句柄与一套
+        关窗后的配置重载逻辑（节点配置 + 分流规则一起保存，只重连一次）。
+        """
+        if self._settings_proc and self._settings_proc.poll() is None:
+            request_panel_tab(self.config.config_path, tab)
+            return
+
         self.config.load()
         self.config.save()
-        script_path = os.path.join(_bundle_resource_dir(), "config_window.py")
+        script_path = os.path.join(_bundle_resource_dir(), "settings_window.py")
         python_path = self._find_python() if _is_compiled() else sys.executable
-        args = [python_path, script_path, self.config.config_path]
+        args = [python_path, script_path, self.config.config_path, "--tab", tab]
         bundle_path = _bundle_path()
         if bundle_path:
             args.extend(["--app-path", bundle_path])
-        self._config_proc = subprocess.Popen(args)
+        self._settings_proc = subprocess.Popen(args)
 
         def _reload_after():
-            self._config_proc.wait()
-            self._config_proc = None
+            self._settings_proc.wait()
+            self._settings_proc = None
             old_data = self.config.data.copy()
             self.config.load()
             self._run_on_main(self._update_routing_check)
@@ -664,37 +671,6 @@ class AppController(NSObject):
                 self._save_server_pin_state(pin_error=True)
         finally:
             self._pin_mismatch_pending = False
-
-    def _show_routing_window(self):
-        self.config.save()
-        script_path = os.path.join(_bundle_resource_dir(), "routing_window.py")
-        python_path = self._find_python() if _is_compiled() else sys.executable
-        self._routing_proc = subprocess.Popen(
-            [python_path, script_path, self.config.config_path]
-        )
-
-        def _reload_after():
-            self._routing_proc.wait()
-            self._routing_proc = None
-            old_routing = self.config.data.get("routing", {})
-            self.config.load()
-            new_routing = self.config.data.get("routing", {})
-            self._run_on_main(self._update_routing_check)
-            if self.connected and new_routing != old_routing:
-                self._run_on_main(self._reconnect)
-
-        threading.Thread(target=_reload_after, daemon=True).start()
-
-    def _show_super_dns_window(self):
-        script_path = os.path.join(_bundle_resource_dir(), "super_dns_window.py")
-        python_path = self._find_python() if _is_compiled() else sys.executable
-        self._super_dns_proc = subprocess.Popen([python_path, script_path])
-
-        def _clear_after():
-            self._super_dns_proc.wait()
-            self._super_dns_proc = None
-
-        threading.Thread(target=_clear_after, daemon=True).start()
 
     def _reconnect(self):
         """Full reconnect: stop everything, restart everything."""
@@ -891,12 +867,8 @@ class AppController(NSObject):
 
     def _pre_quit_cleanup(self):
         """Heavy cleanup on background thread to avoid blocking UI."""
-        if self._config_proc and self._config_proc.poll() is None:
-            self._config_proc.terminate()
-        if self._routing_proc and self._routing_proc.poll() is None:
-            self._routing_proc.terminate()
-        if self._super_dns_proc and self._super_dns_proc.poll() is None:
-            self._super_dns_proc.terminate()
+        if self._settings_proc and self._settings_proc.poll() is None:
+            self._settings_proc.terminate()
         if self._log_proc and self._log_proc.poll() is None:
             self._log_proc.terminate()
         if self.connected:
@@ -925,12 +897,8 @@ class AppController(NSObject):
 
         # If quitApp_ didn't run (SIGTERM / force-quit), do cleanup inline
         if not getattr(self, '_quitting', False):
-            if self._config_proc and self._config_proc.poll() is None:
-                self._config_proc.terminate()
-            if self._routing_proc and self._routing_proc.poll() is None:
-                self._routing_proc.terminate()
-            if self._super_dns_proc and self._super_dns_proc.poll() is None:
-                self._super_dns_proc.terminate()
+            if self._settings_proc and self._settings_proc.poll() is None:
+                self._settings_proc.terminate()
             if self._log_proc and self._log_proc.poll() is None:
                 self._log_proc.terminate()
             if self.connected:
