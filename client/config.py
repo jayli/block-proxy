@@ -21,8 +21,7 @@ DEFAULT_CONFIG = {
         "certPin": "",
     },
     "local": {
-        "socks_port": 1080,
-        "http_port": 1087,
+        "port": 1080,
         "udp": True,
     },
     "mode": "global",
@@ -89,6 +88,26 @@ def _force_allow_insecure(data):
         server["allowInsecure"] = ALLOW_INSECURE_FORCED
 
 
+def _migrate_local_ports(data):
+    """把旧的分端口配置（socks_port/http_port）合并为单一 port。
+
+    旧版本本地 SOCKS5 与 HTTP 各听一个端口（默认 1080/1087）；现在
+    合并为同一端口按首字节自适应。迁移以旧 socks_port 为准，迁移后
+    删掉两个旧键，避免下次保存又把它们写回去。必须在 _fill_defaults
+    之前调用：否则 defaults 会先补上 port=1080，用户自定义的旧端口
+    就被默认值盖掉了。
+    """
+    local = data.get("local")
+    if not isinstance(local, dict):
+        return
+    if "port" not in local:
+        legacy = local.get("socks_port")
+        if isinstance(legacy, int):
+            local["port"] = legacy
+    local.pop("socks_port", None)
+    local.pop("http_port", None)
+
+
 class Config:
     def __init__(self, config_path=None):
         if config_path is None:
@@ -100,11 +119,13 @@ class Config:
         if os.path.exists(self.config_path):
             with open(self.config_path, "r") as f:
                 self.data = json.load(f)
+            _migrate_local_ports(self.data)
             self._fill_defaults()
         else:
             self.data = copy.deepcopy(DEFAULT_CONFIG)
             self.save()
         _force_allow_insecure(self.data)
+        _migrate_local_ports(self.data)
         return self.data
 
     def _fill_defaults(self):
@@ -120,6 +141,7 @@ class Config:
     def save(self):
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
         _force_allow_insecure(self.data)
+        _migrate_local_ports(self.data)
         # 原子写：先写临时文件再 rename，避免写一半崩溃留下半截 JSON
         tmp = self.config_path + ".tmp"
         with open(tmp, "w") as f:

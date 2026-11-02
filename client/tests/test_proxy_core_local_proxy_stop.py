@@ -43,10 +43,8 @@ def test_stop_local_proxy_times_out_instead_of_hanging(monkeypatch):
     monkeypatch.setattr(proxy_core, "LOCAL_PROXY_STOP_WAIT_TIMEOUT", 0.2)
 
     proxy = proxy_core.ProxyCore()
-    socks = NeverFinishesServer()
-    http = NeverFinishesServer()
-    proxy._socks_server = socks
-    proxy._http_server = http
+    local = NeverFinishesServer()
+    proxy._local_server = local
 
     async def main():
         await proxy._stop_local_proxy()
@@ -55,10 +53,8 @@ def test_stop_local_proxy_times_out_instead_of_hanging(monkeypatch):
     asyncio.run(asyncio.wait_for(main(), timeout=5))
 
     # close() 在 wait_closed 之前已同步调用（端口释放不等待连接收尾）
-    assert socks.closed
-    assert http.closed
-    assert proxy._socks_server is None
-    assert proxy._http_server is None
+    assert local.closed
+    assert proxy._local_server is None
     assert proxy._server_sockets == []
 
 

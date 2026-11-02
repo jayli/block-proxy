@@ -422,11 +422,10 @@ Block-Proxy 提供 macOS 客户端 **BlockProxyClient**，用于在 Mac 上连�
 | 用户名 / 密码 | 与服务端代理认证一致 |
 | TLS | 是否启用 TLS 加密（需与服务端一致；socks5 与 http 协议均支持） |
 | Allow Insecure | 是否允许自签名证书（服务端使用自签名证书时需勾选） |
-| 本地 SOCKS5 端口 | 本地监听的 SOCKS5 端口（默认 1080） |
-| 本地 HTTP 端口 | 本地监听的 HTTP 代理端口（默认 1087） |
+| 本地 SOCKS/HTTP 代理端口 | 本地监听端口（默认 1080），SOCKS5 与 HTTP 共用同一个端口，按连接首字节自适应分发；仅监听本机流量（127.0.0.1） |
 | UDP | 是否启用 UDP 代理 |
 
-配置保存后客户端自动重连。客户端启动后会自动设置 macOS 系统代理为本地 SOCKS5 端口。
+配置保存后客户端自动重连。客户端启动后会自动把 macOS 系统代理（SOCKS 防火墙 / Web / Secure Web 三项）都指向这个本地端口。
 
 ### 分流规则
 
@@ -476,7 +475,7 @@ Claude 对分流规则很挑剔，本机用 claude code 的时候需要挂代理
 
 ```
 claude() {
-	ALL_PROXY='http://127.0.0.1:1087' claude "$@"
+	ALL_PROXY='http://127.0.0.1:1080' claude "$@"
 }
 ```
 

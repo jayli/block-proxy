@@ -19,8 +19,7 @@ class TestConfig:
         assert data["server"]["port"] == 8002
         assert data["server"]["tls"] is True
         assert data["server"]["allowInsecure"] is True
-        assert data["local"]["socks_port"] == 1080
-        assert data["local"]["http_port"] == 1087
+        assert data["local"]["port"] == 1080
         assert data["local"]["udp"] is True
         assert data["mode"] == "global"
         assert os.path.exists(self.config_path)
@@ -91,8 +90,41 @@ class TestConfig:
         data = self.config.load()
         assert data["server"]["address"] == "example.com"
         assert data["server"]["tls"] is False
-        assert data["local"]["socks_port"] == 2080
+        # 旧分端口配置迁移为单端口：以 socks_port 为准，旧键删除
+        assert data["local"]["port"] == 2080
+        assert "socks_port" not in data["local"]
+        assert "http_port" not in data["local"]
         assert data["mode"] == "manual"
+
+    def test_legacy_local_ports_migration_survives_save(self):
+        """迁移后保存：磁盘上不能把旧键写回去。"""
+        legacy = {
+            "server": {"address": "x"},
+            "local": {"socks_port": 3080, "http_port": 3087, "udp": True},
+        }
+        with open(self.config_path, "w") as f:
+            json.dump(legacy, f)
+
+        self.config.load()
+        self.config.save()
+
+        saved = json.load(open(self.config_path))
+        assert saved["local"]["port"] == 3080
+        assert "socks_port" not in saved["local"]
+        assert "http_port" not in saved["local"]
+
+    def test_legacy_local_without_socks_port_falls_back_to_default(self):
+        """旧配置只有 http_port（没有 socks_port）：回退默认 1080。"""
+        legacy = {
+            "server": {"address": "x"},
+            "local": {"http_port": 2087, "udp": True},
+        }
+        with open(self.config_path, "w") as f:
+            json.dump(legacy, f)
+
+        data = self.config.load()
+        assert data["local"]["port"] == 1080
+        assert "http_port" not in data["local"]
 
     def test_is_configured_false_when_no_address(self):
         self.config.load()

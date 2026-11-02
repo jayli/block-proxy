@@ -79,8 +79,7 @@ def _make_panel(config, commit=lambda: None):
         "port": FakeField(str(config["server"].get("port", 8002))),
         "username": FakeField(config["server"].get("username", "")),
         "password": FakeField(config["server"].get("password", "")),
-        "socks_port": FakeField(str(config["local"].get("socks_port", 1080))),
-        "http_port": FakeField(str(config["local"].get("http_port", 1087))),
+        "port_local": FakeField(str(config["local"].get("port", 1080))),
     }
     panel._tls_cb = FakeCheckbox(config["server"].get("tls", True))
     panel._insecure_cb = FakeCheckbox(config["server"].get("allowInsecure", True))
@@ -114,8 +113,7 @@ def test_apply_to_commits_active_text_editing_before_reading_controls():
             "allowInsecure": True,
         },
         "local": {
-            "socks_port": 1080,
-            "http_port": 1087,
+            "port": 1080,
             "udp": True,
             "proxy_private": False,
         },
@@ -154,7 +152,7 @@ def test_apply_to_does_not_write_disk_or_close_window(tmp_path):
             "tls": True,
             "allowInsecure": True,
         },
-        "local": {"socks_port": 1080, "http_port": 1087, "udp": True},
+        "local": {"port": 1080, "udp": True},
         "tunnel": {"enabled": False, "server_port": 8004},
         "autostart": False,
     }
@@ -183,7 +181,7 @@ def test_apply_to_preserves_latest_disk_cert_pin_and_mismatch_when_pin_untouched
             "certPin": "old-pin",
             "certPinMismatch": False,
         },
-        "local": {"socks_port": 1080, "http_port": 1087, "udp": True},
+        "local": {"port": 1080, "udp": True},
         "tunnel": {"enabled": False, "server_port": 8004},
         "autostart": False,
     }
@@ -212,7 +210,7 @@ def test_apply_to_clears_cert_pin_when_user_resets_pin():
             "certPin": "old-pin",
             "certPinMismatch": True,
         },
-        "local": {"socks_port": 1080, "http_port": 1087, "udp": True},
+        "local": {"port": 1080, "udp": True},
         "tunnel": {"enabled": False, "server_port": 8004},
         "autostart": False,
     }
@@ -242,7 +240,7 @@ def test_apply_to_clears_cert_pin_when_server_identity_changes():
             "certPin": "old-pin",
             "certPinMismatch": True,
         },
-        "local": {"socks_port": 1080, "http_port": 1087, "udp": True},
+        "local": {"port": 1080, "udp": True},
         "tunnel": {"enabled": False, "server_port": 8004},
         "autostart": False,
     }
@@ -267,7 +265,7 @@ def test_apply_to_keeps_tunnel_port_split_when_protocol_is_tunnel():
             "tls": True,
             "allowInsecure": True,
         },
-        "local": {"socks_port": 1080, "http_port": 1087, "udp": True},
+        "local": {"port": 1080, "udp": True},
         "tunnel": {"enabled": False, "server_port": 8003},
         "autostart": False,
     }
@@ -308,15 +306,20 @@ def test_config_panel_cert_binding_layout_uses_compact_checkbox_rows():
     assert "PANEL_WIDTH = 520" in text
     assert "PANEL_HEIGHT = 518" in text
     assert "w, h = PANEL_WIDTH, PANEL_HEIGHT" in text
-    # 两列网格：地址|端口、用户名|密码、本地SOCKS|本地HTTP 两两并排
+    # 两列网格：地址|端口、用户名|密码两两并排
     assert "GRID_MARGIN_X = 16" in text
     assert "GRID_GAP_X = 20" in text
     assert "GRID_COL_W = 234" in text
     assert "GRID_COL2_X = GRID_MARGIN_X + GRID_COL_W + GRID_GAP_X" in text
     assert "GRID_FULL_W = GRID_COL_W * 2 + GRID_GAP_X" in text
     # 栅格统一：地址与用户名等宽同列，端口与密码等宽同列（不做特例）
-    assert "PORT_FIELD_W" not in text
     assert "width=addr_w" not in text
+    # 本地 SOCKS/HTTP 端口合并为单行：标签实测 166px，单独排版不进两列网格
+    assert "LOCAL_PORT_LABEL_W = 202" in text
+    assert "LOCAL_PORT_FIELD_W = 90" in text
+    assert "本地SOCKS/HTTP代理端口:" in text
+    assert "（仅监听本机流量）" in text
+    assert '"port_local"' in text
     # 指纹完整显示：11pt 等宽 + 撑满栅格宽，不缩略
     assert "CERT_PIN_FONT_SIZE = 11" in text
     assert "f\"证书指纹：{self._cert_pin}\"" in text
@@ -326,7 +329,7 @@ def test_config_panel_cert_binding_layout_uses_compact_checkbox_rows():
     assert "GRID_MARGIN_X + GRID_FULL_W - RESET_BTN_W" in text
     # 标签比输入框低 2px 才能视觉对齐（实测偏移扫描：-2 时文字墨迹中心差 0.00px）
     assert "LABEL_ALIGN_DY = 2" in text
-    assert "label(text, y - LABEL_ALIGN_DY, x=col_x, lw=lw)" in text
+    assert "label(text, y - LABEL_ALIGN_DY, x=col_x, lw=GRID_LABEL_W)" in text
     # 协议 popup 的标签偏移不同（实测最佳 offset=0），不能套 LABEL_ALIGN_DY
     assert 'label("协议:", y_pos - 2)' in text
     # 指纹/提示行下推 4px，下面的控件跟着下推同样多（保住间距）

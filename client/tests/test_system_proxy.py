@@ -17,14 +17,14 @@ class TestSystemProxy:
         mock_interfaces.return_value = ["Wi-Fi"]
         mock_run.return_value = MagicMock(returncode=0, stdout="Enabled: Yes\n", stderr="")
 
-        self.proxy.enable(socks_port=1080, http_port=1087)
+        self.proxy.enable(port=1080)
 
         expected_calls = [
             call(["networksetup", "-setsocksfirewallproxy", "Wi-Fi", "127.0.0.1", "1080"], capture_output=True, text=True),
             call(["networksetup", "-setsocksfirewallproxystate", "Wi-Fi", "on"], capture_output=True, text=True),
-            call(["networksetup", "-setwebproxy", "Wi-Fi", "127.0.0.1", "1087"], capture_output=True, text=True),
+            call(["networksetup", "-setwebproxy", "Wi-Fi", "127.0.0.1", "1080"], capture_output=True, text=True),
             call(["networksetup", "-setwebproxystate", "Wi-Fi", "on"], capture_output=True, text=True),
-            call(["networksetup", "-setsecurewebproxy", "Wi-Fi", "127.0.0.1", "1087"], capture_output=True, text=True),
+            call(["networksetup", "-setsecurewebproxy", "Wi-Fi", "127.0.0.1", "1080"], capture_output=True, text=True),
             call(["networksetup", "-setsecurewebproxystate", "Wi-Fi", "on"], capture_output=True, text=True),
             call(["networksetup", "-setproxybypassdomains", "Wi-Fi", "*.local", "169.254.0.0/16", "127.0.0.1", "localhost", "0.0.0.0", "::1", "fc00::/7", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"], capture_output=True, text=True),
         ]
@@ -52,7 +52,7 @@ class TestSystemProxy:
         mock_interfaces.return_value = ["Wi-Fi", "Ethernet"]
         mock_run.return_value = MagicMock(returncode=0, stdout="Enabled: Yes\n", stderr="")
 
-        self.proxy.enable(socks_port=1080, http_port=1087)
+        self.proxy.enable(port=1080)
 
         # 1 default-route probe + 7 set calls per interface x 2 + 3 verify calls per interface x 2 = 21
         assert mock_run.call_count == 21
@@ -77,11 +77,11 @@ class TestSystemProxy:
 
         mock_run.side_effect = fake_run
 
-        self.proxy.enable(socks_port=1080, http_port=1087)
+        self.proxy.enable(port=1080)
 
         commands = [call_args.args[0] for call_args in mock_run.call_args_list]
-        assert ["networksetup", "-setwebproxy", "Wi-Fi", "127.0.0.1", "1087"] in commands
-        assert ["networksetup", "-setwebproxy", "Ethernet", "127.0.0.1", "1087"] not in commands
+        assert ["networksetup", "-setwebproxy", "Wi-Fi", "127.0.0.1", "1080"] in commands
+        assert ["networksetup", "-setwebproxy", "Ethernet", "127.0.0.1", "1080"] not in commands
 
     @patch("system_proxy.subprocess.run")
     def test_get_active_interfaces(self, mock_run):

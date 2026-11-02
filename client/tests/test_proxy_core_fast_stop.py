@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import proxy_core
 
 
-def _config(socks_port, http_port):
+def _config(port):
     return {
         "server": {
             "protocol": "socks5",
@@ -26,8 +26,7 @@ def _config(socks_port, http_port):
             "password": "",
         },
         "local": {
-            "socks_port": socks_port,
-            "http_port": http_port,
+            "port": port,
             "proxy_private": False,
             "udp": True,
         },
@@ -53,11 +52,11 @@ def _port_is_free(port):
 
 
 def test_stop_completes_fast_and_releases_ports():
-    socks_port, http_port = 18970, 18971
+    port = 18970
     proxy = proxy_core.ProxyCore()
-    proxy.start(_config(socks_port, http_port))
+    proxy.start(_config(port))
     time.sleep(0.3)  # 等待 listener 就绪
-    assert _port_is_free(socks_port) is False
+    assert _port_is_free(port) is False
 
     t0 = time.monotonic()
     proxy.stop()
@@ -65,15 +64,14 @@ def test_stop_completes_fast_and_releases_ports():
 
     # 旧实现固定 8.0s；新实现正常路径 <1s（安全网超时除外）
     assert elapsed < 2.0, f"stop took {elapsed:.2f}s"
-    assert _port_is_free(socks_port), "socks 端口未释放"
-    assert _port_is_free(http_port), "http 端口未释放"
+    assert _port_is_free(port), "本地代理端口未释放"
     assert not proxy.is_running()
 
 
 def test_stop_with_active_connection_aborts_transport_and_stays_fast():
-    socks_port, http_port = 18972, 18973
+    port = 18972
     proxy = proxy_core.ProxyCore()
-    proxy.start(_config(socks_port, http_port))
+    proxy.start(_config(port))
     time.sleep(0.3)
 
     # 模拟一个活跃客户端连接：注册 transport，让旧实现 wait_closed 需等待
@@ -93,5 +91,4 @@ def test_stop_with_active_connection_aborts_transport_and_stays_fast():
 
     assert elapsed < 2.0, f"stop took {elapsed:.2f}s"
     assert transport.aborted, "全量 stop 应主动 abort 活跃连接"
-    assert _port_is_free(socks_port)
-    assert _port_is_free(http_port)
+    assert _port_is_free(port)

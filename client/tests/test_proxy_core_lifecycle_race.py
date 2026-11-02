@@ -176,7 +176,7 @@ def test_stop_inside_lifecycle_lock_does_not_deadlock():
     thread.join(timeout=1)
 
 
-def _config(socks_port, http_port):
+def _config(port):
     return {
         "server": {
             "protocol": "socks5",
@@ -187,8 +187,7 @@ def _config(socks_port, http_port):
             "password": "",
         },
         "local": {
-            "socks_port": socks_port,
-            "http_port": http_port,
+            "port": port,
             "proxy_private": False,
             "udp": True,
         },
@@ -209,15 +208,15 @@ def test_concurrent_restarts_never_leave_two_event_loops():
     run_forever 的 loop（RuntimeError: This event loop is already running），
     旧线程又退不掉，最后两个循环共享任务句柄。
     """
-    socks_port, http_port = 18974, 18975
+    port = 18974
     proxy = proxy_core.ProxyCore()
-    proxy.start(_config(socks_port, http_port))
+    proxy.start(_config(port))
     errors = []
 
     def restart():
         try:
             proxy.stop()
-            proxy.start(_config(socks_port, http_port))
+            proxy.start(_config(port))
         except Exception as exc:  # 旧实现：event loop is already running
             errors.append(exc)
 
@@ -236,7 +235,7 @@ def test_concurrent_restarts_never_leave_two_event_loops():
         ]
         assert len(loop_threads) == 1, f"残留 {len(loop_threads)} 个事件循环线程"
         assert proxy.is_running()
-        with socket.create_connection(("127.0.0.1", socks_port), timeout=2):
+        with socket.create_connection(("127.0.0.1", port), timeout=2):
             pass
     finally:
         proxy.stop()

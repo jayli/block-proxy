@@ -202,14 +202,14 @@ def main():
             f"port={spans['port']} password={spans['password']}",
         )
 
-        # 短字段两两并排：地址|端口、用户名|密码、本地SOCKS|本地HTTP
+        # 短字段两两并排：地址|端口、用户名|密码（本地 SOCKS/HTTP 端口
+        # 已合并为单个输入框，不再成对）
         pairs = {frozenset(ks) for y, ks in rows.items() if len(ks) == 2}
         check(
             "config 短字段两两并排",
             pairs == {
                 frozenset(["address", "port"]),
                 frozenset(["username", "password"]),
-                frozenset(["socks_port", "http_port"]),
             },
             f"实际={[sorted(p) for p in pairs]}",
         )
@@ -233,6 +233,46 @@ def main():
             "config 标签比输入框低 LABEL_ALIGN_DY（视觉对齐）",
             not misaligned,
             f"未对齐={misaligned} LABEL_ALIGN_DY={cpmod.LABEL_ALIGN_DY}",
+        )
+        # 标签文字不能超出自己的 frame（右对齐标签超宽会被左侧截断）。
+        # 「本地SOCKS/HTTP代理端口:」实测 166.2px，LOCAL_PORT_LABEL_W 取 170。
+        label_overflow = [
+            (l.stringValue(), round(l.attributedStringValue().size().width, 1),
+             round(l.frame().size.width, 1))
+            for l in labels
+            if l.attributedStringValue().size().width > l.frame().size.width
+        ]
+        check(
+            "config 标签文字不截断",
+            not label_overflow,
+            f"{label_overflow}",
+        )
+        # 本地端口行的文案与提示（单端口 + 仅监听本机）
+        check(
+            "config 本地端口行文案",
+            any(l.stringValue() == "本地SOCKS/HTTP代理端口:" for l in labels),
+            f"实际={[l.stringValue() for l in labels]}",
+        )
+        check(
+            "config 仅监听本机提示",
+            cp._local_port_hint_label.stringValue() == "（仅监听本机流量）",
+            f"实际={cp._local_port_hint_label.stringValue()!r}",
+        )
+        # 本地端口行的标签文字起点要与「用户名:」左对齐（右对齐标签：
+        # 文字起点 = 列起点 + 列宽 - 文字宽）。比文字墨迹，不比 frame。
+        def _text_left(lbl):
+            f = lbl.frame()
+            tw = lbl.attributedStringValue().size().width
+            return f.origin.x + f.size.width - tw
+
+        port_lbl = [l for l in labels if l.stringValue() == "本地SOCKS/HTTP代理端口:"]
+        user_lbl = [l for l in labels if l.stringValue() == "用户名:"]
+        check(
+            "config 本地端口标签与用户名左对齐",
+            bool(port_lbl) and bool(user_lbl)
+            and abs(_text_left(port_lbl[0]) - _text_left(user_lbl[0])) < 1.0,
+            f"port={_text_left(port_lbl[0]):.1f} username={_text_left(user_lbl[0]):.1f}"
+            if port_lbl and user_lbl else "label missing",
         )
         # 协议行的 popup 偏移与输入框不同（实测最佳 offset=0）
         pp = cp._protocol_popup.frame()
@@ -311,7 +351,7 @@ def main():
 
         # 提示文字不能被截断
         truncated = []
-        for name in ["_insecure_hint_label", "_cert_bind_label"]:
+        for name in ["_insecure_hint_label", "_cert_bind_label", "_local_port_hint_label"]:
             v = getattr(cp, name)
             need = v.attributedStringValue().size().width
             if need > v.frame().size.width:

@@ -302,8 +302,8 @@ class AppController(NSObject):
         if fallback:
             self._set_status_title(
                 self._status_title_connected(
-                    f"端口 {fallback['socks']}/{fallback['http']}，"
-                    f"配置的 {fallback['configured_socks']}/{fallback['configured_http']} 被占用"
+                    f"端口 {fallback['port']}，"
+                    f"配置的 {fallback['configured_port']} 被占用"
                 )
             )
         else:
@@ -386,10 +386,7 @@ class AppController(NSObject):
             # 2. 设置系统代理（本地服务器已就绪）
             if self.config.data["mode"] == "global":
                 try:
-                    self.sys_proxy.enable(
-                        socks_port=self.proxy.socks_port,
-                        http_port=self.proxy.http_port,
-                    )
+                    self.sys_proxy.enable(port=self.proxy.local_port)
                 except Exception as e:
                     self._run_on_main(
                         lambda: self._show_notification(
@@ -528,10 +525,7 @@ class AppController(NSObject):
         self._update_mode_menu()
         self._update_icon()
         if self.connected:
-            self.sys_proxy.enable(
-                socks_port=self.proxy.socks_port,
-                http_port=self.proxy.http_port,
-            )
+            self.sys_proxy.enable(port=self.proxy.local_port)
 
     def setManualMode_(self, sender):
         self.config.data["mode"] = "manual"
@@ -702,17 +696,13 @@ class AppController(NSObject):
         if not self.proxy.is_running():
             return False
         return (
-            self._local_port_is_listening(self.proxy.socks_port)
-            and self._local_port_is_listening(self.proxy.http_port)
+            self._local_port_is_listening(self.proxy.local_port)
         )
 
     def _sync_system_proxy_if_needed(self):
         if self.config.data.get("mode") != "global":
             return
-        self.sys_proxy.enable(
-            socks_port=self.proxy.socks_port,
-            http_port=self.proxy.http_port,
-        )
+        self.sys_proxy.enable(port=self.proxy.local_port)
 
     def _restart_local_proxy_only(self):
         """重启本地代理（stop + start），非阻塞单飞。
@@ -1055,10 +1045,7 @@ class AppController(NSObject):
                     # 重启后端口可能偏移，重新同步系统代理
                     if self.config.data.get("mode") == "global":
                         try:
-                            self.sys_proxy.enable(
-                                socks_port=self.proxy.socks_port,
-                                http_port=self.proxy.http_port,
-                            )
+                            self.sys_proxy.enable(port=self.proxy.local_port)
                         except Exception as e:
                             crash_logger.warning(
                                 "System proxy re-sync failed after restart: %s", e,

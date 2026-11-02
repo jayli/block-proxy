@@ -470,6 +470,10 @@ async def relay(reader, writer, route=None, direction=None, on_activity=None,
 CONNECT_TIMEOUT = 10
 HANDSHAKE_TIMEOUT = 10
 LOCAL_HANDSHAKE_TIMEOUT = 30
+# 本地代理端口：SOCKS5 与 HTTP 合用同一个监听端口，按连接首字节自适应
+# 分发（0x05 → SOCKS5，其余 → HTTP），与服务端 8002 的首字节分发同构。
+# 只绑 127.0.0.1，不接受本机以外的流量。
+DEFAULT_LOCAL_PORT = 1080
 # write_eof() 后等待对端 FIN 的最长时间，超时则 RST 强制关闭。
 # 对端（如 DoH 探测连接）经常不回 FIN，优雅关闭会让 fd 和内核连接
 # 残留（CLOSED fd 堆积 + FIN_WAIT_2），最终拖垮连接表触发限流黑洞。
@@ -1223,15 +1227,13 @@ class ProxyCore:
     def __init__(self):
         self._loop = None
         self._thread = None
-        self._socks_server = None
-        self._http_server = None
+        self._local_server = None
         self._running = False
         self._server_config = None
         self._tunnel_config = {}
         self._proxy_private = False
         self._udp_enabled = True
-        self._socks_port = 1080
-        self._http_port = 1087
+        self._local_port = DEFAULT_LOCAL_PORT
         self._ssl_ctx = None
         self._semaphore = None
         self._routing = None
@@ -1245,8 +1247,7 @@ class ProxyCore:
         # 时间，供调用方按存活时长决定「继续重试」还是「放弃并提示重启」。
         self._orphan_thread = None
         self._orphan_thread_since = None
-        self._configured_socks_port = None
-        self._configured_http_port = None
+        self._configured_local_port = None
         self._server_sockets = []
         self._cert_bind_enabled = False
         self._cert_pin = ""
@@ -1390,10 +1391,8 @@ class ProxyCore:
         self._tunnel_config = user_config.get("tunnel", {})
         local = user_config["local"]
         # 保存配置的原始端口，每次 start() 重置（防止端口漂移累积）
-        self._configured_socks_port = local["socks_port"]
-        self._configured_http_port = local["http_port"]
-        self._socks_port = local["socks_port"]
-        self._http_port = local["http_port"]
+        self._configured_local_port = local["port"]
+        self._local_port = local["port"]
         self._proxy_private = local.get("proxy_private", False)
         self._udp_enabled = local.get("udp", True)
         # 干净启动前先清掉上一轮的漂移标记，_start_local_proxy 命中
@@ -1458,8 +1457,7 @@ class ProxyCore:
                 # _server_sockets 必须留到线程真正退出后再清：下面
                 # thread.join() 超时分支还要靠它做最后一次强制关闭。
                 # 修复前这里无条件清空，那条兜底遍历的一直是空列表。
-                self._socks_server = None
-                self._http_server = None
+                self._local_server = None
 
             if thread:
                 # Wait for thread to exit with short timeout
@@ -1571,12 +1569,8 @@ class ProxyCore:
             await self._recycle_local_proxy_once_unlocked()
 
     @property
-    def socks_port(self):
-        return self._socks_port
-
-    @property
-    def http_port(self):
-        return self._http_port
+    def local_port(self):
+        return self._local_port
 
     async def _measure_latency(self):
         import time
@@ -1745,24 +1739,22 @@ class ProxyCore:
         # 防御：丢弃上一轮（可能属于已关闭事件循环）的 server 引用。
         # 跨 loop 的 server 对象在 close/wait_closed 时抛 "Future
         # attached to a different loop"，且占用端口导致 EADDRINUSE 漂移。
-        self._socks_server = None
-        self._http_server = None
+        self._local_server = None
         protocol = self._server_config.get("protocol", "socks5")
         self._upstream_pool = None
         self._h2_pool = None
         max_attempts = 100
         for attempt in range(max_attempts):
             try:
-                self._socks_server = await asyncio.start_server(
-                    self._handle_socks, "127.0.0.1", self._socks_port
-                )
-                self._http_server = await asyncio.start_server(
-                    self._handle_http, "127.0.0.1", self._http_port
+                # 单端口同时提供 SOCKS5 与 HTTP：只绑 127.0.0.1，本机以外
+                # 的流量根本到不了这个 listener（协议由 _handle_local 按
+                # 连接首字节自适应分发）。
+                self._local_server = await asyncio.start_server(
+                    self._handle_local, "127.0.0.1", self._local_port
                 )
                 # 收集 server sockets 用于强制关闭
-                for server in (self._socks_server, self._http_server):
-                    for sock in server.sockets or []:
-                        self._server_sockets.append(sock)
+                for sock in self._local_server.sockets or []:
+                    self._server_sockets.append(sock)
                 if protocol in ("socks5", "http"):
                     self._upstream_pool = UpstreamPool(
                         self._server_config, self._ssl_ctx,
@@ -1781,25 +1773,19 @@ class ProxyCore:
             except OSError as e:
                 if allow_port_retry and e.errno == 48 and attempt < max_attempts - 1:
                     # 关闭本轮已创建的 server，避免 socket 泄漏
-                    if self._socks_server:
-                        self._socks_server.close()
-                        await self._close_server_limited(self._socks_server)
-                        self._socks_server = None
-                    if self._http_server:
-                        self._http_server.close()
-                        await self._close_server_limited(self._http_server)
-                        self._http_server = None
+                    if self._local_server:
+                        self._local_server.close()
+                        await self._close_server_limited(self._local_server)
+                        self._local_server = None
                     logger.warning(
-                        "local proxy port %s/%s in use, retrying with +%d offset",
-                        self._socks_port, self._http_port, attempt + 1,
+                        "local proxy port %s in use, retrying with +%d offset",
+                        self._local_port, attempt + 1,
                     )
                     # 每次重试从配置的原始端口开始偏移，防止漂移累积
-                    self._socks_port = self._configured_socks_port + attempt + 1
-                    self._http_port = self._configured_http_port + attempt + 1
+                    self._local_port = self._configured_local_port + attempt + 1
                     self._record_port_fallback(
                         attempt + 1,
-                        self._configured_socks_port,
-                        self._configured_http_port,
+                        self._configured_local_port,
                     )
                 else:
                     raise
@@ -1845,8 +1831,7 @@ class ProxyCore:
                 except Exception:
                     pass
             self._server_sockets = []
-            self._socks_server = None
-            self._http_server = None
+            self._local_server = None
 
     async def _stop_local_proxy_locked(self, force_abort=True):
         async with self._get_local_proxy_lock():
@@ -1901,16 +1886,13 @@ class ProxyCore:
                 await pool.stop()
             except (OSError, RuntimeError):
                 pass
-        if self._socks_server:
-            await self._close_server_limited(self._socks_server)
-            self._socks_server = None
-        if self._http_server:
-            await self._close_server_limited(self._http_server)
-            self._http_server = None
+        if self._local_server:
+            await self._close_server_limited(self._local_server)
+            self._local_server = None
         self._server_sockets = []
 
     def _close_listen_sockets(self):
-        """幂等地同步关闭两个 listen server，释放端口。
+        """幂等地同步关闭 listen server，释放端口。
 
         server.close() 是同步的（只关 listen socket），对端的活跃连接由
         各自 handler 收尾；因此这里不 await，取消/异常都不会漏关端口。
@@ -1918,11 +1900,9 @@ class ProxyCore:
         且只在 server 对象已被丢弃（stop() 超时兜底）时才需要，故取底层
         socket 关闭作为补充。
         """
-        for server in (self._socks_server, self._http_server):
-            if not server:
-                continue
+        if self._local_server:
             try:
-                server.close()
+                self._local_server.close()
             except (OSError, RuntimeError):
                 pass
         for sock in self._server_sockets:
@@ -1935,17 +1915,15 @@ class ProxyCore:
     def _clear_port_fallback(self):
         self._port_fallback = None
 
-    def _record_port_fallback(self, attempt, configured_socks, configured_http):
+    def _record_port_fallback(self, attempt, configured_port):
         self._port_fallback = {
             "attempt": attempt,
-            "configured_socks": configured_socks,
-            "configured_http": configured_http,
-            "socks": self._socks_port,
-            "http": self._http_port,
+            "configured_port": configured_port,
+            "port": self._local_port,
         }
         crash_logger.warning(
-            "local proxy ports %d/%d in use, fell back to %d/%d",
-            configured_socks, configured_http, self._socks_port, self._http_port,
+            "local proxy port %d in use, fell back to %d",
+            configured_port, self._local_port,
         )
 
     @property
@@ -1958,8 +1936,8 @@ class ProxyCore:
         if not info:
             return None
         return (
-            f"端口被占用，已改用 {info['socks']}/{info['http']} "
-            f"（配置为 {info['configured_socks']}/{info['configured_http']}）"
+            f"端口被占用，已改用 {info['port']} "
+            f"（配置为 {info['configured_port']}）"
         )
 
     def _mark_proxy_activity(self):
@@ -2016,9 +1994,8 @@ class ProxyCore:
         await self._start_local_proxy(allow_port_retry=False)
         self._mark_proxy_activity()
         logger.info(
-            "local proxy recycle completed: socks=%s http=%s",
-            self._socks_port,
-            self._http_port,
+            "local proxy recycle completed: port=%s",
+            self._local_port,
         )
 
     async def _flush_stats_loop(self):
@@ -2029,7 +2006,7 @@ class ProxyCore:
     async def _acquire_setup_slot(self):
         """获取建连槽位，带超时与排队时长打点。
 
-        槽位只在建连阶段持有（见 _handle_http/_handle_socks），
+        槽位只在建连阶段持有（见 _handle_local 分发后的 _do_handle_*），
         超时后快速失败，避免异常流量把真实请求堵在队列里。
         """
         if self._semaphore is None:
@@ -2295,7 +2272,12 @@ class ProxyCore:
             await _close_writer(writer)
             raise
 
-    async def _handle_socks(self, client_reader, client_writer):
+    async def _handle_local(self, client_reader, client_writer):
+        """单端口入口：按连接首字节自适应分发 SOCKS5 / HTTP。
+
+        SOCKS5 握手版本号恒为 0x05；HTTP 请求行以大写方法名开头，
+        两者无歧义（与服务端 8002 的首字节分发同构）。
+        """
         transport = client_writer.transport
         self._active_transports.add(transport)
         try:
@@ -2305,20 +2287,34 @@ class ProxyCore:
                 return
             self._connection_started()
             try:
-                await self._do_handle_socks(client_reader, client_writer)
+                try:
+                    first_byte = await asyncio.wait_for(
+                        client_reader.readexactly(1), timeout=LOCAL_HANDSHAKE_TIMEOUT
+                    )
+                except (asyncio.IncompleteReadError, asyncio.TimeoutError,
+                        ConnectionResetError, BrokenPipeError, OSError):
+                    return
+                if first_byte[0] == 0x05:
+                    await self._do_handle_socks(client_reader, client_writer, first_byte)
+                else:
+                    await self._do_handle_http(client_reader, client_writer, first_byte)
             finally:
                 self._connection_finished()
         finally:
             self._active_transports.discard(transport)
 
-    async def _do_handle_socks(self, client_reader, client_writer):
+    async def _do_handle_socks(self, client_reader, client_writer, first_byte=None):
         _set_nodelay(client_writer)
         try:
-            header = await asyncio.wait_for(client_reader.readexactly(2), timeout=LOCAL_HANDSHAKE_TIMEOUT)
-            ver, nmethods = header
-            if ver != 0x05:
-                client_writer.close()
-                return
+            if first_byte is None:
+                header = await asyncio.wait_for(client_reader.readexactly(2), timeout=LOCAL_HANDSHAKE_TIMEOUT)
+                ver, nmethods = header
+                if ver != 0x05:
+                    client_writer.close()
+                    return
+            else:
+                # 首字节已由 _handle_local 读出并确认为 0x05
+                nmethods = (await asyncio.wait_for(client_reader.readexactly(1), timeout=LOCAL_HANDSHAKE_TIMEOUT))[0]
             await asyncio.wait_for(client_reader.readexactly(nmethods), timeout=LOCAL_HANDSHAKE_TIMEOUT)
 
             client_writer.write(b"\x05\x00")
@@ -2524,27 +2520,15 @@ class ProxyCore:
                 _force_close_rst(remote_writer)
             await self._close_client_writer(client_writer)
 
-    async def _handle_http(self, client_reader, client_writer):
-        transport = client_writer.transport
-        self._active_transports.add(transport)
-        try:
-            if self._active_connections >= TOTAL_CONNECTION_LIMIT:
-                self._metrics.record_total_ceiling_reject()
-                await self._write_http_503(client_writer)
-                await self._close_client_writer(client_writer)
-                return
-            self._connection_started()
-            try:
-                await self._do_handle_http(client_reader, client_writer)
-            finally:
-                self._connection_finished()
-        finally:
-            self._active_transports.discard(transport)
-
-    async def _do_handle_http(self, client_reader, client_writer):
+    async def _do_handle_http(self, client_reader, client_writer, first_byte=None):
         _set_nodelay(client_writer)
         try:
-            raw_line = await asyncio.wait_for(client_reader.readline(), timeout=LOCAL_HANDSHAKE_TIMEOUT)
+            if first_byte is None:
+                raw_line = await asyncio.wait_for(client_reader.readline(), timeout=LOCAL_HANDSHAKE_TIMEOUT)
+            else:
+                # 首字节已由 _handle_local 读出，拼回请求行再解析
+                tail = await asyncio.wait_for(client_reader.readline(), timeout=LOCAL_HANDSHAKE_TIMEOUT)
+                raw_line = first_byte + tail
             if not raw_line:
                 client_writer.close()
                 return

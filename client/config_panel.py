@@ -33,18 +33,24 @@ BEZEL_ROUNDED = 1  # NSRoundedBezelStyle
 TEXT_RIGHT = 2  # NSRightTextAlignment
 
 # 面板内容尺寸。宽度与 Super DNS 面板一致（520），三个 Tab 在 560 宽的合并窗口里
-# 左右留白相同；高度按两列网格重排后从 615 降到 518。
+# 左右留白相同；高度按两列网格重排后从 615 降到 518。本地 SOCKS/HTTP 端口
+# 合并前后都只占一行（原来两个输入框并排），高度不变。
 PANEL_WIDTH = 520
 PANEL_HEIGHT = 518
 
-# 两列网格：协议独占一行，地址|端口、用户名|密码、本地SOCKS|本地HTTP 端口两两并排。
+# 两列网格：协议独占一行，地址|端口、用户名|密码两两并排。
 # 16 + 234 + 20 + 234 + 16 = 520
 GRID_MARGIN_X = 16
 GRID_GAP_X = 20
 GRID_COL_W = 234
 GRID_COL2_X = GRID_MARGIN_X + GRID_COL_W + GRID_GAP_X
 GRID_LABEL_W = 78        # 常规标签列宽（右对齐）
-GRID_LABEL_WIDE = 104    # 「本地SOCKS端口:」这类长标签
+# 本地 SOCKS/HTTP 端口行单独排版：标签实测 166px（13pt）。标签列宽 202 是
+# 算出来的：右对齐标签的文字起点 = 列起点 + 列宽 - 文字宽，取 202 使本行
+# 标签文字起点（≈51.8px）与「用户名:」标签文字起点（16+78-42.5=51.5px）
+# 左对齐；输入框 90px 足够放端口号，右侧接「（仅监听本机流量）」提示。
+LOCAL_PORT_LABEL_W = 202
+LOCAL_PORT_FIELD_W = 90
 GRID_LABEL_GAP = 6       # 标签与控件的间距
 GRID_FULL_W = GRID_COL_W * 2 + GRID_GAP_X
 RESET_BTN_W = 70
@@ -140,13 +146,12 @@ class ConfigPanel(NSObject):
             lbl.setAlignment_(TEXT_RIGHT)
             content.addSubview_(lbl)
 
-        def field_row(y, text, default, secure=False, col=0, wide_label=False):
+        def field_row(y, text, default, secure=False, col=0):
             """一行「右对齐标签 + 输入框」。col 选列。"""
-            lw = GRID_LABEL_WIDE if wide_label else GRID_LABEL_W
             col_x = GRID_MARGIN_X if col == 0 else GRID_COL2_X
-            label(text, y - LABEL_ALIGN_DY, x=col_x, lw=lw)
-            fx = col_x + lw + GRID_LABEL_GAP
-            fw = GRID_COL_W - lw - GRID_LABEL_GAP
+            label(text, y - LABEL_ALIGN_DY, x=col_x, lw=GRID_LABEL_W)
+            fx = col_x + GRID_LABEL_W + GRID_LABEL_GAP
+            fw = GRID_COL_W - GRID_LABEL_W - GRID_LABEL_GAP
             cls = NSSecureTextField if secure else NSTextField
             fld = cls.alloc().initWithFrame_(((fx, y), (fw, 24)))
             fld.setBezeled_(True)
@@ -166,9 +171,11 @@ class ConfigPanel(NSObject):
             content.addSubview_(cb)
             return cb
 
-        def hint_label(y, text, height=20):
+        def hint_label(y, text, height=20, x=None, width=None):
             lbl = NSTextField.labelWithString_(text)
-            lbl.setFrame_(((HINT_X, y), (w - HINT_X - 16, height)))
+            hx = HINT_X if x is None else x
+            hw = (w - HINT_X - 16) if width is None else width
+            lbl.setFrame_(((hx, y), (hw, height)))
             lbl.setFont_(ui_font)
             content.addSubview_(lbl)
             return lbl
@@ -230,19 +237,26 @@ class ConfigPanel(NSObject):
         separator(y_pos)
         y_pos -= 32
 
-        # 本地SOCKS端口 | 本地HTTP端口（标签长，用宽标签列）
-        self._fields["socks_port"] = field_row(
-            y_pos,
-            "本地SOCKS端口:",
-            str(config.get("local", {}).get("socks_port", "")),
-            wide_label=True,
+        # 本地SOCKS/HTTP代理端口：单端口同时提供两种协议（按连接首字节
+        # 自适应），只监听 127.0.0.1。标签实测 166px，本行显式排版：标签
+        # 列宽 202 使标签文字起点与「用户名:」左对齐，不走 field_row。
+        port_label_w = LOCAL_PORT_LABEL_W
+        port_field_x = GRID_MARGIN_X + port_label_w + GRID_LABEL_GAP
+        label("本地SOCKS/HTTP代理端口:", y_pos - LABEL_ALIGN_DY, lw=port_label_w)
+        port_field = NSTextField.alloc().initWithFrame_(
+            ((port_field_x, y_pos), (LOCAL_PORT_FIELD_W, 24))
         )
-        self._fields["http_port"] = field_row(
-            y_pos,
-            "本地HTTP端口:",
-            str(config.get("local", {}).get("http_port", "")),
-            col=1,
-            wide_label=True,
+        port_field.setBezeled_(True)
+        port_field.setBezelStyle_(BEZEL_SQUARE)
+        port_field.setStringValue_(str(config.get("local", {}).get("port", "")))
+        content.addSubview_(port_field)
+        self._fields["port_local"] = port_field
+        self._local_port_hint_label = hint_label(
+            y_pos - LABEL_ALIGN_DY,
+            "（仅监听本机流量）",
+            height=22,
+            x=port_field_x + LOCAL_PORT_FIELD_W + 8,
+            width=GRID_FULL_W - (port_field_x + LOCAL_PORT_FIELD_W + 8 - GRID_MARGIN_X),
         )
         y_pos -= row_h + 4
 
@@ -504,8 +518,7 @@ class ConfigPanel(NSObject):
 
         config["server"]["username"] = self._fields["username"].stringValue()
         config["server"]["password"] = self._fields["password"].stringValue()
-        config["local"]["socks_port"] = int(self._fields["socks_port"].stringValue() or "1080")
-        config["local"]["http_port"] = int(self._fields["http_port"].stringValue() or "1087")
+        config["local"]["port"] = int(self._fields["port_local"].stringValue() or "1080")
         config["local"]["udp"] = bool(self._udp_cb.state())
         config["local"]["proxy_private"] = bool(self._proxy_private_cb.state())
         config["autostart"] = bool(self._autostart_cb.state())

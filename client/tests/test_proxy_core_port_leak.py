@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import proxy_core
 
 
-def _config(socks_port, http_port):
+def _config(port):
     return {
         "server": {
             "protocol": "socks5",
@@ -31,8 +31,7 @@ def _config(socks_port, http_port):
             "password": "",
         },
         "local": {
-            "socks_port": socks_port,
-            "http_port": http_port,
+            "port": port,
             "proxy_private": False,
             "udp": True,
         },
@@ -73,23 +72,17 @@ def test_cancelled_stop_local_proxy_still_releases_ports(monkeypatch):
     `server.close()`；取消发生在 await 上 → 两个 listen socket 泄漏，
     端口被僵尸 listener 长期占用（能握手、无人 accept）。
     """
-    socks_port, http_port = 18980, 18981
+    socks_port = 18980
 
     async def scenario():
         proxy = proxy_core.ProxyCore()
-        proxy._socks_port = socks_port
-        proxy._http_port = http_port
-        proxy._configured_socks_port = socks_port
-        proxy._configured_http_port = http_port
-        proxy._socks_server = await asyncio.start_server(
+        proxy._local_port = socks_port
+        proxy._configured_local_port = socks_port
+        proxy._local_server = await asyncio.start_server(
             lambda r, w: None, "127.0.0.1", socks_port
         )
-        proxy._http_server = await asyncio.start_server(
-            lambda r, w: None, "127.0.0.1", http_port
-        )
-        for server in (proxy._socks_server, proxy._http_server):
-            for sock in server.sockets or []:
-                proxy._server_sockets.append(sock)
+        for sock in proxy._local_server.sockets or []:
+            proxy._server_sockets.append(sock)
 
         class HangingPool:
             async def stop(self):
@@ -106,8 +99,7 @@ def test_cancelled_stop_local_proxy_still_releases_ports(monkeypatch):
         # 必须在 loop 仍存活、proxy 仍持有 server 引用时检查：asyncio.run
         # 返回到达不了这个状态（loop 关闭 + GC 会把泄漏的 socket 一并收掉，
         # 掩盖真实进程里长期存活的僵尸 listener）。
-        assert _port_is_free(socks_port), "SOCKS 端口被僵尸 listener 占用"
-        assert _port_is_free(http_port), "HTTP 端口被僵尸 listener 占用"
+        assert _port_is_free(socks_port), "本地代理端口被僵尸 listener 占用"
 
     asyncio.run(scenario())
 
@@ -118,19 +110,17 @@ def test_port_fallback_is_recorded_and_resets_on_clean_start():
     修复前：`+1` 只写进 `logging.getLogger("proxy_core")`，而这个
     logger 没有 handler，警告全部丢失，UI 也只显示漂移后的端口。
     """
-    configured_socks, configured_http = 18984, 18985
-    blocker = _occupy(configured_socks)
+    configured_port = 18984
+    blocker = _occupy(configured_port)
     proxy = proxy_core.ProxyCore()
     try:
-        proxy.start(_config(configured_socks, configured_http))
+        proxy.start(_config(configured_port))
         time.sleep(0.3)
 
         fallback = proxy.port_fallback  # noqa: F841 - 缺失即失败
         assert fallback is not None, "端口漂移未被记录"
-        assert fallback["configured_socks"] == configured_socks
-        assert fallback["configured_http"] == configured_http
-        assert fallback["socks"] == proxy.socks_port != configured_socks
-        assert fallback["http"] == proxy.http_port != configured_http
+        assert fallback["configured_port"] == configured_port
+        assert fallback["port"] == proxy.local_port != configured_port
     finally:
         proxy.stop()
         blocker.close()
@@ -138,25 +128,25 @@ def test_port_fallback_is_recorded_and_resets_on_clean_start():
     # 干净启动（端口都空闲）不应残留漂移标记
     proxy2 = proxy_core.ProxyCore()
     try:
-        proxy2.start(_config(18986, 18987))
+        proxy2.start(_config(18986))
         time.sleep(0.3)
         assert proxy2.port_fallback is None
     finally:
         proxy2.stop()
 
 
-def test_port_conflict_message_names_both_ports():
+def test_port_conflict_message_names_the_port():
     """漂移记录要能直接拼出「配置端口 → 实际端口」的用户可读文案。"""
-    configured_socks, configured_http = 18988, 18989
-    blocker = _occupy(configured_socks)
+    configured_port = 18988
+    blocker = _occupy(configured_port)
     proxy = proxy_core.ProxyCore()
     try:
-        proxy.start(_config(configured_socks, configured_http))
+        proxy.start(_config(configured_port))
         time.sleep(0.3)
         message = proxy.port_fallback_message()
         assert message, "没有生成用户可读的漂移说明"
-        assert str(configured_socks) in message
-        assert str(proxy.socks_port) in message
+        assert str(configured_port) in message
+        assert str(proxy.local_port) in message
     finally:
         proxy.stop()
         blocker.close()

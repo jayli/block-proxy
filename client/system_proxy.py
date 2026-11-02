@@ -110,16 +110,18 @@ class SystemProxy:
                 interfaces.append(service)
         return interfaces or self._get_active_interfaces()
 
-    def enable(self, socks_port, http_port):
+    def enable(self, port):
+        """SOCKS 防火墙 / Web / Secure Web 三项系统代理都指向同一个
+        本地端口（客户端在该端口上按首字节自适应 SOCKS5/HTTP）。"""
         self._interfaces = self._get_target_interfaces()
         tasks = []
         for iface in self._interfaces:
             tasks.extend([
-                ["networksetup", "-setsocksfirewallproxy", iface, "127.0.0.1", str(socks_port)],
+                ["networksetup", "-setsocksfirewallproxy", iface, "127.0.0.1", str(port)],
                 ["networksetup", "-setsocksfirewallproxystate", iface, "on"],
-                ["networksetup", "-setwebproxy", iface, "127.0.0.1", str(http_port)],
+                ["networksetup", "-setwebproxy", iface, "127.0.0.1", str(port)],
                 ["networksetup", "-setwebproxystate", iface, "on"],
-                ["networksetup", "-setsecurewebproxy", iface, "127.0.0.1", str(http_port)],
+                ["networksetup", "-setsecurewebproxy", iface, "127.0.0.1", str(port)],
                 ["networksetup", "-setsecurewebproxystate", iface, "on"],
             ])
             tasks.append(
@@ -128,9 +130,9 @@ class SystemProxy:
         with ThreadPoolExecutor(max_workers=8) as pool:
             list(pool.map(_run_networksetup, tasks))
         self._enabled = True
-        self._verify(socks_port, http_port)
+        self._verify(port)
 
-    def _verify(self, socks_port, http_port):
+    def _verify(self, port):
         checks = [
             ("-getsocksfirewallproxy", "-setsocksfirewallproxystate"),
             ("-getwebproxy", "-setwebproxystate"),

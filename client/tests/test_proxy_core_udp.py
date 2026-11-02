@@ -226,24 +226,19 @@ class TestMockSocks5UdpServer:
                 "allowInsecure": True,
             },
             "local": {
-                "socks_port": 0,
-                "http_port": 0,
+                "port": 0,
                 "udp": True,
             },
         }
 
         s = sock_mod.socket()
         s.bind(("127.0.0.1", 0))
-        config["local"]["socks_port"] = s.getsockname()[1]
-        s.close()
-        s = sock_mod.socket()
-        s.bind(("127.0.0.1", 0))
-        config["local"]["http_port"] = s.getsockname()[1]
+        config["local"]["port"] = s.getsockname()[1]
         s.close()
 
         proxy = ProxyCore()
         proxy.start(config)
-        actual_socks_port = proxy.socks_port
+        actual_socks_port = proxy.local_port
 
         import time
         time.sleep(0.2)
@@ -367,27 +362,21 @@ class TestUdpDisabled:
                     "allowInsecure": True,
                 },
                 "local": {
-                    "socks_port": 0,
-                    "http_port": 0,
+                    "port": 0,
                     "udp": True,
                 },
             }
 
             s = sock_mod.socket()
             s.bind(("127.0.0.1", 0))
-            socks_port = s.getsockname()[1]
-            s.close()
-            s = sock_mod.socket()
-            s.bind(("127.0.0.1", 0))
-            http_port = s.getsockname()[1]
+            local_port = s.getsockname()[1]
             s.close()
 
-            config["local"]["socks_port"] = socks_port
-            config["local"]["http_port"] = http_port
+            config["local"]["port"] = local_port
 
             proxy = ProxyCore()
             proxy.start(config)
-            actual_socks_port = proxy.socks_port
+            actual_socks_port = proxy.local_port
 
             await asyncio.sleep(0.1)
 
@@ -424,27 +413,21 @@ class TestUdpDisabled:
                     "allowInsecure": True,
                 },
                 "local": {
-                    "socks_port": 0,
-                    "http_port": 0,
+                    "port": 0,
                     "udp": False,
                 },
             }
 
             s = sock_mod.socket()
             s.bind(("127.0.0.1", 0))
-            socks_port = s.getsockname()[1]
-            s.close()
-            s = sock_mod.socket()
-            s.bind(("127.0.0.1", 0))
-            http_port = s.getsockname()[1]
+            local_port = s.getsockname()[1]
             s.close()
 
-            config["local"]["socks_port"] = socks_port
-            config["local"]["http_port"] = http_port
+            config["local"]["port"] = local_port
 
             proxy = ProxyCore()
             proxy.start(config)
-            actual_socks_port = proxy.socks_port
+            actual_socks_port = proxy.local_port
 
             await asyncio.sleep(0.1)
 

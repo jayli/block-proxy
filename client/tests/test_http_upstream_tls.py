@@ -247,10 +247,8 @@ def test_h2_pool_is_created_and_started_for_http_protocol():
         pc._h2_ssl_ctx = proxy_core.ssl.create_default_context()
         pc._verify_cert_pin = None
         pc._cert_bind_enabled = False
-        pc._configured_socks_port = 0
-        pc._configured_http_port = 0
-        pc._socks_port = 0
-        pc._http_port = 0
+        pc._configured_local_port = 0
+        pc._local_port = 0
         await pc._start_local_proxy(allow_port_retry=False)
         try:
             assert pc._h2_pool is not None
@@ -273,10 +271,8 @@ def test_socks5_protocol_does_not_create_h2_pool():
         pc._ssl_ctx = object()
         pc._verify_cert_pin = None
         pc._cert_bind_enabled = False
-        pc._configured_socks_port = 0
-        pc._configured_http_port = 0
-        pc._socks_port = 0
-        pc._http_port = 0
+        pc._configured_local_port = 0
+        pc._local_port = 0
         await pc._start_local_proxy(allow_port_retry=False)
         try:
             assert pc._h2_pool is None
