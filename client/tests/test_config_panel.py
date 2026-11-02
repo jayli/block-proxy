@@ -67,6 +67,34 @@ class FakeContainer:
         return self._window
 
 
+class FakeSwitch:
+    """NSSwitch 替身：只记录 state/enabled，供 setProxyState_ 驱动。"""
+
+    def __init__(self, state=0):
+        self._state = state
+        self.enabled = True
+
+    def state(self):
+        return self._state
+
+    def setState_(self, state):
+        self._state = state
+
+    def setEnabled_(self, enabled):
+        self.enabled = bool(enabled)
+
+
+class FakeLabel:
+    def __init__(self, text=""):
+        self._text = text
+
+    def stringValue(self):
+        return self._text
+
+    def setStringValue_(self, text):
+        self._text = text
+
+
 def _make_panel(config, commit=lambda: None):
     panel = config_panel.ConfigPanel.__new__(config_panel.ConfigPanel)
     panel._config = json.loads(json.dumps(config))
@@ -98,6 +126,10 @@ def _make_panel(config, commit=lambda: None):
     )
     panel._window = FakeWindow(commit)
     panel._container = FakeContainer(panel._window)
+    panel._proxy_switch = FakeSwitch(0)
+    panel._proxy_state_label = FakeLabel("")
+    panel._config_path = None
+    panel._switch_seq = 0
     return panel
 
 
@@ -414,3 +446,97 @@ def test_config_panel_cancel_button_forwards_to_host_window():
     assert "close()" not in cancel_body
     assert "json.dump" not in cancel_body
     assert "apply_to" not in cancel_body
+
+
+# ── 代理连接开关 ────────────────────────────────────────────────
+
+
+def _base_config():
+    return {
+        "server": {
+            "protocol": "socks5",
+            "address": "node.example.com",
+            "port": 8002,
+            "username": "",
+            "password": "",
+            "tls": True,
+            "allowInsecure": True,
+        },
+        "local": {"port": 1080, "udp": True},
+        "tunnel": {"enabled": False, "server_port": 8004},
+        "autostart": False,
+    }
+
+
+def test_switch_change_writes_request_with_incrementing_seq(tmp_path):
+    """拨动开关：写 IPC 请求，seq 每次递增（主进程按 seq 去重）。"""
+    from config import read_proxy_switch
+
+    panel = _make_panel(_base_config())
+    cfg_path = str(tmp_path / "config.json")
+    panel.setConfigPath_(cfg_path)
+
+    panel._proxy_switch.setState_(1)
+    panel.onProxySwitchChange_(panel._proxy_switch)
+    assert read_proxy_switch(cfg_path) == {"on": True, "seq": 1}
+
+    panel._proxy_switch.setState_(0)
+    panel.onProxySwitchChange_(panel._proxy_switch)
+    assert read_proxy_switch(cfg_path) == {"on": False, "seq": 2}
+
+
+def test_switch_change_without_config_path_is_noop(tmp_path):
+    """宿主没注入 config_path（如手动构造面板）时拨开关不写盘不抛。"""
+    panel = _make_panel(_base_config())
+    panel._proxy_switch.setState_(1)
+    panel.onProxySwitchChange_(panel._proxy_switch)  # 不抛异常
+    assert panel._switch_seq == 0
+
+
+def test_set_proxy_state_connected_sets_switch_on_and_message():
+    """已连接：开关置开、文案「（已连接）」、开关可用。"""
+    panel = _make_panel(_base_config())
+    panel.setProxyState_(
+        {"connected": True, "busy": False, "message": "（已连接）", "seq": 1}
+    )
+    assert panel._proxy_switch.state() == 1
+    assert panel._proxy_state_label.stringValue() == "（已连接）"
+    assert panel._proxy_switch.enabled is True
+
+
+def test_set_proxy_state_disconnected_sets_switch_off_and_clears_message():
+    panel = _make_panel(_base_config())
+    panel.setProxyState_({"connected": False, "busy": False, "message": "", "seq": 2})
+    assert panel._proxy_switch.state() == 0
+    assert panel._proxy_state_label.stringValue() == ""
+
+
+def test_set_proxy_state_busy_disables_switch_and_keeps_position():
+    """busy（连接中）：开关禁用防连点，且不按 connected 改位置。"""
+    panel = _make_panel(_base_config())
+    panel._proxy_switch.setState_(1)
+    panel.setProxyState_(
+        {"connected": False, "busy": True, "message": "连接中...", "seq": 3}
+    )
+    assert panel._proxy_switch.enabled is False
+    assert panel._proxy_switch.state() == 1, "busy 时不该按 connected 改开关位置"
+    assert panel._proxy_state_label.stringValue() == "连接中..."
+
+
+def test_set_proxy_state_ignores_non_dict():
+    panel = _make_panel(_base_config())
+    panel.setProxyState_(None)
+    panel.setProxyState_("garbage")
+    assert panel._proxy_state_label.stringValue() == ""
+
+
+def test_proxy_switch_layout_constants():
+    """开关 x 与「端口」输入框左缘对齐（端口 input 的正上方）。"""
+    expected_x = (
+        config_panel.GRID_COL2_X
+        + config_panel.GRID_LABEL_W
+        + config_panel.GRID_LABEL_GAP
+    )
+    assert config_panel.PROXY_SWITCH_X == expected_x == 354
+    # 状态文案可用宽足够放下实测最长文案（77.4px）
+    assert config_panel.PROXY_SWITCH_TEXT_W >= 100

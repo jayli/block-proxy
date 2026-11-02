@@ -284,6 +284,32 @@ def main():
             f"popup_y={pp.origin.y:.1f}",
         )
 
+        # 代理连接开关：与协议 popup 同行，x 与下一行「端口」输入框左缘对齐
+        swf = cp._proxy_switch.frame()
+        check(
+            "config 开关与协议 popup 同行",
+            abs(swf.origin.y - pp.origin.y) < 0.5,
+            f"switch_y={swf.origin.y:.1f} popup_y={pp.origin.y:.1f}",
+        )
+        check(
+            "config 开关 x 与端口输入框左缘对齐",
+            abs(swf.origin.x - spans["port"][0]) < 0.5,
+            f"switch_x={swf.origin.x:.1f} port_x={spans['port'][0]:.1f}",
+        )
+        check(
+            "config 开关不与协议 popup 重叠",
+            swf.origin.x >= pp.origin.x + pp.size.width,
+            f"switch_x={swf.origin.x:.1f} popup_right={pp.origin.x + pp.size.width:.1f}",
+        )
+        stf = cp._proxy_state_label.frame()
+        check(
+            "config 状态文案紧跟开关且不超面板",
+            stf.origin.x >= swf.origin.x + swf.size.width
+            and stf.origin.x + stf.size.width <= pw - 12,
+            f"text_x={stf.origin.x:.1f} right={stf.origin.x + stf.size.width:.1f} "
+            f"switch_right={swf.origin.x + swf.size.width:.1f} panel_w={pw}",
+        )
+
         # 同一行不得重叠，且右边界留出边距
         overlap = []
         overflow = []

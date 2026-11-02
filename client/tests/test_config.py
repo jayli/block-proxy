@@ -6,6 +6,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from config import Config, DEFAULT_CONFIG
+from config import (
+    read_proxy_switch,
+    write_proxy_switch,
+    read_proxy_state,
+    write_proxy_state,
+)
 
 
 class TestConfig:
@@ -246,3 +252,82 @@ class TestConfig:
 
         saved = json.load(open(self.config_path))
         assert saved["server"] is None
+
+
+class TestProxySwitchIpc:
+    """代理开关的跨进程 IPC：两个单写者文件，各自独立读写。"""
+
+    def setup_method(self):
+        self.tmp_dir = tempfile.mkdtemp()
+        self.config_path = os.path.join(self.tmp_dir, "config.json")
+
+    def test_switch_roundtrip(self):
+        assert write_proxy_switch(self.config_path, True, 1)
+        assert read_proxy_switch(self.config_path) == {"on": True, "seq": 1}
+        assert write_proxy_switch(self.config_path, False, 2)
+        assert read_proxy_switch(self.config_path) == {"on": False, "seq": 2}
+
+    def test_switch_missing_file_returns_none(self):
+        assert read_proxy_switch(self.config_path) is None
+
+    def test_switch_corrupt_file_returns_none(self):
+        """fail-closed：文件损坏不能抛，也不能误当成一个请求。"""
+        path = os.path.join(self.tmp_dir, "proxy_switch.json")
+        with open(path, "w") as f:
+            f.write("{not json")
+        assert read_proxy_switch(self.config_path) is None
+
+    def test_switch_partial_file_returns_none(self):
+        """缺 seq 的半成品文件不能当成有效请求（否则会重复触发连/断）。"""
+        path = os.path.join(self.tmp_dir, "proxy_switch.json")
+        with open(path, "w") as f:
+            json.dump({"on": True}, f)
+        assert read_proxy_switch(self.config_path) is None
+
+    def test_switch_leaves_no_tmp_file(self):
+        write_proxy_switch(self.config_path, True, 1)
+        assert not os.path.exists(
+            os.path.join(self.tmp_dir, "proxy_switch.json.tmp")
+        )
+
+    def test_state_roundtrip(self):
+        assert write_proxy_state(
+            self.config_path, connected=True, busy=False, message="（已连接）", seq=7
+        )
+        assert read_proxy_state(self.config_path) == {
+            "connected": True,
+            "busy": False,
+            "message": "（已连接）",
+            "seq": 7,
+        }
+
+    def test_state_missing_file_returns_none(self):
+        assert read_proxy_state(self.config_path) is None
+
+    def test_state_corrupt_file_returns_none(self):
+        path = os.path.join(self.tmp_dir, "proxy_state.json")
+        with open(path, "w") as f:
+            f.write("[1,2,3")
+        assert read_proxy_state(self.config_path) is None
+
+    def test_state_defaults_when_fields_missing(self):
+        """只有 seq 的文件：其余字段给安全默认值（未连接/不忙/无文案）。"""
+        path = os.path.join(self.tmp_dir, "proxy_state.json")
+        with open(path, "w") as f:
+            json.dump({"seq": 3}, f)
+        assert read_proxy_state(self.config_path) == {
+            "connected": False,
+            "busy": False,
+            "message": "",
+            "seq": 3,
+        }
+
+    def test_switch_and_state_are_independent_files(self):
+        """两个单写者文件互不干扰：写一边不会清掉另一边。"""
+        write_proxy_switch(self.config_path, True, 1)
+        write_proxy_state(
+            self.config_path, connected=True, busy=False, message="x", seq=1
+        )
+        write_proxy_switch(self.config_path, False, 2)
+        assert read_proxy_state(self.config_path)["message"] == "x"
+        assert read_proxy_switch(self.config_path)["on"] is False

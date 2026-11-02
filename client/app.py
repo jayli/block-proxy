@@ -19,6 +19,8 @@ from Foundation import (
     NSUserNotificationCenter,
     NSNotificationCenter,
     NSURL,
+    NSTimer,
+    NSRunLoop,
 )
 from AppKit import (
     NSApplication,
@@ -35,7 +37,7 @@ from AppKit import (
     NSWorkspace,
 )
 
-from config import Config
+from config import Config, read_proxy_switch, write_proxy_state
 from settings_window import (
     PANEL_TAB_CONFIG,
     PANEL_TAB_ROUTING,
@@ -73,6 +75,11 @@ def _bundle_path():
 
 def _icon_dir():
     return os.path.join(_bundle_resource_dir(), "icons")
+
+
+# 设置窗口子进程存活期间，主进程轮询面板拨动的代理开关请求的间隔
+# （与面板自己的 panel_request/proxy_state 轮询同频）。
+PROXY_SWITCH_POLL_SEC = 0.3
 
 
 class _MenuDelegate(NSObject):
@@ -117,6 +124,11 @@ class AppController(NSObject):
         self._was_connected = False  # state before sleep
         self._sleep_obs = None
         self._wake_obs = None
+        # 面板代理开关的跨进程 IPC：只在设置窗口子进程存活期间轮询
+        self._switch_poll_timer = None
+        self._last_switch_seq = None
+        self._state_seq = 0
+        self._last_published_state = None
 
         self._build_status_item()
         self._build_menu()
@@ -379,6 +391,8 @@ class AppController(NSObject):
                         "BlockProxyClient", "启动失败", message
                     )
                     self._on_disconnected()
+                    # _on_disconnected 发布的是空文案，这里覆盖成失败提示
+                    self._publish_proxy_state(message="连接失败")
 
                 self._run_on_main(_fail)
                 return
@@ -418,6 +432,7 @@ class AppController(NSObject):
         self.toggle_item.setEnabled_(False)
         self.toggle_item.setTitle_("正在连接...")
         self._set_status_title("正在连接...")
+        self._publish_proxy_state()
 
     def _finish_connecting(self):
         if self._connecting:
@@ -461,6 +476,7 @@ class AppController(NSObject):
         self._refresh_status_title()
         self._update_status_item_visibility()
         self._update_icon()
+        self._publish_proxy_state()
 
     def _disconnect(self):
         # 与 _disconnect_async 一致：置 _disconnecting 让健康检查跳过
@@ -479,6 +495,7 @@ class AppController(NSObject):
         self.toggle_item.setEnabled_(False)
         self.toggle_item.setTitle_("正在关闭代理...")
         self._set_status_title("正在断开...")
+        self._publish_proxy_state()
 
         def _stop():
             try:
@@ -514,6 +531,99 @@ class AppController(NSObject):
         self._set_status_title("未连接")
         self._update_status_item_visibility()
         self._update_icon()
+        self._publish_proxy_state()
+
+    # ------------------------------------------------------------------
+    # 面板代理开关（跨进程 IPC）
+    # ------------------------------------------------------------------
+
+    def _publish_proxy_state(self, message=None):
+        """把当前连接状态写给设置窗口面板（带去重，只在变化时写盘）。
+
+        面板只负责展示：文案由这里的 message 决定（已连接/连接中/失败），
+        开关位置由 connected + busy 驱动。必须在主线程调（_state_seq 无锁）。
+        """
+        busy = self._connecting or self._disconnecting
+        if message is None:
+            if self._connecting:
+                message = "连接中..."
+            elif self._disconnecting:
+                message = "断开中..."
+            elif self.connected:
+                message = "（已连接）"
+            else:
+                message = ""
+        state = (self.connected, busy, message)
+        if state == self._last_published_state:
+            return
+        self._last_published_state = state
+        self._state_seq += 1
+        write_proxy_state(
+            self.config.config_path,
+            connected=self.connected,
+            busy=busy,
+            message=message,
+            seq=self._state_seq,
+        )
+
+    def _seed_switch_seq(self):
+        """开窗时把文件里已有的 seq 记为「已见过」。
+
+        否则上一轮的陈旧请求会在开窗瞬间被当成新请求，意外触发一次
+        连/断代理（与 panel_request 的防陈旧同理）。
+        """
+        request = read_proxy_switch(self.config.config_path)
+        self._last_switch_seq = request.get("seq") if request else None
+
+    def _start_switch_polling(self):
+        """设置窗口存活期间轮询面板的开关请求（窗口退出即停）。
+
+        不给主 app 增加常驻轮询：只在子进程活着的时候跑。
+        """
+        if self._switch_poll_timer is not None:
+            return
+        self._seed_switch_seq()
+        # 立即发布一次当前状态，让面板开窗就把开关摆到真实位置
+        self._last_published_state = None
+        self._publish_proxy_state()
+        timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            PROXY_SWITCH_POLL_SEC, self, "_pollProxySwitch:", None, True
+        )
+        # 菜单跟踪等模式下也要触发，挂到 common modes
+        NSRunLoop.currentRunLoop().addTimer_forMode_(timer, "kCFRunLoopCommonModes")
+        self._switch_poll_timer = timer
+
+    def _stop_switch_polling(self):
+        if self._switch_poll_timer is not None:
+            self._switch_poll_timer.invalidate()
+            self._switch_poll_timer = None
+
+    def _pollProxySwitch_(self, _timer):
+        """面板拨了开关 → 立即连/断代理（与状态栏菜单等价）。"""
+        request = read_proxy_switch(self.config.config_path)
+        if request is None:
+            return
+        seq = request.get("seq")
+        if seq == self._last_switch_seq:
+            return
+        self._last_switch_seq = seq
+        # 正在转换中：忽略（面板此时也把开关禁用了）
+        if self._connecting or self._disconnecting:
+            return
+        if request["on"]:
+            if self.connected:
+                return
+            # 不弹 NSAlert：timer 回调里开模态窗会卡住轮询，改用文案告知
+            if not self.config.is_configured():
+                self._publish_proxy_state(message="请先配置节点")
+                return
+            self._connect()
+        else:
+            if self.connected:
+                self._disconnect_async()
+            else:
+                # 清掉可能残留的提示文案（如「请先配置节点」）
+                self._publish_proxy_state()
 
     # ------------------------------------------------------------------
     # Mode switching
@@ -590,10 +700,15 @@ class AppController(NSObject):
         if bundle_path:
             args.extend(["--app-path", bundle_path])
         self._settings_proc = subprocess.Popen(args)
+        # 子进程存活期间轮询面板的代理开关请求（NSTimer 必须在主线程建，
+        # 而本方法由菜单动作调用，已在主线程）
+        self._start_switch_polling()
 
         def _reload_after():
             self._settings_proc.wait()
             self._settings_proc = None
+            # 窗口已退出：停轮询（timer 只能在主线程 invalidate）
+            self._run_on_main(self._stop_switch_polling)
             old_data = self.config.data.copy()
             self.config.load()
             self._run_on_main(self._update_routing_check)

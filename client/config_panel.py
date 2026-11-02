@@ -25,6 +25,7 @@ from AppKit import (
     NSColor,
     NSOnState,
     NSOffState,
+    NSSwitch,
 )
 
 
@@ -54,6 +55,16 @@ LOCAL_PORT_FIELD_W = 90
 GRID_LABEL_GAP = 6       # 标签与控件的间距
 GRID_FULL_W = GRID_COL_W * 2 + GRID_GAP_X
 RESET_BTN_W = 70
+
+# 代理连接开关：放在协议行右侧，x 与下一行「端口」输入框左缘对齐
+# （= GRID_COL2_X + GRID_LABEL_W + GRID_LABEL_GAP = 354），视觉上就在
+# 端口输入框的正上方。NSSwitch 实测 fittingSize 42x25，取 42x24。
+# 状态文案紧跟开关右侧，可用宽 100px（实测最长文案「请先配置节点」77.4px）。
+PROXY_SWITCH_X = GRID_COL2_X + GRID_LABEL_W + GRID_LABEL_GAP
+PROXY_SWITCH_W = 42
+PROXY_SWITCH_H = 24
+PROXY_SWITCH_TEXT_GAP = 8
+PROXY_SWITCH_TEXT_W = 100
 
 # 标签要比输入框低 2px 才能视觉对齐（实测偏移扫描：-2 时两者文字墨迹
 # 中心差 0.00px，0 时差 +2px）。原因：label frame 高 22px、输入框 frame 高 24px，
@@ -85,12 +96,53 @@ class ConfigPanel(NSObject):
             return None
         self._config = config
         self._save_target = None
+        self._config_path = None
+        # 开关请求的递增序号；主进程按 seq 去重，所以每次拨动必须递增
+        self._switch_seq = 0
         self._build_view()
         return self
 
     def setSaveTarget_(self, target):
         """宿主窗口注册自己，「保存」按钮转发给它。"""
         self._save_target = target
+
+    def setConfigPath_(self, config_path):
+        """宿主窗口告知 config.json 路径：开关请求写同目录的 IPC 文件。"""
+        self._config_path = config_path
+
+    def setProxyState_(self, state):
+        """宿主窗口把主进程发布的连接状态推过来（轮询到新 seq 才调）。
+
+        state: {connected, busy, message}。busy 时禁用开关防连点；
+        非 busy 时把开关位置同步到真实连接状态（从状态栏菜单关掉代理，
+        面板开关也跟着跳）。
+        """
+        if not isinstance(state, dict):
+            return
+        connected = bool(state.get("connected", False))
+        busy = bool(state.get("busy", False))
+        message = state.get("message", "") or ""
+        if not busy:
+            self._proxy_switch.setState_(NSOnState if connected else NSOffState)
+        self._proxy_switch.setEnabled_(not busy)
+        self._proxy_state_label.setStringValue_(message)
+
+    def onProxySwitchChange_(self, sender):
+        """拨动开关：立即写 IPC 请求，主进程轮询到后连/断代理。
+
+        只控制连接状态，用的是已保存的配置（面板里未保存的编辑不生效）：
+        若拨开关顺带保存，「取消」就不再是「什么都不写」了。
+        """
+        if self._config_path is None:
+            return
+        from config import write_proxy_switch
+
+        self._switch_seq += 1
+        write_proxy_switch(
+            self._config_path,
+            sender.state() == NSOnState,
+            self._switch_seq,
+        )
 
     def saveClicked_(self, sender):
         if self._save_target is not None:
@@ -208,6 +260,30 @@ class ConfigPanel(NSObject):
                 selected_idx = idx
         self._protocol_popup.selectItemAtIndex_(selected_idx)
         content.addSubview_(self._protocol_popup)
+
+        # 代理连接开关：协议行右侧，x 与下一行「端口」输入框左缘对齐。
+        # 初始位置由主进程真实连接状态驱动（setProxyState_ 轮询推送），
+        # 这里先按未连接置关；busy 时禁用防连点。
+        self._proxy_switch = NSSwitch.alloc().initWithFrame_(
+            ((PROXY_SWITCH_X, y_pos - 2), (PROXY_SWITCH_W, PROXY_SWITCH_H))
+        )
+        self._proxy_switch.setState_(NSOffState)
+        self._proxy_switch.setTarget_(self)
+        self._proxy_switch.setAction_("onProxySwitchChange:")
+        content.addSubview_(self._proxy_switch)
+
+        # 状态文案：已连接 →「（已连接）」，连接中/失败 → 对应文案，其余空。
+        # 由主进程 message 字段决定，面板只负责展示。
+        self._proxy_state_label = NSTextField.labelWithString_("")
+        self._proxy_state_label.setFrame_(
+            (
+                (PROXY_SWITCH_X + PROXY_SWITCH_W + PROXY_SWITCH_TEXT_GAP, y_pos - 2),
+                (PROXY_SWITCH_TEXT_W, 22),
+            )
+        )
+        self._proxy_state_label.setFont_(ui_font)
+        content.addSubview_(self._proxy_state_label)
+
         y_pos -= row_h + 6
 
         self._fields = {}

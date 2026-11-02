@@ -45,7 +45,7 @@ from AppKit import (
     NSApp,
 )
 
-from config import read_ui_state, write_ui_state
+from config import read_ui_state, write_ui_state, read_proxy_state
 from config_panel import ConfigPanel
 from routing_panel import RoutingPanel
 from super_dns_panel import SuperDnsPanel
@@ -201,6 +201,8 @@ class SettingsWindowController(NSObject):
         # 启动时把文件里已有的 seq 记为「已见过」，避免上一轮的陈旧请求
         # 在开窗瞬间把 Tab 抢走（手动运行本脚本时也走这条路）
         self._last_request_seq = self._read_request_seq()
+        # 主进程连接状态的已见 seq（同样防陈旧状态抢开关）
+        self._last_state_seq = None
         with open(config_path, "r") as f:
             config = json.load(f)
         self._build_panels(config)
@@ -215,6 +217,8 @@ class SettingsWindowController(NSObject):
     def _build_panels(self, config):
         config_panel = ConfigPanel.alloc().initWithConfig_(config)
         config_panel.setSaveTarget_(self)
+        # 开关请求写同目录的 IPC 文件；初始开关位置读主进程最近发布的状态
+        config_panel.setConfigPath_(self._config_path)
         routing_panel = RoutingPanel.alloc().initWithConfig_configPath_(
             config, self._config_path
         )
@@ -228,6 +232,13 @@ class SettingsWindowController(NSObject):
         }
         self._config_panel = config_panel
         self._routing_panel = routing_panel
+
+        # 开窗即按主进程真实连接状态摆开关（主进程在开窗时会发布一次
+        # 当前状态，这里读到的可能是上一轮的，轮询会很快纠正）
+        state = read_proxy_state(self._config_path)
+        if state is not None:
+            self._last_state_seq = state.get("seq")
+            config_panel.setProxyState_(state)
 
     # ------------------------------------------------------------------
     # Window / tab bar
@@ -409,6 +420,7 @@ class SettingsWindowController(NSObject):
             self._request_timer = None
 
     def _pollPanelRequest_(self, _timer):
+        self._poll_proxy_state()
         request = self._read_request()
         if request is None:
             return
@@ -423,6 +435,20 @@ class SettingsWindowController(NSObject):
             self._select_tab(tab)
         self._window.makeKeyAndOrderFront_(None)
         NSApp.activateIgnoringOtherApps_(True)
+
+    def _poll_proxy_state(self):
+        """复用同一个 0.3s 轮询：主进程发布了新连接状态就推给面板。
+
+        按 seq 去重，状态没变就不碰控件（避免每 0.3s 重写一次 label）。
+        """
+        state = read_proxy_state(self._config_path)
+        if state is None:
+            return
+        seq = state.get("seq")
+        if seq == self._last_state_seq:
+            return
+        self._last_state_seq = seq
+        self._config_panel.setProxyState_(state)
 
     # ------------------------------------------------------------------
     # Save

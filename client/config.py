@@ -82,6 +82,83 @@ def write_ui_state(config_path, updates):
     return True
 
 
+# 代理连接开关的跨进程 IPC（设置窗口是独立子进程）：
+# 两个单写者文件，各自只有一个写入方，不做 read-modify-write 合并，
+# 避免 ui_state.json 多写者并发丢更新的问题。
+#   proxy_switch.json  面板写 → 主进程读（{on, seq}）
+#   proxy_state.json   主进程写 → 面板读（{connected, busy, message, seq}）
+PROXY_SWITCH_FILENAME = "proxy_switch.json"
+PROXY_STATE_FILENAME = "proxy_state.json"
+
+
+def _state_file_path(config_path, filename):
+    return os.path.join(os.path.dirname(os.path.abspath(config_path)), filename)
+
+
+def _read_state_file(config_path, filename):
+    try:
+        with open(_state_file_path(config_path, filename), "r") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_state_file(config_path, filename, payload):
+    """整体原子写（单写者文件，不合并旧内容）。"""
+    path = _state_file_path(config_path, filename)
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(payload, f)
+        os.replace(tmp, path)
+    except Exception:
+        return False
+    return True
+
+
+def read_proxy_switch(config_path):
+    """读面板拨动的开关请求；缺失/损坏返回 None。"""
+    data = _read_state_file(config_path, PROXY_SWITCH_FILENAME)
+    if "on" not in data or "seq" not in data:
+        return None
+    return {"on": bool(data["on"]), "seq": data["seq"]}
+
+
+def write_proxy_switch(config_path, on, seq):
+    """面板写开关请求（seq 递增，主进程按 seq 去重）。"""
+    return _write_state_file(
+        config_path, PROXY_SWITCH_FILENAME, {"on": bool(on), "seq": seq}
+    )
+
+
+def read_proxy_state(config_path):
+    """读主进程发布的连接状态；缺失/损坏返回 None。"""
+    data = _read_state_file(config_path, PROXY_STATE_FILENAME)
+    if "seq" not in data:
+        return None
+    return {
+        "connected": bool(data.get("connected", False)),
+        "busy": bool(data.get("busy", False)),
+        "message": data.get("message", "") or "",
+        "seq": data["seq"],
+    }
+
+
+def write_proxy_state(config_path, connected, busy, message, seq):
+    """主进程写连接状态（seq 递增，面板按 seq 去重）。"""
+    return _write_state_file(
+        config_path,
+        PROXY_STATE_FILENAME,
+        {
+            "connected": bool(connected),
+            "busy": bool(busy),
+            "message": message or "",
+            "seq": seq,
+        },
+    )
+
+
 def _force_allow_insecure(data):
     server = data.get("server")
     if isinstance(server, dict) and server.get("allowInsecure") is not True:
