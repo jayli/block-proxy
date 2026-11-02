@@ -76,6 +76,22 @@ LABEL_ALIGN_DY = 2
 # 11pt 等宽实测 479px 刚好放得下，所以完整显示时降到这个字号。
 CERT_PIN_FONT_SIZE = 11
 
+# 地址失焦校验的提示：紧贴在地址输入框后面、与「端口:」同行的一行小字。
+# 地址框右缘 250，到「端口:」文字起点 318.4 共 68.4px 空隙，11pt 的
+# 「格式有误」需 43.7px，放得下且不挤。不动任何控件位置、不改 PANEL_HEIGHT。
+ADDRESS_ERROR_X = 256
+ADDRESS_ERROR_W = 62
+ADDRESS_ERROR_H = 16
+ADDRESS_ERROR_FONT_SIZE = 11
+ADDRESS_ERROR_TEXT = "格式有误"
+
+# 「启用 IPv6」与「启用 TLS」同行。原来放在 276，用户要求再向右移两个汉字
+# 的距离（13pt 汉字宽约 13px，共 26px）→ 302；右缘 302+202=504 仍对齐
+# 栅格右边距。两行合成一行省下的 32px 让 PANEL_HEIGHT 不必变。
+IPV6_CHECK_X = 302
+IPV6_CHECK_W = 202
+IPV6_CHECK_TITLE = "启用 IPv6"
+
 # 指纹/提示行相对「绑定服务器证书」复选框额外下推的距离（逻辑 px）
 CERT_BIND_LABEL_DROP_Y = 4
 
@@ -85,6 +101,33 @@ FOOTER_BTN_H = 28
 FOOTER_BTN_GAP = 12
 
 PROTOCOLS = [("socks5", "socks5"), ("http", "http"), ("tunnel", "隧道(双向)")]
+
+
+class PanelContentView(NSView):
+    """面板容器：点击空白处置空焦点。
+
+    NSView 的 acceptsFirstResponder 默认为 False，所以点空白处时窗口
+    找不到新的 first responder，field editor 会一直留着（实测：点面板
+    空白和点窗口左侧留白后，first responder 仍是 NSTextView）。
+
+    让容器接受首响应，点击就落到它身上：文本框的 field editor 会被
+    卸下（触发 controlTextDidEndEditing_ → 失焦校验），同时把窗口的
+    makeFirstResponder 目标从 field editor 移走。输框、复选框、按钮等
+    子控件自己处理点击，不会走到这里，行为不变。
+    """
+
+    def acceptsFirstResponder(self):
+        return True
+
+    # 无边框视图不参与 Tab 键循环，不要抢成 key view
+    def acceptsFirstResponderForTab(self):
+        return False
+
+    def mouseDown_(self, event):
+        window = self.window()
+        if window is not None and window.firstResponder() is not self:
+            window.makeFirstResponder_(self)
+        objc.super(PanelContentView, self).mouseDown_(event)
 
 
 class ConfigPanel(NSObject):
@@ -175,10 +218,11 @@ class ConfigPanel(NSObject):
             int(server_cfg.get("port", 8002)),
             protocol,
             bool(server_cfg.get("tls", True)),
+            bool(server_cfg.get("ipv6Only", False)),
         )
 
         w, h = PANEL_WIDTH, PANEL_HEIGHT
-        content = NSView.alloc().initWithFrame_(((0, 0), (w, h)))
+        content = PanelContentView.alloc().initWithFrame_(((0, 0), (w, h)))
         self._container = content
 
         # Left column width, control offsets, field width
@@ -288,10 +332,30 @@ class ConfigPanel(NSObject):
 
         self._fields = {}
         # 地址 | 端口：与下面「用户名 | 密码」完全同栅格，
-        # 地址输入框与用户名等宽，端口与密码左对齐
+        # 地址输入框与用户名等宽，端口与密码左对齐。
+        # 栅格宽 150px 放不下完整 IPv6 字面量（64 位 IPv6 在 13pt 下需要
+        # 272.5px，框内只能显示前 ~17 个字符），所以给地址框加悬停提示：
+        # 鼠标停留时用完整值提示，避免「看着像没粘进去」。
         self._fields["address"] = field_row(
             y_pos, "地址:", str(server_cfg.get("address", ""))
         )
+        self._fields["address"].setToolTip_(str(server_cfg.get("address", "")) or None)
+        self._fields["address"].setDelegate_(self)
+        # 地址校验提示：跟「端口:」同行、紧贴在地址输入框后面（空隙实测
+        # 68.4px，11pt「格式有误」需 43.7px），垂直居中于地址框。
+        # 小字号红字，不占额外行高，不影响任何控件位置；只在失焦/保存时出现。
+        self._address_error_label = NSTextField.labelWithString_("")
+        self._address_error_label.setFrame_(
+            (
+                (ADDRESS_ERROR_X, y_pos + (24 - ADDRESS_ERROR_H) / 2),
+                (ADDRESS_ERROR_W, ADDRESS_ERROR_H),
+            )
+        )
+        self._address_error_label.setFont_(
+            NSFont.systemFontOfSize_(ADDRESS_ERROR_FONT_SIZE)
+        )
+        self._address_error_label.setTextColor_(NSColor.systemRedColor())
+        content.addSubview_(self._address_error_label)
         self._fields["port"] = field_row(
             y_pos,
             "端口:",
@@ -346,6 +410,20 @@ class ConfigPanel(NSObject):
         self._tls_cb = checkbox(y_pos, "启用 TLS（需节点服务器支持）", tls_default)
         self._tls_cb.setTarget_(self)
         self._tls_cb.setAction_("onTlsChange:")
+
+        # 启用 IPv6：勾选后只用域名解析出的 AAAA 地址（IPv6）连节点 8002，
+        # 解析不出 AAAA 就报错，不退 IPv4。放在 TLS 右侧同一行 —— 两者都是
+        # 「怎么连节点」的开关，且能省下一整行面板高度（PANEL_HEIGHT 不变）。
+        self._ipv6_cb = NSButton.alloc().initWithFrame_(
+            ((IPV6_CHECK_X, y_pos), (IPV6_CHECK_W, 26))
+        )
+        self._ipv6_cb.setButtonType_(NSButtonTypeSwitch)
+        self._ipv6_cb.setTitle_(IPV6_CHECK_TITLE)
+        self._ipv6_cb.setFont_(ui_font)
+        self._ipv6_cb.setState_(
+            NSOnState if server_cfg.get("ipv6Only", False) else NSOffState
+        )
+        content.addSubview_(self._ipv6_cb)
         y_pos -= row_h + 4
 
         self._insecure_cb = checkbox(y_pos, "允许不安全连接（跳过证书验证）", True)
@@ -454,6 +532,10 @@ class ConfigPanel(NSObject):
             self._tls_cb.setState_(NSOnState)
             self._proxy_private_cb.setState_(NSOffState)
         self._tls_cb.setEnabled_(not enabled)
+        # 隧道（8003）暂不支持强制 IPv6：它的地址来自 tunnel.server_address，
+        # 与 server.address（8002/8002 的 socks5|http）不是同一个主机名，
+        # 这个勾勾只对 socks5|http 生效，所以隧道模式下置灰。
+        self._ipv6_cb.setEnabled_(not enabled)
         self._udp_cb.setEnabled_(not enabled)
         self._proxy_private_cb.setEnabled_(not enabled)
         self._refresh_insecure_hint()
@@ -560,6 +642,89 @@ class ConfigPanel(NSObject):
         win = self._container.window() if self._container else None
         if win is not None:
             win.makeFirstResponder_(None)
+        self._sync_address_tooltip()
+
+    def _sync_address_tooltip(self):
+        """地址框悬停提示跟随当前值：框宽 150px 放不下完整 IPv6 字面量，
+        帖在框内只能看到前 ~17 个字符，悬停看全值才是可靠的确认方式。"""
+        field = getattr(self, "_fields", {}).get("address")
+        if field is None:
+            return
+        value = str(field.stringValue() or "").strip()
+        field.setToolTip_(value or None)
+
+    # ------------------------------------------------------------------
+    # 失焦校验（不在输入过程中干预）
+    # ------------------------------------------------------------------
+
+    def controlTextDidEndEditing_(self, notification):
+        """输入框失去编辑焦点时跑一轮校验；输入过程中不做任何校验。"""
+        field = notification.object()
+        if field is None:
+            return
+        if field is getattr(self, "_fields", {}).get("address"):
+            self._sync_address_tooltip()
+            self._validate_address_field()
+        elif field in (
+            getattr(self, "_fields", {}).get("port"),
+            getattr(self, "_fields", {}).get("port_local"),
+        ):
+            self._validate_port_field(field)
+
+    def _validate_address_field(self):
+        """校验地址：只判定是不是 IPv4 / IPv6 / 域名三者之一。"""
+        from config import validate_node_address
+
+        field = self._fields["address"]
+        error = validate_node_address(
+            field.stringValue(), ipv6_only=bool(self._ipv6_cb.state())
+        )
+        self._set_address_error(error)
+        return error
+
+    def _validate_port_field(self, field):
+        """端口校验失败时只标红 + 悬停提示，不弹窗不阻断（保存前会再拦）。"""
+        from config import validate_port
+
+        is_local = field is self._fields.get("port_local")
+        error = validate_port(field.stringValue(), name="本地端口" if is_local else "端口")
+        field.setTextColor_(
+            NSColor.systemRedColor() if error else NSColor.textColor()
+        )
+        field.setToolTip_(error)
+        return error
+
+    def _set_address_error(self, error):
+        """显示/清除地址格式提示。
+
+        面板上只给一行小字「格式有误」（地址框后空隙只有 68.4px），
+        具体原因（空、IPv4 字面量与 IPv6 开关冲突等）写到悬停提示里。
+        """
+        label = getattr(self, "_address_error_label", None)
+        field = self._fields.get("address")
+        if label is not None:
+            label.setStringValue_(ADDRESS_ERROR_TEXT if error else "")
+        if field is None:
+            return
+        field.setTextColor_(
+            NSColor.systemRedColor() if error else NSColor.textColor()
+        )
+        # 有错时悬停显示具体原因；无错时回到完整地址值（框窄看不全）
+        field.setToolTip_(error or (str(field.stringValue() or "").strip() or None))
+
+    def validate_before_save(self):
+        """保存前再跑一轮（防止用户输入后直接点保存、从未失焦过）。"""
+        errors = []
+        address_error = self._validate_address_field()
+        if address_error:
+            errors.append(address_error)
+        port_error = self._validate_port_field(self._fields["port"])
+        if port_error:
+            errors.append(port_error)
+        local_error = self._validate_port_field(self._fields["port_local"])
+        if local_error:
+            errors.append(local_error)
+        return errors
 
     def apply_to(self, config):
         """把面板当前状态写进 config dict（不落盘、不关窗）。"""
@@ -594,6 +759,18 @@ class ConfigPanel(NSObject):
 
         config["server"]["username"] = self._fields["username"].stringValue()
         config["server"]["password"] = self._fields["password"].stringValue()
+        # 与 local.udp 一样：隧道模式下置灰但仍按控件状态写入，保留用户选择，
+        # 切回 socks5|http 不用重新勾。隧道（8003）当前不读这个开关。
+        ipv6_only = bool(self._ipv6_cb.state())
+        config["server"]["ipv6Only"] = ipv6_only
+
+        current_identity = (
+            config["server"].get("address", ""),
+            int(config["server"].get("port", 8002)),
+            protocol,
+            bool(config["server"].get("tls", True)),
+            bool(ipv6_only),
+        )
         config["local"]["port"] = int(self._fields["port_local"].stringValue() or "1080")
         config["local"]["udp"] = bool(self._udp_cb.state())
         config["local"]["proxy_private"] = bool(self._proxy_private_cb.state())
@@ -603,12 +780,6 @@ class ConfigPanel(NSObject):
             self._cert_bind_cb.state()
         ) if hasattr(self, "_cert_bind_cb") else bool(
             config["server"].get("certBindEnabled", False)
-        )
-        current_identity = (
-            config["server"].get("address", ""),
-            int(config["server"].get("port", 8002)),
-            protocol,
-            bool(config["server"].get("tls", True)),
         )
         identity_changed = current_identity != getattr(
             self, "_initial_server_identity", current_identity

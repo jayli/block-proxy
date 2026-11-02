@@ -17,6 +17,11 @@ server_hostname 传成 IP 字面量时，Python 按 RFC 6066 不发送 SNI 扩�
 - 连接失败 → 强制重新解析一次，用新 IP 再试一轮；仍失败即确定失败，
   在此后的复查周期内不再发起 DoH（连接池每秒重试也只走本地尝试）；
 - 每 1 小时复查一次解析结果，看 IP 是否变化。
+
+强制 IPv6（ipv6Only / 「启用 IPv6（仅 AAAA）」）：只解析 AAAA 且只用
+IPv6 地址连接，解析不出 AAAA 直接报错、绝不退回 IPv4。地址状态按
+「域名 + 地址族」分键缓存，切换开关时不会复用另一个地址族钉住的 IP。
+隧道（8003）暂不走这条路径，见 tunnel_client.py。
 """
 
 import asyncio
@@ -24,7 +29,7 @@ import threading
 import time
 
 from logger import crash_logger
-from doh_resolver import resolve_node_address
+from doh_resolver import invalidate_node_address, resolve_node_address
 
 DEFAULT_CONNECT_TIMEOUT = 10
 
@@ -57,20 +62,32 @@ _node_states = {}
 _state_lock = threading.Lock()
 
 
-def _get_state(host):
+def _state_key(host, ipv6_only):
+    """按「域名 + 地址族」分别缓存。
+
+    不能只按域名：用户勾上/取消「启用 IPv6」后，钉住的可能是另一个
+    地址族的 IP，复用就等于没切。
+    """
+    return (str(host).strip(), bool(ipv6_only))
+
+
+def _get_state(host, ipv6_only=False):
     with _state_lock:
-        return _node_states.get(host)
+        return _node_states.get(_state_key(host, ipv6_only))
 
 
-def _update_state(host, resolved=None, *, checked_at=None, failure_retry_at=None):
+def _update_state(
+    host, resolved=None, *, ipv6_only=False, checked_at=None, failure_retry_at=None
+):
     """就地更新状态，保留未涉及的时间戳（否则每小时复查会被不断推后）。"""
+    key = _state_key(host, ipv6_only)
     with _state_lock:
-        state = _node_states.get(host)
+        state = _node_states.get(key)
         if state is None:
             state = _NodeState(
                 resolved.connect_host, resolved.server_hostname, resolved.all_hosts
             )
-            _node_states[host] = state
+            _node_states[key] = state
         elif resolved is not None:
             state.connect_host = resolved.connect_host
             state.server_hostname = resolved.server_hostname
@@ -87,6 +104,23 @@ def clear_node_states():
     with _state_lock:
         _node_states.clear()
     _sni_suppressed.clear()
+
+
+def forget_node_address_state(host):
+    """丢掉该域名所有地址族的地址状态（并清掉 DoH 缓存）。
+
+    解析失败时用：不带这步，一次「没有 AAAA 记录」/DoH 抽风就会把
+    状态一直钉在失败上，直到下一次每小时复查——用户改了配置或 IPv6
+    刚接通也要等一小时才能对上。
+    """
+    host = str(host).strip()
+    with _state_lock:
+        for key in [k for k in _node_states if k[0] == host]:
+            del _node_states[key]
+    try:
+        invalidate_node_address(host)
+    except Exception:  # 缓存清理失败不影响连接结果
+        pass
 
 
 # 兼容旧命名：按“降级记忆”语义使用
@@ -158,7 +192,7 @@ async def _try_hosts(state, attempt, hosts):
     raise OSError("no node address to try")
 
 
-async def for_each_node_address(host, attempt):
+async def for_each_node_address(host, attempt, ipv6_only=False):
     """选择可用 IP 连接节点，避免持续的 DoH 查询。
 
     - IP 连通：钉住它一直用，不做周期性解析（每小时的复查也只是重新解析
@@ -166,9 +200,13 @@ async def for_each_node_address(host, attempt):
     - 连接失败：强制重新解析一次，用新 IP 再试一轮；仍失败即确定失败，
       此后一小时内不再因此发起 DoH；
     - DoH 本身故障：不反复重试查询，继续用已有 IP。
+
+    ipv6_only=True：只解析 AAAA 且只用 IPv6 地址连；解析不出 AAAA 就
+    报错，绝不退回 IPv4（这是用户的强制 IPv6 开关）。
     """
     host = str(host).strip()
-    state = _get_state(host)
+    ipv6_only = bool(ipv6_only)
+    state = _get_state(host, ipv6_only)
     failure = None
 
     # 1) 未到复查时间且已有 IP：直接复用，不查 DoH
@@ -181,24 +219,31 @@ async def for_each_node_address(host, attempt):
         # 2) 首次，或到点复查：查询一次 DoH
         recheck = state is not None and state.connect_host is not None
         try:
-            resolved = await resolve_node_address(host, force_refresh=recheck)
+            resolved = await resolve_node_address(
+                host, force_refresh=recheck, ipv6_only=ipv6_only
+            )
         except Exception as exc:
             if not recheck:
+                # 解析失败不留状态：否则会一直钉在失败上，直到下一次
+                # 每小时复查（用户改了配置/网络刚有 IPv6 也要白等一小时）
+                forget_node_address_state(host)
                 raise
             # 复查时 DoH 失败：继续用原 IP，并推迟一小时后再查
-            _update_state(host, checked_at=time.monotonic())
+            _update_state(host, ipv6_only=ipv6_only, checked_at=time.monotonic())
             return await attempt(state.connect_host, state.server_hostname)
-        state = _update_state(host, resolved, checked_at=time.monotonic())
+        state = _update_state(
+            host, resolved, ipv6_only=ipv6_only, checked_at=time.monotonic()
+        )
         try:
             return await _try_hosts(state, attempt, resolved.all_hosts)
         except (OSError, asyncio.TimeoutError) as exc:
             failure = exc
 
     # 3) 失败：每小时最多一次“重解析后重试一次”，再失败就是确定失败
-    return await _retry_once(host, attempt, state, failure)
+    return await _retry_once(host, attempt, state, failure, ipv6_only)
 
 
-async def _retry_once(host, attempt, state, failure):
+async def _retry_once(host, attempt, state, failure, ipv6_only=False):
     now = time.monotonic()
     if (
         state.failure_retry_at is not None
@@ -206,12 +251,18 @@ async def _retry_once(host, attempt, state, failure):
     ):
         # 刚刚已经重解析重试过了：不再查 DoH
         raise failure
-    state = _update_state(host, checked_at=now, failure_retry_at=now)
+    state = _update_state(
+        host, ipv6_only=ipv6_only, checked_at=now, failure_retry_at=now
+    )
     try:
-        resolved = await resolve_node_address(host, force_refresh=True)
+        resolved = await resolve_node_address(
+            host, force_refresh=True, ipv6_only=ipv6_only
+        )
     except Exception:
         raise failure
-    state = _update_state(host, resolved, checked_at=time.monotonic())
+    state = _update_state(
+        host, resolved, ipv6_only=ipv6_only, checked_at=time.monotonic()
+    )
     try:
         return await _try_hosts(state, attempt, resolved.all_hosts)
     except (OSError, asyncio.TimeoutError):
@@ -250,20 +301,28 @@ async def _connect_one_ip(
 
 
 async def open_node_connection(
-    server_config, *, use_tls, ssl_ctx=None, timeout=DEFAULT_CONNECT_TIMEOUT
+    server_config,
+    *,
+    use_tls,
+    ssl_ctx=None,
+    timeout=DEFAULT_CONNECT_TIMEOUT,
+    ipv6_only=False,
 ):
     """连接节点，返回 (reader, writer)。
 
-    证书 pin 校验由调用方在拿到 writer 后进行。
+    证书 pin 校验由调用方在拿到 writer 后进行。ipv6_only 默认从
+    server_config 的 ipv6Only 读（调用方不传就跟配置一致）。
     """
     host = str(server_config["address"]).strip()
     port = server_config["port"]
     if not host:
         raise RuntimeError("Node host is empty")
+    if not ipv6_only:
+        ipv6_only = bool(server_config.get("ipv6Only", False))
 
     async def attempt(connect_host, server_hostname):
         return await _connect_one_ip(
             connect_host, port, server_hostname, use_tls, ssl_ctx, timeout
         )
 
-    return await for_each_node_address(host, attempt)
+    return await for_each_node_address(host, attempt, ipv6_only=ipv6_only)

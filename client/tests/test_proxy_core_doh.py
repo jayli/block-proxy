@@ -61,7 +61,7 @@ def test_connect_upstream_socks5_uses_doh_ip_for_node_connection_but_keeps_sni(m
         all_hosts = ["198.51.100.7"]
         is_resolved = True
 
-    async def fake_resolve(host, force_refresh=False):
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
         assert host == "buffer.fun"
         return FakeResolved()
 
@@ -100,7 +100,7 @@ def test_connect_upstream_http_uses_doh_ip_and_tls_when_enabled(monkeypatch):
         all_hosts = ["198.51.100.8"]
         is_resolved = True
 
-    async def fake_resolve(host, force_refresh=False):
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
         return FakeResolved()
 
     async def fake_open_connection(*args, **kwargs):
@@ -258,3 +258,16 @@ def test_forced_local_proxy_recycle_is_serialized(monkeypatch):
     asyncio.run(run_two_recycles())
 
     assert calls == ["stop", "start", "stop", "start"]
+
+
+def test_proxy_core_never_reroutes_ipv6_only_to_false(monkeypatch):
+    """proxy_core 的各条上游路径都不该显式传 ipv6_only=False/True。
+
+    地址族由 open_node_connection 从 server_config["ipv6Only"] 读，这样
+    新增调用点（连接池、健康探测、UDP ASSOCIATE）不会漏传而悄悄回到 IPv4。
+    """
+    import inspect
+
+    source = inspect.getsource(proxy_core)
+    assert "ipv6_only=False" not in source
+    assert "ipv6_only=" not in source

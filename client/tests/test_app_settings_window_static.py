@@ -403,3 +403,20 @@ def test_settings_window_super_dns_tab_describes_domain_list():
     source = source_path.read_text()
 
     assert '"window_title": "Super DNS - 防止 DNS 污染的域名列表"' in source
+
+
+def test_edit_menu_is_pinned_enabled_with_key_monitor_fallback():
+    """Cmd+V 不能依赖菜单 autoenable：accessory 应用失活时菜单项被判不可用，
+    整条按键会被丢弃（实测打字有效、粘贴无效）。"""
+    source_path = Path(__file__).parents[1].joinpath("settings_window.py")
+    source = source_path.read_text()
+
+    # 菜单项固定启用，关掉 autoenable
+    assert "edit_menu.setAutoenablesItems_(False)" in source
+    # 除菜单外还有一层按键兜底
+    assert "NSEventMaskKeyDown" in source
+    assert "addLocalMonitorForEventsMatchingMask_handler_" in source
+    assert '"paste:",' in source or '"paste:"' in source
+    # monitor 必须被持有，否则会被回收导致再次失效
+    assert "_edit_key_monitor = None" in source
+    assert "global _edit_key_monitor" in source

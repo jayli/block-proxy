@@ -224,7 +224,7 @@ class TestTunnelClientLifecycle:
             all_hosts = ['198.51.100.7']
             is_resolved = True
 
-        async def fake_resolve(host, force_refresh=False):
+        async def fake_resolve(host, force_refresh=False, ipv6_only=False):
             assert host == 'buffer.fun'
             return FakeResolved()
 
@@ -265,7 +265,7 @@ class TestTunnelClientLifecycle:
             all_hosts = ['2001:db8::7']
             is_resolved = True
 
-        async def fake_resolve(host, force_refresh=False):
+        async def fake_resolve(host, force_refresh=False, ipv6_only=False):
             return FakeResolved()
 
         monkeypatch.setattr('tunnel_client.websockets.connect', fake_connect)

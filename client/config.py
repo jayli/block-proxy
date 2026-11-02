@@ -1,6 +1,8 @@
 import json
 import os
 import copy
+import ipaddress
+import re
 
 # 节点服务端用自签证书（SAN 只有 localhost/127.0.0.1，见 cert/generator.js），
 # 主机名校验必然失败；且实际身份校验由 certBindEnabled 的证书指纹（TOFU）
@@ -17,6 +19,9 @@ DEFAULT_CONFIG = {
         "password": "",
         "tls": True,
         "allowInsecure": ALLOW_INSECURE_FORCED,
+        # 只用域名解析出的 AAAA 地址（IPv6）连节点。默认关闭：多数网络只有
+        # IPv4，强制 IPv6 会直接连不上。
+        "ipv6Only": False,
         "certBindEnabled": False,
         "certPin": "",
     },
@@ -157,6 +162,65 @@ def write_proxy_state(config_path, connected, busy, message, seq):
             "seq": seq,
         },
     )
+
+
+# 节点地址与本地端口的失焦校验：只在离开输入框（或点保存）时跑一轮，
+# 不在输入过程中干扰。地址只接受三种形式：IPv4 字面量、IPv6 字面量、域名。
+_DOMAIN_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+
+
+def validate_node_address(value, ipv6_only=False):
+    """校验节点地址，返回错误文案；合法返回 None。
+
+    只判定“是不是 IPv4 / IPv6 / 域名”三者之一，不验证可达性。
+    ipv6_only=True 时额外要求地址不能是 IPv4 字面量——那是连接时
+    必然失败、只能在连接里才报的错误，放在失焦时提前告诉用户。
+
+    域名的处理顺序：先试 IP 字面量（否则 `1.2.3.4` 会被当成域名通过），
+    再按 DNS 规则校验长度、标签合法性、不能全是数字。
+    """
+    text = str(value or "").strip()
+    if not text:
+        return "地址不能为空"
+
+    # IPv4 / IPv6 字面量（ipaddress 会拒绝 999.1.1.1、1.2.3 这类式子）
+    try:
+        addr = ipaddress.ip_address(text)
+    except ValueError:
+        addr = None
+    if addr is not None:
+        if ipv6_only and addr.version == 4:
+            return "已启用 IPv6，但该地址是 IPv4；请填域名或 IPv6 地址"
+        return None
+
+    # 域名：长度上限 253，至少两段；标签只允许字母数字与连字符，
+    # 首尾不能是连字符；末段不能全是数字（那是残缺的 IPv4）
+    if len(text) > 253:
+        return "地址过长"
+    labels = text.split(".")
+    if len(labels) < 2:
+        return "请填写 IP 地址或完整域名（如 perf.qzz.io）"
+    for label in labels:
+        if not label or len(label) > 63:
+            return "域名格式不正确"
+        if not _DOMAIN_LABEL_RE.match(label):
+            return "域名格式不正确"
+    if labels[-1].isdigit():
+        return "请填写 IP 地址或完整域名（如 perf.qzz.io）"
+    return None
+
+
+def validate_port(value, *, name="端口"):
+    """校验端口号（1-65535 的纯数字），返回错误文案；合法返回 None。"""
+    text = str(value or "").strip()
+    if not text:
+        return f"{name}不能为空"
+    if not text.isdigit():
+        return f"{name}必须是数字"
+    port = int(text)
+    if not 1 <= port <= 65535:
+        return f"{name}必须在 1-65535 之间"
+    return None
 
 
 def _force_allow_insecure(data):

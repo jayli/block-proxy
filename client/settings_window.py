@@ -68,6 +68,9 @@ DEFAULT_PANEL_TAB = PANEL_TAB_CONFIG
 PANEL_REQUEST_KEY = "panel_request"
 PANEL_REQUEST_POLL_SEC = 0.3
 
+# 编辑快捷键 monitor 的持有者：不持住会被 ARC 回收，Cmd+V 又失效
+_edit_key_monitor = None
+
 # 大 Tab 栏：图标在上、文字在下
 TAB_BAR_HEIGHT = 64
 TAB_ICON_SIZE = 26
@@ -162,7 +165,15 @@ def _center_on_mouse_screen(w, h):
 
 
 def _setup_minimal_menu():
-    """Create a minimal main menu with Edit items so Cmd+C/V/X/A/Z work."""
+    """Create a minimal main menu with Edit items so Cmd+C/V/X/A/Z work.
+
+    菜单项的 enabled 默认由 autoenable 判定（向目标间 targetForAction:）。
+    本客户端是 accessory 应用，从状态栏菜单弹出的设置窗口进程常常不是
+    active，autoenable 会把 Paste/Copy/Cut 判成不可用 —— 此时 Cmd+V 被
+    整个丢弃（实测：打字有效、粘贴无效，targetForAction_ 返回 None）。
+    所以这里关掉 autoenable、固定置 enabled，让系统总是把按键送下去，
+    由当前 first responder（field editor）自己判断能不能粘贴或复制。
+    """
     main_menu = NSMenu.alloc().initWithTitle_("MainMenu")
 
     app_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("", "", "")
@@ -175,15 +186,81 @@ def _setup_minimal_menu():
     edit_menu = NSMenu.alloc().initWithTitle_("Edit")
     edit_item.setSubmenu_(edit_menu)
 
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Undo", "undo:", "z")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Redo", "redo:", "Z")
+    # 固定启用 + 无 target（nil target 沿响应链找到 field editor）
+    edit_menu.setAutoenablesItems_(False)
+    for title, action, key in (
+        ("Undo", "undo:", "z"),
+        ("Redo", "redo:", "Z"),
+    ):
+        item = edit_menu.addItemWithTitle_action_keyEquivalent_(title, action, key)
+        item.setEnabled_(True)
     edit_menu.addItem_(NSMenuItem.separatorItem())
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Cut", "cut:", "x")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Copy", "copy:", "c")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Paste", "paste:", "v")
-    edit_menu.addItemWithTitle_action_keyEquivalent_("Select All", "selectAll:", "a")
+    for title, action, key in (
+        ("Cut", "cut:", "x"),
+        ("Copy", "copy:", "c"),
+        ("Paste", "paste:", "v"),
+        ("Select All", "selectAll:", "a"),
+    ):
+        item = edit_menu.addItemWithTitle_action_keyEquivalent_(title, action, key)
+        item.setEnabled_(True)
 
     NSApp.setMainMenu_(main_menu)
+    edit_menu.setAutoenablesItems_(False)
+    _install_edit_key_monitor()
+
+
+def _install_edit_key_monitor():
+    """兜底：编辑快捷键直接送给 first responder，不经过主菜单。
+
+    accessibility 型（accessory）应用从状态栏菜单弹出的设置窗口进程经常
+    不是 active，此时主菜单的 key equivalent 会被系统跳过，Cmd+V/X/C/A
+    整个丢弃——实测地址框里**打字有效、粘贴无效**，而且菜单项自己还显示
+    为可用，用户完全看不出发生了什么。
+
+    所以除主菜单外，在 NSKeyDown 阶段再拦一层：只处理带 Cmd 的编辑键，
+    且只在 first responder 真的响应该动作时接管（输入框外的 Cmd+W 之类
+    不受影响）。monitor 存在模块级变量里，否则会被回收。
+    """
+    global _edit_key_monitor
+    if _edit_key_monitor is not None:
+        return _edit_key_monitor
+
+    from AppKit import (
+        NSEvent,
+        NSEventMaskKeyDown,
+        NSEventModifierFlagCommand,
+        NSEventModifierFlagFunction,
+        NSEventModifierFlagNumericPad,
+    )
+
+    actions = {
+        "v": "paste:",
+        "c": "copy:",
+        "x": "cut:",
+        "a": "selectAll:",
+        "z": "undo:",
+        "Z": "redo:",
+    }
+    # 功能键与数字小键盘是副作用标记，不参与「是不是纯 Cmd+字母」的判定
+    ignored = NSEventModifierFlagFunction | NSEventModifierFlagNumericPad
+
+    def _handle(event):
+        if event.modifierFlags() & ~ignored != NSEventModifierFlagCommand:
+            return event
+        action = actions.get(str(event.charactersIgnoringModifiers() or ""))
+        if action is None:
+            return event
+        window = event.window() or NSApp.keyWindow()
+        responder = window.firstResponder() if window is not None else None
+        if responder is None or not responder.respondsToSelector_(action):
+            return event
+        NSApp.sendAction_to_from_(action, None, responder)
+        return None  # 已处理，不再往上传
+
+    _edit_key_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+        NSEventMaskKeyDown, _handle
+    )
+    return _edit_key_monitor
 
 
 class SettingsWindowController(NSObject):

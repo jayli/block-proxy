@@ -56,7 +56,7 @@ def resolver(monkeypatch):
             self.calls = []
             self.hosts = ["198.51.100.7"]
 
-        async def __call__(self, host, force_refresh=False):
+        async def __call__(self, host, force_refresh=False, ipv6_only=False):
             self.calls.append((host, force_refresh))
             return _resolved(all_hosts=tuple(self.hosts))
 
@@ -207,7 +207,7 @@ def test_failure_triggers_one_forced_reparse_then_reuses_new_ip(monkeypatch, res
         return "connected"
 
     # 首次解析给 .7（失败），失败后强制重解析给 .9（成功）
-    async def fake_resolve(host, force_refresh=False):
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
         resolver.calls.append((host, force_refresh))
         hosts = ["198.51.100.7"] if not force_refresh else ["198.51.100.9"]
         return _resolved(all_hosts=tuple(hosts))
@@ -246,7 +246,7 @@ def test_all_ips_are_tried_before_failing(monkeypatch, resolver, clock):
         server_hostname = "buffer.fun"
         all_hosts = ["198.51.100.7", "198.51.100.8"]
 
-    async def fake_resolve(host, force_refresh=False):
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
         resolver.calls.append((host, force_refresh))
         return FakeResolved()
 
@@ -269,7 +269,7 @@ def test_all_ips_are_tried_before_failing(monkeypatch, resolver, clock):
 def test_hourly_recheck_keeps_using_old_ip_when_doh_fails(monkeypatch, clock):
     calls = []
 
-    async def fake_resolve(host, force_refresh=False):
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
         calls.append(force_refresh)
         if force_refresh:
             raise RuntimeError("DoH down")
@@ -295,7 +295,7 @@ def test_hourly_recheck_keeps_using_old_ip_when_doh_fails(monkeypatch, clock):
 def test_hourly_recheck_failure_is_not_retried_until_next_hour(monkeypatch, clock):
     calls = []
 
-    async def fake_resolve(host, force_refresh=False):
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
         calls.append((host, force_refresh))
         if force_refresh:
             raise RuntimeError("DoH down")
@@ -318,7 +318,7 @@ def test_hourly_recheck_failure_is_not_retried_until_next_hour(monkeypatch, cloc
 def test_ip_target_without_doh(monkeypatch):
     calls = []
 
-    async def fake_resolve(host, force_refresh=False):
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
         calls.append(host)
         return types.SimpleNamespace(
             connect_host="198.51.100.7",
@@ -380,7 +380,7 @@ def test_cert_pin_verified_on_sni_suppressed_connection(monkeypatch):
     pin_objects = []
     ssl_object = object()
 
-    async def fake_resolve(host, force_refresh=False):
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
         return _resolved(all_hosts=("198.51.100.7",))
 
     async def fake_open_connection(host, port, ssl=None, server_hostname=None):
@@ -418,7 +418,7 @@ def test_cert_pin_verified_on_sni_suppressed_connection(monkeypatch):
 def test_plain_tcp_node_connection_never_sends_sni(monkeypatch):
     calls = []
 
-    async def fake_resolve(host, force_refresh=False):
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
         return _resolved(all_hosts=("198.51.100.8",))
 
     async def fake_open_connection(host, port, ssl=None, server_hostname=None):
@@ -435,3 +435,107 @@ def test_plain_tcp_node_connection_never_sends_sni(monkeypatch):
     )
 
     assert calls == [("198.51.100.8", 8080, None, None)]
+
+
+# ── 强制 IPv6（仅 AAAA） ────────────────────────────────────────
+
+
+def test_ipv6_only_uses_only_aaaa_hosts(monkeypatch):
+    calls = []
+    attempts = []
+
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
+        calls.append((host, ipv6_only))
+        return _resolved(all_hosts=("2001:db8::7", "2001:db8::8"))
+
+    async def attempt(connect_host, server_hostname):
+        attempts.append(connect_host)
+        return "connected"
+
+    monkeypatch.setattr(node_connect, "resolve_node_address", fake_resolve)
+
+    result = asyncio.run(for_each_node_address("buffer.fun", attempt, ipv6_only=True))
+
+    assert result == "connected"
+    assert calls == [("buffer.fun", True)]
+    assert attempts == ["2001:db8::7"]
+
+
+def test_ipv6_and_default_state_are_cached_separately(monkeypatch):
+    """勾选前后不能复用同一个钉住的 IP：地址族不同，key 必须分开。"""
+    calls = []
+
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
+        calls.append(ipv6_only)
+        return _resolved(
+            all_hosts=("2001:db8::7",) if ipv6_only else ("198.51.100.7",)
+        )
+
+    monkeypatch.setattr(node_connect, "resolve_node_address", fake_resolve)
+
+    def attempt_recorder(hosts):
+        async def attempt(connect_host, server_hostname):
+            hosts.append(connect_host)
+            return "connected"
+
+        return attempt
+
+    v4, v6 = [], []
+    asyncio.run(for_each_node_address("buffer.fun", attempt_recorder(v4)))
+    asyncio.run(for_each_node_address("buffer.fun", attempt_recorder(v6), ipv6_only=True))
+    # 再各来一轮：两个地址族都应命中各自的缓存，不再查 DoH
+    asyncio.run(for_each_node_address("buffer.fun", attempt_recorder(v4)))
+    asyncio.run(for_each_node_address("buffer.fun", attempt_recorder(v6), ipv6_only=True))
+
+    assert v4 == ["198.51.100.7", "198.51.100.7"]
+    assert v6 == ["2001:db8::7", "2001:db8::7"]
+    assert calls == [False, True], "两个地址族各只解析一次"
+
+
+def test_ipv6_only_resolution_failure_does_not_poison_cache(monkeypatch):
+    """解析不出 AAAA 时报错，且不能留下「已检查」状态把用户钉在失败上一小时。"""
+    results = ["boom", "ok"]
+    calls = []
+
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
+        calls.append(ipv6_only)
+        if results.pop(0) == "boom":
+            raise RuntimeError("No AAAA records for buffer.fun")
+        return _resolved(all_hosts=("2001:db8::7",))
+
+    monkeypatch.setattr(node_connect, "resolve_node_address", fake_resolve)
+
+    async def attempt(connect_host, server_hostname):
+        return "connected"
+
+    with pytest.raises(RuntimeError, match="No AAAA records"):
+        asyncio.run(for_each_node_address("buffer.fun", attempt, ipv6_only=True))
+
+    # 立刻重试必须重新解析（如果状态被留在「已检查」，这里会直接抛旧失败）
+    assert asyncio.run(for_each_node_address("buffer.fun", attempt, ipv6_only=True)) == "connected"
+    assert calls == [True, True]
+
+
+def test_open_node_connection_reads_ipv6_only_from_config(monkeypatch):
+    seen = []
+
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
+        seen.append(ipv6_only)
+        return _resolved(all_hosts=("2001:db8::7",))
+
+    async def fake_open_connection(host, port, ssl=None, server_hostname=None):
+        seen.append(host)
+        return FakeReader(), FakeWriter(None)
+
+    monkeypatch.setattr(node_connect, "resolve_node_address", fake_resolve)
+    monkeypatch.setattr(node_connect.asyncio, "open_connection", fake_open_connection)
+
+    asyncio.run(
+        node_connect.open_node_connection(
+            {"address": "buffer.fun", "port": 8080, "ipv6Only": True},
+            use_tls=False,
+            timeout=5,
+        )
+    )
+
+    assert seen == [True, "2001:db8::7"]

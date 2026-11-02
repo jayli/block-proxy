@@ -10,12 +10,16 @@ import config_panel
 class FakeField:
     def __init__(self, value):
         self._value = value
+        self.tooltip = None
 
     def stringValue(self):
         return self._value
 
     def commit(self, value):
         self._value = value
+
+    def setToolTip_(self, tip):
+        self.tooltip = tip
 
 
 class FakePopup:
@@ -110,6 +114,7 @@ def _make_panel(config, commit=lambda: None):
         "port_local": FakeField(str(config["local"].get("port", 1080))),
     }
     panel._tls_cb = FakeCheckbox(config["server"].get("tls", True))
+    panel._ipv6_cb = FakeCheckbox(config["server"].get("ipv6Only", False))
     panel._insecure_cb = FakeCheckbox(config["server"].get("allowInsecure", True))
     panel._udp_cb = FakeCheckbox(config["local"].get("udp", True))
     panel._proxy_private_cb = FakeCheckbox(config["local"].get("proxy_private", False))
@@ -123,6 +128,7 @@ def _make_panel(config, commit=lambda: None):
         int(config["server"].get("port", 8002)),
         config["server"].get("protocol", "socks5"),
         bool(config["server"].get("tls", True)),
+        bool(config["server"].get("ipv6Only", False)),
     )
     panel._window = FakeWindow(commit)
     panel._container = FakeContainer(panel._window)
@@ -540,3 +546,196 @@ def test_proxy_switch_layout_constants():
     assert config_panel.PROXY_SWITCH_X == expected_x == 354
     # 状态文案可用宽足够放下实测最长文案（77.4px）
     assert config_panel.PROXY_SWITCH_TEXT_W >= 100
+
+
+# ── 启用 IPv6（仅 AAAA） ────────────────────────────────────────
+
+
+def test_apply_to_persists_ipv6_only_flag():
+    config = _base_config()
+    panel = _make_panel(config)
+    panel._ipv6_cb.setState_(1)
+
+    saved = panel.apply_to(json.loads(json.dumps(config)))
+
+    assert saved["server"]["ipv6Only"] is True
+
+
+def test_apply_to_keeps_ipv6_only_checked_in_tunnel_mode():
+    """隧道模式置灰但保留勾选（与 local.udp 一致）；隧道本身不读这个开关。"""
+    config = _base_config()
+    config["server"]["protocol"] = "tunnel"
+    panel = _make_panel(config)
+    panel._protocol_popup = FakePopup(2)  # tunnel
+    panel._server_port_value = "8002"
+    panel._fields["port"] = FakeField("8003")
+    panel._ipv6_cb.setState_(1)
+
+    saved = panel.apply_to(json.loads(json.dumps(config)))
+
+    assert saved["server"]["ipv6Only"] is True
+
+
+def test_apply_to_clears_cert_pin_when_address_family_changes():
+    """从 IPv4 切到强制 IPv6 会换掉实际连的 IP，指纹绑定必须失效。"""
+    config = _base_config()
+    config["server"]["certBindEnabled"] = True
+    config["server"]["certPin"] = "old-pin"
+    config["server"]["ipv6Only"] = False
+    panel = _make_panel(config)
+    panel._ipv6_cb.setState_(1)
+
+    saved = panel.apply_to(json.loads(json.dumps(config)))
+
+    assert saved["server"]["ipv6Only"] is True
+    assert saved["server"]["certPin"] == ""
+    assert saved["server"]["certPinMismatch"] is False
+
+
+def test_config_panel_ipv6_checkbox_sits_right_of_tls_on_same_row():
+    """复选框在 TLS 右侧同一行，且与 TLS 之间留出明显间隙（用户要求右移）。"""
+    assert config_panel.IPV6_CHECK_TITLE == "启用 IPv6"
+    # TLS 标题实测 172.1px、墨迹从 frame.x+2 起，右缘 250.1；
+    # IPv6 从 302 起 → 间隙 51.9px（原始位置 276 时是 25.9px，右移了两个汉字）
+    tls_ink_right = 76 + 2 + 172.1
+    assert abs((config_panel.IPV6_CHECK_X - tls_ink_right) - 51.9) < 0.5
+    # 右缘对齐栅格右边距，不越界
+    assert (
+        config_panel.IPV6_CHECK_X + config_panel.IPV6_CHECK_W
+        == config_panel.GRID_MARGIN_X + config_panel.GRID_FULL_W
+    )
+    # 标题放得下（「启用 IPv6」实测 56.3px）
+    assert config_panel.IPV6_CHECK_W >= 20 + 56.3
+
+
+def test_config_panel_ipv6_checkbox_disabled_in_tunnel_mode():
+    source = os.path.join(os.path.dirname(__file__), "..", "config_panel.py")
+    text = open(source).read()
+
+    assert "self._ipv6_cb.setEnabled_(not enabled)" in text
+    # 隧道（8003）暂不支持强制 IPv6
+    assert 'server_cfg.get("ipv6Only", False)' in text
+
+
+def test_address_field_hover_tooltip_tracks_full_value():
+    """地址框 150px 放不下完整 IPv6 字面量（需 272.5px），靠悬停提示看全值。"""
+    source = os.path.join(os.path.dirname(__file__), "..", "config_panel.py")
+    text = open(source).read()
+
+    assert 'self._fields["address"].setToolTip_(' in text
+    assert "def _sync_address_tooltip(self):" in text
+    assert 'self._fields["address"].setDelegate_(self)' in text
+    assert "def controlTextDidEndEditing_(self, notification):" in text
+
+
+def test_sync_address_tooltip_writes_current_value():
+    panel = _make_panel(_base_config())
+    panel._fields["address"].commit("2408:8206:2420:12d7:d4b5:d4bc:7674:7bf3")
+
+    panel._sync_address_tooltip()
+
+    assert panel._fields["address"].tooltip == "2408:8206:2420:12d7:d4b5:d4bc:7674:7bf3"
+
+
+def test_sync_address_tooltip_clears_when_empty():
+    panel = _make_panel(_base_config())
+    panel._fields["address"].commit("   ")
+
+    panel._sync_address_tooltip()
+
+    assert panel._fields["address"].tooltip is None
+
+
+def test_apply_to_refreshes_address_tooltip():
+    config = _base_config()
+    panel = _make_panel(config)
+    panel._fields["address"].commit("2001:db8::1")
+
+    panel.apply_to(json.loads(json.dumps(config)))
+
+    assert panel._fields["address"].tooltip == "2001:db8::1"
+
+
+# ── 地址失焦校验 + 点击空白失焦 ────────────────────────────────
+
+
+def test_validate_node_address_accepts_ipv4_ipv6_and_domain():
+    from config import validate_node_address
+
+    for value in (
+        "1.2.3.4",
+        "255.255.255.255",
+        "2001:db8::1",
+        "2408:8206:2420:12d7:d4b5:d4bc:7674:7bf3",
+        "::1",
+        "perf.qzz.io",
+        "a-b.c-d.example.com",
+    ):
+        assert validate_node_address(value) is None, value
+
+
+def test_validate_node_address_rejects_malformed():
+    from config import validate_node_address
+
+    for value in ("", "   ", "999.1.1.1", "1.2.3", "localhost",
+                  "-bad.com", "bad-.com", "example.com.", "a" * 64 + ".com"):
+        assert validate_node_address(value) is not None, value
+
+
+def test_validate_node_address_rejects_ipv4_when_ipv6_only():
+    from config import validate_node_address
+
+    assert validate_node_address("1.2.3.4", ipv6_only=True) is not None
+    assert validate_node_address("2001:db8::1", ipv6_only=True) is None
+    assert validate_node_address("perf.qzz.io", ipv6_only=True) is None
+
+
+def test_validate_port_range():
+    from config import validate_port
+
+    assert validate_port("8002") is None
+    assert validate_port(" 80 ") is None
+    assert validate_port("0") is not None
+    assert validate_port("65536") is not None
+    assert validate_port("abc") is not None
+    assert validate_port("") is not None
+
+
+def test_address_error_label_shows_short_text_only():
+    """面板上只给一行小字「格式有误」，具体原因放悬停提示。"""
+    source = os.path.join(os.path.dirname(__file__), "..", "config_panel.py")
+    text = open(source).read()
+
+    assert 'ADDRESS_ERROR_TEXT = "格式有误"' in text
+    # 贴着地址输入框后面、与端口行同行，不额外占行高
+    assert "ADDRESS_ERROR_X = 256" in text
+    assert "ADDRESS_ERROR_FONT_SIZE = 11" in text
+    assert "y_pos + (24 - ADDRESS_ERROR_H) / 2" in text
+    # 具体原因走 tooltip
+    assert 'field.setToolTip_(error or (str(field.stringValue() or "").strip() or None))' in text
+
+
+def test_address_validation_runs_on_blur_not_while_typing():
+    source = os.path.join(os.path.dirname(__file__), "..", "config_panel.py")
+    text = open(source).read()
+
+    # 输入过程中绝不校验：不得有实时变更回调
+    assert "controlTextDidChange_" not in text
+    # 只在编辑结束（失焦）时跑
+    assert "def controlTextDidEndEditing_(self, notification):" in text
+    assert "self._validate_address_field()" in text
+    # 保存前再兜一轮
+    assert "def validate_before_save(self):" in text
+
+
+def test_panel_container_accepts_first_responder_for_click_to_blur():
+    """点击面板空白处要能失焦：容器必须接受首响应，否则 field editor 一直留着。"""
+    assert issubclass(config_panel.PanelContentView, config_panel.NSView)
+    assert "def acceptsFirstResponder(self):" in open(
+        os.path.join(os.path.dirname(__file__), "..", "config_panel.py")
+    ).read()
+    source = open(os.path.join(os.path.dirname(__file__), "..", "config_panel.py")).read()
+    assert "def acceptsFirstResponderForTab(self):" in source
+    assert "return False" in source
+    assert "def mouseDown_(self, event):" in source
+    assert "window.makeFirstResponder_(self)" in source

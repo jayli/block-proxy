@@ -37,6 +37,13 @@ def _is_ip_address(host):
         return False
 
 
+def _is_ipv6_literal(host):
+    try:
+        return ipaddress.ip_address(str(host).strip()).version == 6
+    except ValueError:
+        return False
+
+
 def _unique_ips(values):
     result = []
     seen = set()
@@ -159,17 +166,49 @@ class NodeAddressResolver:
         self._fresh_cache = {}
         self._stale_cache = {}
 
+    @staticmethod
+    def _cache_key(host, ipv6_only):
+        """缓存按「域名 + 地址族」分键。
+
+        不分开就会串族：强制 IPv6 那次解析出来的 AAAA 结果会被普通查询
+        命中（反之亦然），结果开着 IPv4 却在走 IPv6，或勾了 IPv6 却拿到
+        一个 IPv4。
+        """
+        return (str(host).strip(), bool(ipv6_only))
+
     def clear_fresh_cache(self, host=None):
         if host is None:
             self._fresh_cache.clear()
         else:
-            self._fresh_cache.pop(str(host).strip(), None)
+            key_host = str(host).strip()
+            for key in [k for k in self._fresh_cache if k[0] == key_host]:
+                del self._fresh_cache[key]
 
-    async def resolve(self, host, force_refresh=False):
+    def invalidate(self, host):
+        """连同陈旧缓存一起丢弃，强制下一次解析真的去问 DoH。
+
+        按地址族切换（ipv6Only 开关）时必须用它：陈旧缓存里存的可能是
+        另一个地址族的结果，留着就会在 DoH 短暂故障时把用户又带回 IPv4。
+        """
+        key_host = str(host).strip()
+        for cache in (self._fresh_cache, self._stale_cache):
+            for key in [k for k in cache if k[0] == key_host]:
+                del cache[key]
+
+    async def resolve(self, host, force_refresh=False, ipv6_only=False):
+        """解析节点地址。
+
+        ipv6_only=True 时只查 AAAA 且只返回 IPv6 地址：这是用户的
+        「只用 IPv6 连节点」开关，解析不出 AAAA 就直接报错，绝不退回 IPv4。
+        """
         host = str(host).strip()
         if not host:
             raise RuntimeError("Node host is empty")
         if _is_ip_address(host):
+            if ipv6_only and not _is_ipv6_literal(host):
+                raise RuntimeError(
+                    f"IPv6 is enabled but the node address {host} is an IPv4 literal"
+                )
             return ResolvedNodeAddress(
                 connect_host=host,
                 server_hostname=None,
@@ -177,30 +216,36 @@ class NodeAddressResolver:
                 is_resolved=False,
             )
 
+        key = self._cache_key(host, ipv6_only)
         now = time.monotonic()
-        cached = None if force_refresh else self._fresh_cache.get(host)
+        cached = None if force_refresh else self._fresh_cache.get(key)
         if cached and cached[0] > now:
             return cached[1]
 
         try:
-            ipv4, ipv6 = await asyncio.gather(
-                self._doh.query(host, "A"),
-                self._doh.query(host, "AAAA"),
-            )
-            ips = _unique_ips([*ipv4, *ipv6])
-            if not ips:
-                raise RuntimeError(f"No A/AAAA records for {host}")
+            if ipv6_only:
+                ips = _unique_ips(await self._doh.query(host, "AAAA"))
+                if not ips:
+                    raise RuntimeError(f"No AAAA records for {host}")
+            else:
+                ipv4, ipv6 = await asyncio.gather(
+                    self._doh.query(host, "A"),
+                    self._doh.query(host, "AAAA"),
+                )
+                ips = _unique_ips([*ipv4, *ipv6])
+                if not ips:
+                    raise RuntimeError(f"No A/AAAA records for {host}")
             resolved = ResolvedNodeAddress(
                 connect_host=ips[0],
                 server_hostname=host,
                 all_hosts=ips,
                 is_resolved=True,
             )
-            self._fresh_cache[host] = (now + self._cache_ttl, resolved)
-            self._stale_cache[host] = resolved
+            self._fresh_cache[key] = (now + self._cache_ttl, resolved)
+            self._stale_cache[key] = resolved
             return resolved
         except Exception:
-            stale = self._stale_cache.get(host)
+            stale = self._stale_cache.get(key)
             if stale:
                 return ResolvedNodeAddress(
                     connect_host=stale.connect_host,
@@ -215,5 +260,12 @@ class NodeAddressResolver:
 _default_resolver = NodeAddressResolver()
 
 
-async def resolve_node_address(host, force_refresh=False):
-    return await _default_resolver.resolve(host, force_refresh=force_refresh)
+async def resolve_node_address(host, force_refresh=False, ipv6_only=False):
+    return await _default_resolver.resolve(
+        host, force_refresh=force_refresh, ipv6_only=ipv6_only
+    )
+
+
+def invalidate_node_address(host):
+    """丢弃该域名的地址缓存（含陈旧缓存），强制重新解析。"""
+    _default_resolver.invalidate(host)

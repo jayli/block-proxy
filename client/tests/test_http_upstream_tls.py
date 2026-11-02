@@ -83,7 +83,7 @@ def test_connect_upstream_http_uses_tls_when_tls_enabled(monkeypatch):
         all_hosts = ["198.51.100.8"]
         is_resolved = True
 
-    async def fake_resolve(host, force_refresh=False):
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
         return FakeResolved()
 
     async def fake_open_connection(*args, **kwargs):
@@ -117,7 +117,7 @@ def test_connect_upstream_http_stays_plain_tcp_when_tls_disabled(monkeypatch):
         all_hosts = ["198.51.100.8"]
         is_resolved = True
 
-    async def fake_resolve(host, force_refresh=False):
+    async def fake_resolve(host, force_refresh=False, ipv6_only=False):
         return FakeResolved()
 
     async def fake_open_connection(*args, **kwargs):

@@ -167,3 +167,120 @@ def test_node_resolver_raises_when_domain_has_no_records():
 
     with pytest.raises(RuntimeError, match="No A/AAAA records"):
         asyncio.run(resolver.resolve("buffer.fun"))
+
+
+# ── 强制 IPv6（仅 AAAA） ────────────────────────────────────────
+
+
+def test_resolver_ipv6_only_queries_aaaa_only_and_returns_ipv6():
+    calls = []
+
+    async def query(domain, record_type):
+        calls.append(record_type)
+        if record_type == "A":
+            return ["198.51.100.7"]
+        if record_type == "AAAA":
+            return ["2001:db8::7"]
+        return []
+
+    resolver = NodeAddressResolver(DohResolver(query_func=query))
+
+    result = asyncio.run(resolver.resolve("buffer.fun", ipv6_only=True))
+
+    assert calls == ["AAAA"], "开启 IPv6 后不该再查 A 记录"
+    assert result.connect_host == "2001:db8::7"
+    assert result.all_hosts == ["2001:db8::7"]
+    assert result.server_hostname == "buffer.fun"
+
+
+def test_resolver_ipv6_only_raises_when_no_aaaa_record():
+    async def query(domain, record_type):
+        return ["198.51.100.7"] if record_type == "A" else []
+
+    resolver = NodeAddressResolver(DohResolver(query_func=query))
+
+    with pytest.raises(RuntimeError, match="No AAAA records"):
+        asyncio.run(resolver.resolve("buffer.fun", ipv6_only=True))
+
+
+def test_resolver_ipv6_only_rejects_ipv4_literal():
+    async def query(domain, record_type):
+        raise AssertionError("IP literal must not trigger DoH")
+
+    resolver = NodeAddressResolver(DohResolver(query_func=query))
+
+    with pytest.raises(RuntimeError, match="IPv4 literal"):
+        asyncio.run(resolver.resolve("198.51.100.7", ipv6_only=True))
+
+
+def test_resolver_ipv6_only_accepts_ipv6_literal():
+    async def query(domain, record_type):
+        raise AssertionError("IP literal must not trigger DoH")
+
+    resolver = NodeAddressResolver(DohResolver(query_func=query))
+
+    result = asyncio.run(resolver.resolve("2001:db8::9", ipv6_only=True))
+
+    assert result.connect_host == "2001:db8::9"
+    assert result.is_resolved is False
+
+
+def test_resolver_invalidate_drops_stale_cache_too():
+    """按地址族切换时要连陈旧缓存一起丢，否则 DoH 抖动时会退回旧地址族。"""
+    state = {"fail": False}
+
+    async def query(domain, record_type):
+        if state["fail"]:
+            raise RuntimeError("DoH down")
+        return ["198.51.100.7"]
+
+    resolver = NodeAddressResolver(DohResolver(query_func=query))
+    asyncio.run(resolver.resolve("buffer.fun"))
+
+    resolver.invalidate("buffer.fun")
+    state["fail"] = True
+
+    with pytest.raises(RuntimeError, match="DoH down"):
+        asyncio.run(resolver.resolve("buffer.fun"))
+
+
+def test_resolver_cache_is_per_address_family():
+    """强制 IPv6 与普通查询的缓存必须分开，否则会串族（实测踩到）。"""
+    calls = []
+
+    async def query(domain, record_type):
+        calls.append(record_type)
+        if record_type == "A":
+            return ["198.51.100.7"]
+        if record_type == "AAAA":
+            return ["2001:db8::7"]
+        return []
+
+    resolver = NodeAddressResolver(DohResolver(query_func=query))
+
+    v6 = asyncio.run(resolver.resolve("buffer.fun", ipv6_only=True))
+    v4 = asyncio.run(resolver.resolve("buffer.fun"))
+
+    assert v6.all_hosts == ["2001:db8::7"], "勾选 IPv6 只能拿到 AAAA"
+    assert v4.all_hosts == ["198.51.100.7", "2001:db8::7"], "普通模式仍要 A+AAAA"
+    assert calls == ["AAAA", "A", "AAAA"]
+
+
+def test_resolver_stale_cache_is_per_address_family():
+    """DoH 故障时陈旧缓存也不能跨地址族回退。"""
+    state = {"fail": False}
+
+    async def query(domain, record_type):
+        if state["fail"]:
+            raise RuntimeError("DoH down")
+        return ["198.51.100.7"] if record_type == "A" else []
+
+    resolver = NodeAddressResolver(DohResolver(query_func=query))
+    asyncio.run(resolver.resolve("buffer.fun"))
+
+    state["fail"] = True
+    resolver.clear_fresh_cache()
+
+    # 只有 IPv4 的陈旧结果，不能拿来喂 ipv6_only 请求
+    with pytest.raises(RuntimeError, match="DoH down"):
+        asyncio.run(resolver.resolve("buffer.fun", ipv6_only=True))
