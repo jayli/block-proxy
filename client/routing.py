@@ -1,6 +1,7 @@
 """
 Routing engine for outbound traffic splitting.
-Supports geosite (domain) and geoip (IP CIDR) rules.
+Supports geosite (domain), geoip (IP CIDR by country) and ip (custom IPv4
+address / CIDR) rules.
 """
 
 import ipaddress
@@ -22,15 +23,33 @@ def _geodata_dir():
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "geodata")
 
 
+def _normalize_ip_cidr(value):
+    """Normalize a single IPv4 address or CIDR to a "network/prefix" string.
+
+    "149.154.0.0/16" stays as-is, a bare "149.154.0.0" becomes
+    "149.154.0.0/32", and host bits are cleared ("10.0.0.7/24" ->
+    "10.0.0.0/24"). IPv6 is not supported yet; returns None for anything
+    that is not a valid IPv4 address or network.
+    """
+    try:
+        net = ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        return None
+    if net.version != 4:
+        return None
+    return str(net)
+
+
 def parse_rules(rule_strings):
     """Parse a list of rule strings into structured rule tuples.
 
-    Each rule string format: "domain:pattern", "geosite:tag", or "geoip:code"
-    (with optional "!" for negation on geoip/geosite).
+    Each rule string format: "domain:pattern", "geosite:tag", "geoip:code",
+    or "ip:address" / "ip:cidr" (with optional "!" for negation on
+    geosite/geoip/ip).
     Returns: [(type, code, negated), ...]
-      type: "domain", "geosite", or "geoip"
-      code: the value after colon (lowercase)
-      negated: bool (True if "!" prefix, only for geosite/geoip)
+      type: "domain", "geosite", "geoip", or "ip"
+      code: the value after colon (lowercase; normalized CIDR for "ip")
+      negated: bool (True if "!" prefix, only for geosite/geoip/ip)
 
     Invalid or empty lines are silently skipped.
     """
@@ -48,7 +67,7 @@ def parse_rules(rule_strings):
         prefix = prefix.lower().strip()
         code = code.strip().lower()
 
-        if prefix not in ("domain", "geosite", "geoip"):
+        if prefix not in ("domain", "geosite", "geoip", "ip"):
             logger.warning("Unknown rule type: %s", prefix)
             continue
         if not code:
@@ -62,6 +81,14 @@ def parse_rules(rule_strings):
         if not code:
             logger.warning("Empty code after negation: %s", line)
             continue
+
+        if prefix == "ip":
+            # Validate at parse time: a typo must not silently become a rule
+            # that never matches (and a negated typo would match everything).
+            code = _normalize_ip_cidr(code)
+            if code is None:
+                logger.warning("Invalid ip rule (need IPv4 address or CIDR): %s", line)
+                continue
 
         rules.append((prefix, code, negated))
     return rules
@@ -133,6 +160,18 @@ class RoutingEngine:
                     pass
         return False
 
+    @staticmethod
+    def _match_ip(host, cidr):
+        """Check if an IP address belongs to a custom "ip:" network.
+        Non-IP hosts and unparsable values return False.
+        """
+        try:
+            addr = ipaddress.ip_address(host)
+            net = ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+            return False
+        return addr.version == net.version and addr in net
+
     def _match_geoip(self, host, code):
         """Check if an IP address matches geoip CIDR ranges for the given country code.
         Returns False if geoip data is not available (safe fallback).
@@ -156,7 +195,8 @@ class RoutingEngine:
         Priority: rules matching the default action take priority.
           default=direct → direct_rules → proxy_rules → default
           default=proxy  → proxy_rules  → direct_rules → default
-        Domain targets only match geosite rules; IP targets only match geoip rules.
+        Domain targets only match domain/geosite rules; IP targets only match
+        geoip/ip rules.
 
         Safety: when geodata is unavailable, negated rules do NOT match
         (prevents catastrophic mis-routing on data load failure).
@@ -180,6 +220,10 @@ class RoutingEngine:
                             logger.warning("Unknown geosite tag: %s", code)
                         continue
                     matched = self._match_geosite(host, code)
+                elif rule_type == "ip":
+                    if is_domain:
+                        continue
+                    matched = self._match_ip(host, code)
                 elif rule_type == "geoip":
                     if is_domain:
                         continue

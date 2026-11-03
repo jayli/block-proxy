@@ -52,6 +52,47 @@ class TestParseRules:
         assert rules[1] == ("geoip", "us", False)
 
 
+class TestParseIpRules:
+    """ip:规则——自定义 IPv4 地址 / 网段（单个 IP 等价 /32）。"""
+
+    def test_single_ip(self):
+        assert parse_rules(["ip:149.154.10.20"]) == [
+            ("ip", "149.154.10.20/32", False)
+        ]
+
+    def test_cidr(self):
+        assert parse_rules(["ip:149.154.0.0/16"]) == [
+            ("ip", "149.154.0.0/16", False)
+        ]
+
+    def test_host_bits_cleared(self):
+        # 10.0.0.7/24 是某网段内的主机地址，归一化成网络地址
+        assert parse_rules(["ip:10.0.0.7/24"]) == [("ip", "10.0.0.0/24", False)]
+
+    def test_negated(self):
+        assert parse_rules(["ip:!91.108.0.0/16"]) == [
+            ("ip", "91.108.0.0/16", True)
+        ]
+
+    def test_case_insensitive_prefix(self):
+        assert parse_rules(["IP:8.8.8.8"]) == [("ip", "8.8.8.8/32", False)]
+
+    def test_invalid_values_skipped(self):
+        for bad in [
+            "ip:",
+            "ip:!" ,
+            "ip:999.1.1.1",
+            "ip:not-an-ip",
+            "ip:1.2.3.4/33",
+            "ip:1.2.3.0/abc",
+        ]:
+            assert parse_rules([bad]) == [], f"should be skipped: {bad}"
+
+    def test_ipv6_skipped(self):
+        assert parse_rules(["ip:2001:db8::/32"]) == []
+        assert parse_rules(["ip:::1"]) == []
+
+
 class TestMatchGeosite:
     def _make_engine(self, geosite_data=None):
         """Create a RoutingEngine with mock geosite data."""
@@ -144,6 +185,31 @@ class TestMatchGeoip:
     def test_invalid_ip_returns_false(self):
         engine = self._make_engine({"cn": [ipaddress.ip_network("1.2.3.0/24")]})
         assert engine._match_geoip("not-an-ip", "cn") is False
+
+
+class TestMatchIp:
+    def test_ip_in_cidr(self):
+        assert RoutingEngine._match_ip("149.154.5.5", "149.154.0.0/16") is True
+        assert RoutingEngine._match_ip("149.154.0.0", "149.154.0.0/16") is True
+        assert RoutingEngine._match_ip("149.154.255.255", "149.154.0.0/16") is True
+        assert RoutingEngine._match_ip("149.155.0.1", "149.154.0.0/16") is False
+
+    def test_single_ip_rule_matches_only_itself(self):
+        assert RoutingEngine._match_ip("91.108.1.2", "91.108.1.2/32") is True
+        assert RoutingEngine._match_ip("91.108.1.3", "91.108.1.2/32") is False
+
+    def test_24_prefix(self):
+        assert RoutingEngine._match_ip("95.161.76.1", "95.161.76.0/24") is True
+        assert RoutingEngine._match_ip("95.161.77.1", "95.161.76.0/24") is False
+
+    def test_non_ip_host_returns_false(self):
+        assert RoutingEngine._match_ip("example.com", "149.154.0.0/16") is False
+
+    def test_ipv6_target_does_not_match_ipv4_rule(self):
+        assert RoutingEngine._match_ip("::1", "127.0.0.0/8") is False
+
+    def test_invalid_cidr_returns_false(self):
+        assert RoutingEngine._match_ip("1.2.3.4", "not-a-cidr") is False
 
 
 class TestResolve:
@@ -283,6 +349,50 @@ class TestResolve:
             geosite_data={"cn": [("domain", "baidu.com")]},
         )
         assert engine.resolve("google.com", is_domain=True) == "proxy"  # unknown tag → negated must NOT match
+
+    def test_ip_rule_routes_proxy(self):
+        engine = self._make_engine(
+            proxy_rules=parse_rules(["ip:149.154.0.0/16"]),
+            default="direct",
+        )
+        assert engine.resolve("149.154.5.5", is_domain=False) == "proxy"
+        assert engine.resolve("149.155.0.1", is_domain=False) == "direct"
+
+    def test_ip_rule_routes_direct(self):
+        engine = self._make_engine(
+            direct_rules=parse_rules(["ip:8.8.8.8"]),
+            default="proxy",
+        )
+        assert engine.resolve("8.8.8.8", is_domain=False) == "direct"
+        assert engine.resolve("8.8.4.4", is_domain=False) == "proxy"
+
+    def test_ip_rule_skipped_for_domain_target(self):
+        engine = self._make_engine(
+            direct_rules=parse_rules(["ip:149.154.0.0/16"]),
+            default="proxy",
+        )
+        assert engine.resolve("149.154.5.5", is_domain=True) == "proxy"
+
+    def test_negated_ip_rule(self):
+        engine = self._make_engine(
+            proxy_rules=parse_rules(["ip:!149.154.0.0/16"]),
+            default="direct",
+        )
+        assert engine.resolve("149.154.5.5", is_domain=False) == "direct"  # 命中 → 取反 → 不匹配
+        assert engine.resolve("149.155.0.1", is_domain=False) == "proxy"  # 不命中 → 取反 → 匹配
+
+    def test_ip_rule_needs_no_geodata(self):
+        engine = RoutingEngine(
+            {
+                "enabled": True,
+                "direct_rules": [],
+                "proxy_rules": ["ip:149.154.0.0/16", "ip:91.108.0.0/16"],
+                "default": "direct",
+            },
+            "/nonexistent",
+        )
+        assert engine._loader is None  # 不触发 GeodataLoader
+        assert engine.resolve("91.108.1.1", is_domain=False) == "proxy"
 
 
 import asyncio
@@ -458,6 +568,17 @@ class TestValidateRules:
         errors = validate_rules("faketype:value", "")
         assert len(errors) == 1
         assert "未知规则类型" in errors[0]
+
+    def test_valid_ip_rules(self):
+        cases = ["ip:149.154.0.0/16", "ip:8.8.8.8", "ip:95.161.76.0/24", "ip:!10.0.0.0/8"]
+        for case in cases:
+            assert validate_rules(case, "") == [], f"unexpected error for {case}"
+
+    def test_invalid_ip_rules(self):
+        for case in ["ip:999.1.1.1", "ip:not-an-ip", "ip:1.2.3.4/33", "ip:2001:db8::/32"]:
+            errors = validate_rules(case, "")
+            assert len(errors) == 1, f"expected error for: {case}"
+            assert "IPv4" in errors[0], f"got: {errors[0]}"
 
     def test_empty_code(self):
         errors = validate_rules("domain:", "")

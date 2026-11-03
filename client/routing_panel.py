@@ -83,7 +83,7 @@ def validate_rules(direct_text, proxy_text, geosite_tags=None, geoip_codes=None)
     """Validate all rules from both tabs.
 
     Checks: format (prefix:code), unknown rule types, empty codes,
-    domain validity, and geosite/geoip tag existence.
+    domain validity, ip address/CIDR validity, and geosite/geoip tag existence.
 
     For tag existence checks uses `geosite_tags`/`geoip_codes` sets
     (loaded from pre-generated geodata_tags.json at build time).
@@ -111,10 +111,10 @@ def validate_rules(direct_text, proxy_text, geosite_tags=None, geoip_codes=None)
         prefix = prefix.lower().strip()
         code = code.strip()
 
-        if prefix not in ("domain", "geosite", "geoip"):
+        if prefix not in ("domain", "geosite", "geoip", "ip"):
             errors.append(
                 f"[{source}] 第 {line_num} 行: 未知规则类型 '{prefix}'，"
-                f"仅支持 domain / geosite / geoip"
+                f"仅支持 domain / geosite / geoip / ip"
             )
             continue
 
@@ -146,6 +146,16 @@ def validate_rules(direct_text, proxy_text, geosite_tags=None, geoip_codes=None)
                         f"[{source}] 第 {line_num} 行: "
                         f"geosite 标签 '{actual_code}' 在 geosite.dat 中不存在"
                     )
+        elif prefix == "ip":
+            try:
+                net = ipaddress.ip_network(actual_code, strict=False)
+            except ValueError:
+                net = None
+            if net is None or net.version != 4:
+                errors.append(
+                    f"[{source}] 第 {line_num} 行: "
+                    f"'{actual_code}' 不是有效的 IPv4 地址或网段"
+                )
         elif prefix == "geoip":
             if geoip_codes is not None:
                 if actual_code not in geoip_codes:
@@ -297,7 +307,11 @@ class RoutingPanel(NSObject):
 
         hint_y = 12
         hint_h = 14
-        for line in ["domain:example.com", "geosite:cn", "geoip:!cn     # 开头为注释"]:
+        for line in [
+            "domain:example.com",
+            "ip:149.154.0.0/16  ip:8.8.8.8",
+            "geosite:cn / geoip:!cn   # 开头为注释",
+        ]:
             hint = NSTextField.labelWithString_(line)
             hint.setFont_(NSFont.systemFontOfSize_(10))
             hint.setTextColor_(NSColor.disabledControlTextColor())
