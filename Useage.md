@@ -641,3 +641,7 @@ MITM 作为 服务中心，外围连接节点起点，远程办公/代理回家�
 - 443 端口
 - DPI 伪装
 - 合法 TLS 证书
+
+### Q：client 常用分流
+
+<https://gist.github.com/jayli/28a796f11587a34065fc3ff20b610752>
