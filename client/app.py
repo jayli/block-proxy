@@ -176,13 +176,12 @@ class AppController(NSObject):
         menu = NSMenu.alloc().init()
         menu.setAutoenablesItems_(False)
 
-        # 第一项：连接状态。已连接时可点击，但点击不做任何动作（不弹日志面板）；
+        # 第一项：连接状态。点击打开节点配置（日志另有「查看日志...」项）；
         # 未连接时整项与下方分隔线一起隐藏，第一项直接是「启动代理」。
         # 可直接用原生菜单项：字体/颜色/左对齐由 AppKit 按普通菜单项渲染，
-        # 不再需要自定义 view。action 传 None：菜单关闭 autoenablesItems，
-        # 无 action 的项仍可点击，只是点了什么也不发生。
+        # 不再需要自定义 view。
         self.status_item = self._add_menu_item(
-            menu, self._status_title_connected(), None
+            menu, self._status_title_connected(), "openConfig:"
         )
         self.status_separator = NSMenuItem.separatorItem()
         menu.addItem_(self.status_separator)
@@ -271,7 +270,7 @@ class AppController(NSObject):
     def _set_status_title(self, text):
         """更新状态项文字（原生菜单项，字体/颜色/左对齐由 AppKit 按普通菜单项渲染）。
 
-        状态项点击不触发任何动作，文案与点击行为完全解耦。
+        点击行为固定在 _build_menu 里绑定（打开节点配置），改文案不会动它。
         """
         self.status_item.setTitle_(text)
 

@@ -1,4 +1,4 @@
-"""状态栏「已连接」文案：勾选 TLS 时要标出 tls；状态项点击不再弹日志面板。
+"""状态栏「已连接」文案：勾选 TLS 时要标出 tls；状态项点击打开节点配置。
 
 app.py 依赖 PyObjC，测试里不能直接 import，沿用同目录既有做法：
 从源码 AST 取出目标方法，拼成一个探针类再 exec，断言真实输出字符串。
@@ -73,8 +73,8 @@ def test_connected_title_without_tls_unchanged():
     assert _title("tunnel", True, "44ms") == "隧道已连接 - 44ms"
 
 
-def test_status_item_click_does_nothing():
-    """状态项仍可点击，但不再绑 action（点击不弹日志面板）。"""
+def test_status_item_click_opens_config_panel():
+    """状态项可点击，点一下打开节点配置面板（与「节点配置...」同一条路径）。"""
     build = _method(_class_node(_app_tree(), "AppController"), "_build_menu")
     status_calls = [
         node
@@ -89,6 +89,6 @@ def test_status_item_click_does_nothing():
     ]
     assert len(status_calls) == 1, "没找到状态项构造"
     action = status_calls[0].args[2] if len(status_calls[0].args) >= 3 else None
-    assert isinstance(action, ast.Constant) and action.value is None, (
-        "状态项仍绑定了点击动作：点一下会弹开日志面板"
+    assert isinstance(action, ast.Constant) and action.value == "openConfig:", (
+        f"状态项点击动作不是打开节点配置：{action!r}"
     )
