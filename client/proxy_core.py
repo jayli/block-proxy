@@ -108,6 +108,10 @@ LOCAL_PROXY_FD_RECYCLE_THRESHOLD = 250
 # 端口释放只依赖 close()（同步关闭 listen socket），超时后直接丢弃
 # server 对象，连接由各自 handler 自行收尾。
 LOCAL_PROXY_STOP_WAIT_TIMEOUT = 3.0
+# 取消遗留连接协程的等待上限。与下面的 _stop_local_proxy_locked 上限相加
+# 必须留在 stop() 外层 future 的超时（LOCAL_PROXY_STOP_WAIT_TIMEOUT * 2 + 2）
+# 之内，否则正常排障会变成 “proxy shutdown timed out”。
+LOCAL_PROXY_DRAIN_TIMEOUT = 1.5
 # recycle 整体（断开活跃连接 + 重建 listener）的最长时限，超时则协程
 # 自毁（内部 wait_for），杜绝僵尸协程在旧事件循环上继续操作 server
 # 引用（跨 loop RuntimeError / EADDRINUSE 端口漂移）。
@@ -1816,6 +1820,16 @@ class ProxyCore:
                 pass
         self._recycle_task = None
         try:
+            # 先幂等关掉 listen socket：否则 drain 期间还会 accept 新连接，
+            # 新协程又不在待取消的名单里。
+            self._close_listen_sockets()
+            # loop 上遗留的连接协程必须在 loop.close() 之前清掉，否则只能
+            # 等下一次 GC 去 close() 它们 —— 那时 loop 已关闭，协程收尾会
+            # 往关闭的 loop call_soon（asyncio 的 bare except 把 GeneratorExit
+            # 换成 "RuntimeError: Event loop is closed"），崩溃报告里 Nuitka
+            # 编译版的协程终结器在异常回溯链的重复 close 里段错误闪退
+            # （2026-11-05 13:19:58 保存分流规则触发重连的现场）。
+            await self._drain_pending_tasks()
             # 整体限时：等待锁被僵尸协程释放 + 关闭 server 收尾，
             # 超时强制关 socket 释放端口，保证 stop() 必然快速完成。
             # 正常路径在 force_abort 下亚秒完成，此超时只兜底异常。
@@ -1832,6 +1846,31 @@ class ProxyCore:
                     pass
             self._server_sockets = []
             self._local_server = None
+
+    async def _drain_pending_tasks(self):
+        """取消 loop 上遗留的协程并等它们收尾。
+
+        关 listener 只能挡住新连接：已经 accept 的 _handle_local 还挂在
+        上游建连 / handshake 的 await 上，既不属于 server，也不在
+        _active_transports 的收尾路径里。这些协程在 loop.close() 之后被
+        GC close() 会抛 RuntimeError（见 _stop_servers 调用处的说明）。
+        """
+        current = asyncio.current_task()
+        pending = [t for t in asyncio.all_tasks() if t is not current]
+        if not pending:
+            return
+        for task in pending:
+            task.cancel()
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*pending, return_exceptions=True),
+                timeout=LOCAL_PROXY_DRAIN_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "draining %d leftover connection tasks timed out, dropping them",
+                len(pending),
+            )
 
     async def _stop_local_proxy_locked(self, force_abort=True):
         async with self._get_local_proxy_lock():
