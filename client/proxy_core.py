@@ -738,6 +738,22 @@ async def _http_connect_handshake(reader, writer, server_config, dest_addr, dest
             break
 
 
+def _peer_is_ipv6(writer):
+    """节点连接对端的地址族：按这条连接真实的 peername 判定，不是按
+    ipv6Only 开关——开关只代表「想用 IPv6」，实际连上的可能仍是 IPv4。
+    拿不到 peername 时按 IPv4 处理：宁可少标，不能谎报 ipv6。"""
+    try:
+        peername = writer.get_extra_info("peername")
+    except Exception:
+        return False
+    if not peername:
+        return False
+    try:
+        return ipaddress.ip_address(peername[0]).version == 6
+    except ValueError:
+        return False
+
+
 async def _close_writer(writer):
     writer.close()
     try:
@@ -1589,13 +1605,13 @@ class ProxyCore:
             # 检查隧道当前状态
             tunnel_status = self._tunnel_client.get_status()
             if tunnel_status == 'reconnecting':
-                return (None, "reconnecting")
+                return (None, "reconnecting", False)
             if not self._tunnel_client.is_connected():
                 raise NodeUnreachableError("Tunnel not connected")
             latency = self._tunnel_client.measure_latency(timeout=5)
             if latency is None:
                 raise NodeUnreachableError("Tunnel CONNECT failed")
-            return (latency, None)
+            return (latency, None, self._tunnel_client.is_active_ipv6())
 
         use_tls = self._server_config["tls"]
 
@@ -1619,11 +1635,11 @@ class ProxyCore:
                 await self._measure_latency_socks5(reader, writer, username, password)
 
             elapsed = time.monotonic() - start
-            return (int(elapsed * 1000), None)
+            return (int(elapsed * 1000), None, _peer_is_ipv6(writer))
         except AuthFailedError:
-            return (None, "auth_failed")
+            return (None, "auth_failed", False)
         except CertPinMismatchError:
-            return (None, "pin_mismatch")
+            return (None, "pin_mismatch", False)
         except (NodeUnreachableError, ConnectionRefusedError, ConnectionResetError,
                 OSError, asyncio.TimeoutError, TimeoutError) as exc:
             # EBADF 是定性信号：网络故障造不出「本地 fd 失效」这个形状，
@@ -1636,10 +1652,10 @@ class ProxyCore:
                         self._server_config.get("port", 0),
                         errno_value=exc.errno,
                     )
-                return (None, "edr_blocked")
-            return (None, "unreachable")
+                return (None, "edr_blocked", False)
+            return (None, "unreachable", False)
         except Exception:
-            return (None, "error")
+            return (None, "error", False)
         finally:
             if writer:
                 writer.close()
@@ -1697,7 +1713,7 @@ class ProxyCore:
             raise NodeUnreachableError(f"HTTP proxy CONNECT failed: {status_line.decode().strip()}")
 
     def measure_latency(self):
-        """测量代理延迟，返回 (protocol_name, latency_ms_or_None, failure_reason_or_None)。代理未运行时返回 None。"""
+        """测量代理延迟，返回 (protocol_name, latency_ms_or_None, failure_reason_or_None, is_ipv6)。代理未运行时返回 None。"""
         if not self._running or not self._loop or not self._loop.is_running():
             return None
         protocol = self._server_config.get("protocol", "socks5")
@@ -1706,10 +1722,10 @@ class ProxyCore:
 
         future = asyncio.run_coroutine_threadsafe(self._measure_latency(), self._loop)
         try:
-            latency, failure_reason = future.result(timeout=6)
-            return (protocol_name, latency, failure_reason)
+            latency, failure_reason, is_ipv6 = future.result(timeout=6)
+            return (protocol_name, latency, failure_reason, is_ipv6)
         except Exception:
-            return (protocol_name, None, "unreachable")
+            return (protocol_name, None, "unreachable", False)
 
     def _run_loop(self, loop, started_event):
         asyncio.set_event_loop(loop)

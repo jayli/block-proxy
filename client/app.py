@@ -285,7 +285,7 @@ class AppController(NSObject):
         name_map = {"http": "http", "socks5": "socks", "tunnel": "隧道"}
         return name_map.get(protocol, protocol)
 
-    def _status_title_connected(self, detail=None):
+    def _status_title_connected(self, detail=None, ipv6=False):
         name = self._status_protocol_name()
         # 勾选了 TLS 时用 https / socks5+tls 标注，避免和明文代理看起来一样。
         # tunnel 的 tls 字段不代表传输层（隧道本身固定走 TLS），不参与。
@@ -298,6 +298,9 @@ class AppController(NSObject):
                 name = "socks5+tls"
         # 中英文之间加空格，中文之间不加空格
         base = f"{name} 已连接" if name.isascii() else f"{name}已连接"
+        # IPv6 连接标注出来；IPv4 是常态，不标
+        if ipv6:
+            base += "(ipv6)"
         return f"{base} - {detail}" if detail else base
 
     def _status_title_interrupted(self, detail=None):
@@ -329,7 +332,7 @@ class AppController(NSObject):
         self.routing_item.setTitle_(self._routing_menu_title(routing_enabled))
 
     def _super_dns_menu_title(self, running):
-        return "Super DNS（运行中）..." if running else "Super DNS（未运行）..."
+        return "Super DNS（已开启）..." if running else "Super DNS（未运行）..."
 
     def _update_super_dns_menu_title(self):
         self.super_dns_item.setTitle_(self._super_dns_menu_title(is_super_dns_running()))
@@ -1286,10 +1289,12 @@ class AppController(NSObject):
                     if result is None:
                         # 代理未运行，不更新标题
                         return
-                    _protocol_name, latency, failure_reason = result
+                    _protocol_name, latency, failure_reason, is_ipv6 = result
                     if latency is not None:
                         self._set_status_title(
-                            self._status_title_connected(f"{latency}ms")
+                            self._status_title_connected(
+                                f"{latency}ms", ipv6=is_ipv6
+                            )
                         )
                     else:
                         reason_map = {

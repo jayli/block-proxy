@@ -53,12 +53,12 @@ def _probe_controller(*method_names):
     return namespace["Probe"]()
 
 
-def _title(protocol, tls, detail=None):
+def _title(protocol, tls, detail=None, ipv6=False):
     probe = _probe_controller("_status_protocol_name", "_status_title_connected")
     probe.config = SimpleNamespace(
         data={"server": {"protocol": protocol, "tls": tls}}
     )
-    return probe._status_title_connected(detail)
+    return probe._status_title_connected(detail, ipv6=ipv6)
 
 
 def test_connected_title_marks_tls():
@@ -71,6 +71,40 @@ def test_connected_title_without_tls_unchanged():
     assert _title("socks5", False, "44ms") == "socks 已连接 - 44ms"
     # 隧道模式的 tls 字段不代表传输层，不追加后缀
     assert _title("tunnel", True, "44ms") == "隧道已连接 - 44ms"
+
+
+def test_connected_title_marks_ipv6():
+    """IPv6 连接在「已连接」后标 (ipv6)；IPv4 保持原样，不出现 ipv4 字样。"""
+    assert _title("http", True, "22ms", ipv6=True) == "https 已连接(ipv6) - 22ms"
+    assert _title("http", True, "22ms", ipv6=False) == "https 已连接 - 22ms"
+    assert "ipv4" not in _title("http", True, "22ms", ipv6=False)
+
+
+def test_connected_title_marks_ipv6_for_every_protocol_name():
+    """中文协议名（隧道）同样标注，且沿用「中文之间不加空格」的既有规则。"""
+    assert _title("tunnel", True, "44ms", ipv6=True) == "隧道已连接(ipv6) - 44ms"
+    assert _title("socks5", True, "44ms", ipv6=True) == "socks5+tls 已连接(ipv6) - 44ms"
+    assert _title("socks5", False, "44ms", ipv6=True) == "socks 已连接(ipv6) - 44ms"
+
+
+def test_connected_title_marks_ipv6_without_latency_detail():
+    assert _title("http", True, None, ipv6=True) == "https 已连接(ipv6)"
+
+
+def test_menu_open_passes_measured_ipv6_to_status_title():
+    """菜单打开时的延迟探测结果必须把地址族传进状态标题，否则标注永远不出现。"""
+    body = _method(_class_node(_app_tree(), "AppController"), "_on_menu_open")
+    calls = [
+        node
+        for node in ast.walk(body)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "_status_title_connected"
+    ]
+    assert calls, "_on_menu_open 里没有构造「已连接」标题"
+    assert any(kw.arg == "ipv6" for call in calls for kw in call.keywords), (
+        "延迟探测拿到的 ipv6 没有传进状态标题"
+    )
 
 
 def test_status_item_click_opens_config_panel():

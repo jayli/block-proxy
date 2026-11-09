@@ -384,7 +384,7 @@ def test_super_dns_menu_title_reflects_running_state():
     menu_open_body = _method_body(app_controller, "_on_menu_open")
     update_body = _method_body(app_controller, "_update_super_dns_menu_title")
 
-    assert "Super DNS（运行中）..." in source
+    assert "Super DNS（已开启）..." in source
     assert "Super DNS（未运行）..." in source
     assert any(
         _calls_self_method(node, "_update_super_dns_menu_title")

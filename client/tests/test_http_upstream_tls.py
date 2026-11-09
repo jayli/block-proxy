@@ -54,7 +54,9 @@ class FakeWriter:
     def is_closing(self):
         return self.closing
 
-    def get_extra_info(self, name):
+    def get_extra_info(self, name, default=None):
+        if name == "peername":
+            return default
         assert name == "ssl_object"
         return self._ssl_object
 
@@ -202,7 +204,7 @@ def test_measure_latency_verifies_cert_pin_for_http_over_tls(monkeypatch):
     pinned = []
     pc._verify_cert_pin = pinned.append
 
-    latency, failure = asyncio.run(pc._measure_latency())
+    latency, failure, is_ipv6 = asyncio.run(pc._measure_latency())
 
     assert failure is None, f"延迟探测失败: {failure}"
     assert latency is not None

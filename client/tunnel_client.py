@@ -265,6 +265,26 @@ class TunnelClient:
         except OSError:
             pass  # Unix domain sockets or closed sockets
 
+    def is_active_ipv6(self):
+        """当前活跃的隧道连接是否走 IPv6（状态栏标注用）。
+
+        取 WebSocket 对端地址而不是配置开关：开关只代表「想用 IPv6」，
+        实际连上的可能仍是 IPv4。拿不到地址时按 IPv4 处理，宁可少标。
+        """
+        ws = self._active_ws
+        if ws is None:
+            return False
+        try:
+            remote = ws.remote_address
+        except Exception:
+            return False
+        if not remote:
+            return False
+        try:
+            return ipaddress.ip_address(remote[0]).version == 6
+        except ValueError:
+            return False
+
     def measure_latency(self, timeout=5):
         """Measure tunnel round-trip latency via a lightweight CONNECT.
         Returns latency in ms on success, or None on failure.
