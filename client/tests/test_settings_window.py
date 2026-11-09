@@ -18,8 +18,8 @@ import settings_window
 # ---------------------------------------------------------------------------
 
 
-def test_tab_bar_has_three_tabs_with_icon_and_text():
-    assert len(settings_window.TAB_SPECS) == 3
+def test_tab_bar_has_four_tabs_with_icon_and_text():
+    assert len(settings_window.TAB_SPECS) == 4
     tabs = [spec["tab"] for spec in settings_window.TAB_SPECS]
     assert tabs == list(settings_window.PANEL_TABS)
 
@@ -29,7 +29,7 @@ def test_tab_bar_has_three_tabs_with_icon_and_text():
         assert spec["window_title"]
 
 
-def test_tab_specs_map_to_the_three_panels():
+def test_tab_specs_map_to_the_four_panels():
     assert settings_window.TAB_SPECS[0]["tab"] == settings_window.PANEL_TAB_CONFIG
     assert settings_window.TAB_SPECS[0]["icon"] == "setting.png"
     assert settings_window.TAB_SPECS[0]["window_title"] == "节点配置"
@@ -42,6 +42,10 @@ def test_tab_specs_map_to_the_three_panels():
     assert settings_window.TAB_SPECS[2]["icon"] == "dns.png"
     assert settings_window.TAB_SPECS[2]["window_title"] == "Super DNS - 防止 DNS 污染的域名列表"
 
+    assert settings_window.TAB_SPECS[3]["tab"] == settings_window.PANEL_TAB_REWRITE
+    assert settings_window.TAB_SPECS[3]["icon"] == "rewrite.png"
+    assert settings_window.TAB_SPECS[3]["title"] == "重定向"
+
 
 def test_tab_icon_assets_exist():
     assets_dir = settings_window._assets_dir()
@@ -53,8 +57,11 @@ def test_window_width_covers_widest_panel():
     from config_panel import PANEL_WIDTH as CONFIG_W
     from routing_panel import PANEL_WIDTH as ROUTING_W
     from super_dns_panel import PANEL_WIDTH as SUPER_DNS_W
+    from rewrite_panel import PANEL_WIDTH as REWRITE_W
 
-    assert settings_window.WINDOW_WIDTH >= max(CONFIG_W, ROUTING_W, SUPER_DNS_W)
+    assert settings_window.WINDOW_WIDTH >= max(
+        CONFIG_W, ROUTING_W, SUPER_DNS_W, REWRITE_W
+    )
 
 
 def test_tab_icon_uses_template_mode():
@@ -373,15 +380,17 @@ def _fake_panels():
         settings_window.PANEL_TAB_CONFIG: _FakePanel(),
         settings_window.PANEL_TAB_ROUTING: _FakePanel(),
         settings_window.PANEL_TAB_SUPER_DNS: _FakePanel(),
+        settings_window.PANEL_TAB_REWRITE: _FakePanel(),
     }
 
 
 def _fake_panels_with_sizes():
-    """三个高度不同的面板，用于验证伸缩动画的几何。尺寸与真实面板一致。"""
+    """四个高度不同的面板，用于验证伸缩动画的几何。尺寸与真实面板一致。"""
     return {
         settings_window.PANEL_TAB_CONFIG: _FakePanel((520, 518)),
         settings_window.PANEL_TAB_ROUTING: _FakePanel((520, 480)),
         settings_window.PANEL_TAB_SUPER_DNS: _FakePanel((520, 430)),
+        settings_window.PANEL_TAB_REWRITE: _FakePanel((520, 330)),
     }
 
 
@@ -514,11 +523,27 @@ class _FakeRoutingPanel:
         return config
 
 
-def test_save_all_writes_both_config_blocks_and_closes(tmp_path, monkeypatch):
+class _FakeRewritePanel:
+    def __init__(self, enabled=True, listen_port=996, target="https://abc.com:996"):
+        self._enabled = enabled
+        self._listen_port = listen_port
+        self._target = target
+
+    def apply_to(self, config):
+        config["rewrite"] = {
+            "enabled": self._enabled,
+            "listen_port": self._listen_port,
+            "target": self._target,
+        }
+        return config
+
+
+def test_save_all_writes_all_config_blocks_and_closes(tmp_path, monkeypatch):
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps({
         "server": {"address": "old.example.com"},
         "routing": {"enabled": False},
+        "rewrite": {"enabled": False, "listen_port": 996, "target": ""},
     }))
 
     ctrl = settings_window.SettingsWindowController.__new__(
@@ -528,6 +553,7 @@ def test_save_all_writes_both_config_blocks_and_closes(tmp_path, monkeypatch):
     ctrl._app_path = None
     ctrl._config_panel = _FakeConfigPanel("new.example.com")
     ctrl._routing_panel = _FakeRoutingPanel(True)
+    ctrl._rewrite_panel = _FakeRewritePanel()
     ctrl._window = _FakeWindow()
     ctrl._request_timer = None
 
@@ -544,6 +570,8 @@ def test_save_all_writes_both_config_blocks_and_closes(tmp_path, monkeypatch):
     assert saved["server"]["address"] == "new.example.com"
     assert saved["routing"]["enabled"] is True
     assert saved["routing"]["direct_rules"] == ["domain:example.com"]
+    assert saved["rewrite"]["enabled"] is True
+    assert saved["rewrite"]["target"] == "https://abc.com:996"
     assert ctrl._window.closed is True
     assert len(sync_calls) == 1
 
@@ -554,6 +582,7 @@ def test_save_all_reads_latest_disk_config_before_applying(tmp_path, monkeypatch
     config_path.write_text(json.dumps({
         "server": {"address": "old.example.com", "certPin": "fresh-pin"},
         "routing": {"enabled": False},
+        "rewrite": {"enabled": False, "listen_port": 996, "target": ""},
     }))
 
     ctrl = settings_window.SettingsWindowController.__new__(
@@ -563,6 +592,7 @@ def test_save_all_reads_latest_disk_config_before_applying(tmp_path, monkeypatch
     ctrl._app_path = None
     ctrl._config_panel = _FakeConfigPanel("new.example.com")
     ctrl._routing_panel = _FakeRoutingPanel(False)
+    ctrl._rewrite_panel = _FakeRewritePanel(enabled=False, target="")
     ctrl._window = _FakeWindow()
     ctrl._request_timer = None
 
@@ -582,6 +612,7 @@ def test_cancel_all_closes_window_without_writing(tmp_path, monkeypatch):
     original = {
         "server": {"address": "old.example.com"},
         "routing": {"enabled": False},
+        "rewrite": {"enabled": False, "listen_port": 996, "target": ""},
     }
     config_path.write_text(json.dumps(original))
 
@@ -593,6 +624,7 @@ def test_cancel_all_closes_window_without_writing(tmp_path, monkeypatch):
     # 面板里改脏了地址，但取消不应该写盘
     ctrl._config_panel = _FakeConfigPanel("SHOULD-NOT-BE-SAVED.example.com")
     ctrl._routing_panel = _FakeRoutingPanel(True)
+    ctrl._rewrite_panel = _FakeRewritePanel(target="https://SHOULD-NOT-BE-SAVED:996")
     ctrl._window = _FakeWindow()
     ctrl._request_timer = None
 

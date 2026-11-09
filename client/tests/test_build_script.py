@@ -20,13 +20,14 @@ def test_build_includes_all_subprocess_windows():
 
 
 def test_build_includes_every_settings_panel():
-    """合并窗口的三个面板都是子进程运行时读的源码，必须逐个打包。"""
+    """合并窗口的四个面板都是子进程运行时读的源码，必须逐个打包。"""
     build_script = Path(__file__).parents[1].joinpath("build.sh").read_text()
 
     for panel_script in [
         "config_panel.py",
         "routing_panel.py",
         "super_dns_panel.py",
+        "rewrite_panel.py",
     ]:
         assert f"--include-data-files={panel_script}={panel_script}" in build_script
 

@@ -50,6 +50,7 @@ from proxy_core import (
     ProxyCore,
     ProxyThreadStuckError,
 )
+from rewrite_proxy import RewriteProxy
 from super_dns_control import is_super_dns_running
 from system_proxy import SystemProxy
 from tunnel_client import TunnelClient
@@ -110,6 +111,9 @@ class AppController(NSObject):
         )
         self.tunnel_client = None
         self.sys_proxy = SystemProxy()
+        # 重定向（透明反向代理）：与主代理完全解耦，有自己的线程与
+        # 事件循环，代理没连接时也能单独生效。
+        self.rewrite = RewriteProxy()
         self.connected = False
         self._settings_proc = None
         self._log_proc = None
@@ -129,12 +133,16 @@ class AppController(NSObject):
         self._last_switch_seq = None
         self._state_seq = 0
         self._last_published_state = None
+        # rewrite 配置指纹缓存（_sync_rewrite 幂等判定用）
+        self._rewrite_identity_cache = None
 
         self._build_status_item()
         self._build_menu()
         self._update_status_item_visibility()
         self._update_icon()
         self._start_health_check()
+        # 启动时就按已保存的配置拉起 rewrite（不依赖代理是否连接）
+        self._sync_rewrite()
 
         return self
 
@@ -714,6 +722,8 @@ class AppController(NSObject):
             old_data = self.config.data.copy()
             self.config.load()
             self._run_on_main(self._update_routing_check)
+            # 重定向与主代理无关：无论代理是否连接都按新配置同步
+            self._sync_rewrite()
             if self.connected and self.config.data != old_data:
                 new_data = self.config.data.copy()
                 # 如果只有 tunnel 配置变化，只重启隧道（本地代理保持运行）
@@ -795,6 +805,48 @@ class AppController(NSObject):
             if self._tunnel_enabled():
                 self._start_tunnel()
         threading.Thread(target=_do, daemon=True).start()
+
+    # ------------------------------------------------------------------
+    # 重定向（透明反向代理）：与主代理完全解耦的独立生命周期
+    # ------------------------------------------------------------------
+
+    def _rewrite_identity(self):
+        """rewrite 配置的指纹：三者任一变化都需要重启 listener。"""
+        rewrite = self.config.data.get("rewrite", {}) or {}
+        return (
+            bool(rewrite.get("enabled", False)),
+            rewrite.get("listen_port"),
+            str(rewrite.get("target", "") or "").strip(),
+        )
+
+    def _sync_rewrite(self):
+        """按当前配置启停 rewrite。幂等：配置未变则不动。
+
+        与主代理的连接状态无关：代理没连也能单独启动；代理的
+        连接/断开流程也不触碰它。
+        """
+        identity = self._rewrite_identity()
+        if identity == self._rewrite_identity_cache:
+            return
+        self._rewrite_identity_cache = identity
+        enabled, listen_port, target = identity
+        if not enabled:
+            if self.rewrite.is_running():
+                self.rewrite.stop()
+                logger.info("rewrite stopped by config")
+            return
+        ok, message = self.rewrite.start(self.config.data.get("rewrite", {}))
+        if ok:
+            logger.info("rewrite started: %s", message)
+        else:
+            logger.warning("rewrite failed to start: %s", message)
+
+    def _stop_rewrite(self):
+        """退出前无条件停掉 rewrite。"""
+        try:
+            self.rewrite.stop()
+        except Exception as e:
+            logger.warning(f"Failed to stop rewrite on quit: {e}")
 
     def _tunnel_enabled(self):
         return (
@@ -978,6 +1030,8 @@ class AppController(NSObject):
             self._settings_proc.terminate()
         if self._log_proc and self._log_proc.poll() is None:
             self._log_proc.terminate()
+        # rewrite 与主代理独立，退出时无条件停掉
+        self._stop_rewrite()
         if self.connected:
             self._stop_tunnel()
             try:
@@ -1008,6 +1062,7 @@ class AppController(NSObject):
                 self._settings_proc.terminate()
             if self._log_proc and self._log_proc.poll() is None:
                 self._log_proc.terminate()
+            self._stop_rewrite()
             if self.connected:
                 self._stop_tunnel()
                 try:

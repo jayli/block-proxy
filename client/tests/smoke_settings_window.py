@@ -64,6 +64,7 @@ def main():
         sw.PANEL_TAB_CONFIG,
         sw.PANEL_TAB_ROUTING,
         sw.PANEL_TAB_SUPER_DNS,
+        sw.PANEL_TAB_REWRITE,
     ]
 
     def tab_screen_positions():
@@ -155,7 +156,7 @@ def main():
         sizes = {t: ctrl._panels[t].panelSize() for t in tab_order}
         widths = {t: s[0] for t, s in sizes.items()}
         check(
-            "三个面板宽度一致（左右留白相同）",
+            "四个面板宽度一致（左右留白相同）",
             len(set(widths.values())) == 1,
             f"{widths}",
         )
@@ -624,6 +625,8 @@ def main():
         before = json.loads(open(config_path).read())
         ctrl._config_panel._fields["address"].setStringValue_("smoke.example.com")
         ctrl._routing_panel._enabled_cb.setState_(1)
+        ctrl._rewrite_panel._target_field.setStringValue_("https://smoke.example.com:996")
+        ctrl._rewrite_panel._enabled_switch.setState_(1)
         ctrl.saveAll_(None)
 
         after = json.loads(open(config_path).read())
@@ -637,7 +640,16 @@ def main():
             after["routing"]["enabled"] is True,
             f"routing={after['routing']}",
         )
-        untouched = [k for k in before if k not in ("server", "routing", "autostart")]
+        check(
+            "saveAll_ 同时写入重定向",
+            after["rewrite"]["enabled"] is True
+            and after["rewrite"]["target"] == "https://smoke.example.com:996",
+            f"rewrite={after['rewrite']}",
+        )
+        untouched = [
+            k for k in before
+            if k not in ("server", "routing", "rewrite", "autostart")
+        ]
         check(
             "saveAll_ 保留其它配置键",
             all(k in after for k in untouched),

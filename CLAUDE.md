@@ -143,7 +143,8 @@ main.py (入口, 单实例, 崩溃重启) → app.py (PyObjC 状态栏)
   ├── node_connect.py (节点连接: DoH 解析 → 多 IP 尝试 → TLS SNI 被安全软件拦截时降级不发 SNI, cert pin TOFU)
   ├── routing.py / geodata_loader.py / proto_parser.py (geosite/geoip 分流) / doh_resolver.py (DoH 解析节点)
   ├── super_dns_control.py / super_dns_panel.py (Super DNS 域名管理)
-  ├── config.py (~/Library/Application Support/BlockProxyClient/) + settings_window.py (合并设置窗口: config_panel.py / routing_panel.py / super_dns_panel.py 三面板合一, 顶部大 Tab 切换) / log_window.py (PyObjC 独立进程)
+  ├── rewrite_proxy.py (重定向/透明反向代理: 本地明文 HTTP 端口 → 外部目标, 独立线程+事件循环, 与 ProxyCore 解耦)
+  ├── config.py (~/Library/Application Support/BlockProxyClient/) + settings_window.py (合并设置窗口: config_panel.py / routing_panel.py / super_dns_panel.py / rewrite_panel.py 四面板合一, 顶部大 Tab 切换) / log_window.py (PyObjC 独立进程)
   ├── autostart.py (LaunchAgent) / logger.py (访问/崩溃日志) / system_proxy.py (networksetup)
   └── traffic_stats.py / traffic_view.py / requirements.txt / watch-icons.js / scripts/ / geodata/ / tests/
 ```
@@ -151,6 +152,7 @@ main.py (入口, 单实例, 崩溃重启) → app.py (PyObjC 状态栏)
 功能/约束要点:
 - 纯 Python 替代 xray-core、纯 PyObjC 替代 rumps/tkinter（公司安全软件按二进制特征码拦截）
 - 本地代理与隧道生命周期解耦: 隧道断开本地代理继续运行, 后台重连；仅 tunnel 配置变化时只重启隧道
+- **重定向（透明反向代理）与主代理完全解耦**：`rewrite_proxy.py` 的 `RewriteProxy` 有自己的线程与事件循环，由 `app.py#_sync_rewrite()` 按 `config.rewrite` 独立启停——**代理没连接时也能单独生效**（`_connect`/`_disconnect`/`_reconnect` 一律不触碰它）。配置 `{ enabled, listen_port(默认 996), target }`：访问 `http://127.0.0.1:<listen_port>/path` 被暗中转发到 `target` 的同一路径（类似 nginx `proxy_pass`，调用方察觉不到目标存在）。目标**一律直连**（不经节点、不走分流规则），https 目标带 SNI 但 `CERT_NONE` **不校验证书**（IP 字面量目标自动抑制 SNI）；改写 `Host`（默认端口省略、IPv6 加方括号）、强制 `Connection: close`、补 `X-Real-IP`/`X-Forwarded-For`/`X-Forwarded-Proto`，不透传客户端的 `Host`/`Connection`/`Proxy-Connection`。每连接只服务一个请求；不承接 `CONNECT`（回 502）。启动失败（端口被占/配置无效）只记日志不抛异常，也不拖垮 app；`_sync_rewrite` 按 `(enabled, listen_port, target)` 指纹幂等，三者未变不重启 listener。面板说明里写明用途是 Claude Code 桌面版接三方 API（把本地地址填为 baseURL）
 - **本地单端口**（`local.port`，默认 1080，仅绑 127.0.0.1）同时提供 SOCKS5 与 HTTP，按连接首字节分发（0x05 → SOCKS5，其余 → HTTP），与服务端 8002 同构；旧配置里的 `local.socks_port`/`local.http_port` 由 `config.py` 在加载时迁移为 `local.port`（以旧 `socks_port` 为准）并删除旧键；`system_proxy` 把 SOCKS 防火墙/Web/Secure Web 三项都指向这个端口
 - 8002 上游（protocol=socks5/http + tls）: `protocol=http` 时用独立 ALPN 上下文（`_h2_ssl_ctx`）协商 h2，一条连接多路复用 CONNECT 流；协商不到 h2 就一次性降级回 HTTP/1.1（`_ssl_ctx` 不宣告 ALPN，健康检查/延迟探测不受影响）；`socks5` 路径不进 h2
 - 私有地址直连 (127/8, 10/8, 172.16/12, 192.168/16), 可配置关闭；三种上游模式: SOCKS5 over TLS / HTTP CONNECT / UDP ASSOCIATE
@@ -158,11 +160,11 @@ main.py (入口, 单实例, 崩溃重启) → app.py (PyObjC 状态栏)
 - `server.ipv6Only`（面板「启用 IPv6」）：勾选后只解析 AAAA、只用 IPv6 地址连节点，解析不出 AAAA 直接报错而不退回 IPv4；DoH 缓存与地址状态按「域名 + 地址族」分键，切换开关不复用另一地址族的钉住 IP；仅对 `socks5|http` 生效，隧道模式置灰
 - `server.allowInsecure` 被钉死为 True（`ALLOW_INSECURE_FORCED`），面板不可改、旧配置的 False 会在加载时被纠正——服务端证书 SAN 只有 localhost/127.0.0.1，主机名校验必然失败，真实身份靠 `certBindEnabled` 的证书指纹 TOFU 承担
 - 窗口为独立进程（Nuitka 编译后 `sys.executable` 非 Python 解释器, 用 `subprocess.Popen` + 系统 Python）
-- 合并设置窗口（`settings_window.py`）: 节点配置/分流规则/Super DNS 三面板合一（`config_panel.py` / `routing_panel.py` / `super_dns_panel.py`），顶部大 Tab（`assets/` 图标 + 文字，`setTemplate_(True)` 跟随浅/深色）。约束与坑：
-  - 面板只建控件、不建窗口不写盘；「保存」由宿主统一编排——节点配置 + 分流规则当一个事务一起落盘再关窗（主进程只重连一次），Super DNS 的「保存」只写域名文件、不关窗。节点配置面板底部「取消 / 保存」并排居中（取消在左），取消转给宿主 `cancelAll_`（什么都不写、直接关窗，关窗时 `windowWillClose_` 停轮询并结束模态循环）
+- 合并设置窗口（`settings_window.py`）: 节点配置/分流规则/Super DNS/重定向 四面板合一（`config_panel.py` / `routing_panel.py` / `super_dns_panel.py` / `rewrite_panel.py`），顶部大 Tab（`assets/` 图标 + 文字，`setTemplate_(True)` 跟随浅/深色）。约束与坑：
+  - 面板只建控件、不建窗口不写盘；「保存」由宿主统一编排——节点配置 + 分流规则 + 重定向当一个事务一起落盘再关窗（主进程只重连一次），Super DNS 的「保存」只写域名文件、不关窗。节点配置与重定向面板底部「取消 / 保存」并排居中（取消在左），取消转给宿主 `cancelAll_`（什么都不写、直接关窗，关窗时 `windowWillClose_` 停轮询并结束模态循环）
   - 三处菜单开的是同一窗口。已打开时把 `{tab, seq}` 写进 `ui_state.json` 的 `panel_request`，窗口 0.3s 轮询（`PANEL_REQUEST_POLL_SEC`，同一轮询顺带推 `proxy_state`）到 seq 变化就切 Tab 并前置；开窗时把文件里已有 seq 记为「已见过」，否则陈旧请求会抢 Tab
   - 切 Tab 时窗口顶边不动、底边变速到新面板高度（0.25s）。`setFrame_display_animate_` 的 animate 参数实测不插值，必须走 `NSAnimationContext` + `animator()`；但 `animator()` 只在 `NSApp.isActive()` 为真时驱动动画，inactive 时整个动画被丢弃（completionHandler 也不触发、窗口停在旧高度），所以必须按 isActive 分支、inactive 退化为 `setFrame_display_` 瞬时改高度（IPC 跳转时本进程常不是 active）。面板与 Tab 栏按钮都挂 `NSViewMinYMargin` 贴顶锚定，动画前把新面板顶边粘到 Tab 栏正下方，全程间距恒定
-  - 几何：三面板统一 520 宽（`WINDOW_WIDTH`=560）——节点配置 518 高、分流 480、Super DNS 430；节点配置用两列网格（`GRID_MARGIN_X`=16 / `GRID_COL_W`=234 / `GRID_GAP_X`=20 / `GRID_LABEL_W`=78 / `GRID_LABEL_GAP`=6，故控件 x=100 与 x=354、宽 150），地址与用户名同列等宽、端口与密码同列等宽；协议独占一行（右侧是代理连接开关 + 状态文案），本地代理端口合并后单独占一行（标签「本地SOCKS/HTTP代理端口:」实测 166px，用 `LOCAL_PORT_LABEL_W` 让文字起点与「用户名:」对齐）
+  - 几何：四面板统一 520 宽（`WINDOW_WIDTH`=560）——节点配置 518 高、分流 480、Super DNS 430、重定向 330；Tab 栏按钮宽度按 `len(TAB_SPECS)` 等分（4 个 Tab 时 128px，最长文案「Super DNS」实测 69.9px 放得下）；节点配置用两列网格（`GRID_MARGIN_X`=16 / `GRID_COL_W`=234 / `GRID_GAP_X`=20 / `GRID_LABEL_W`=78 / `GRID_LABEL_GAP`=6，故控件 x=100 与 x=354、宽 150），地址与用户名同列等宽、端口与密码同列等宽；协议独占一行（右侧是代理连接开关 + 状态文案），本地代理端口合并后单独占一行（标签「本地SOCKS/HTTP代理端口:」实测 166px，用 `LOCAL_PORT_LABEL_W` 让文字起点与「用户名:」对齐）
   - **标签要比输入框低 `LABEL_ALIGN_DY`(2px)** 才能墨迹对齐（label frame 22px、输入框 24px，且 label 文字在自己 frame 内偏上 3px）；改 label 高度没用——文字贴顶锚定，加高只会把字顶上去。协议行的 `NSPopUpButton` 文字居中方式不同，那一行偏移是 0 而不是 2px
   - 证书指纹是 64 位 SHA-256 hex：完整显示需降到 `CERT_PIN_FONT_SIZE`(11) 等宽字体 + 撑满 `GRID_FULL_W`(488px)，13pt 要 552px 放不下；其余文案仍 13pt。指纹/提示行相对「绑定服务器证书」复选框额外下推 `CERT_BIND_LABEL_DROP_Y`(4px)，下面的控件跟着同样多的下推
   - 「重置」按钮右缘对齐栅格右缘（`GRID_MARGIN_X + GRID_FULL_W - RESET_BTN_W`）使左右留白对称；分流面板加宽到 520 后中间文本框从 385px 变成 445px（差的 28px 是 `NSTabView` 自身边框加滚动条）

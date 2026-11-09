@@ -26,6 +26,7 @@ MODULE_LOGGERS = (
     "node_connect",
     "autostart",
     "geodata_loader",
+    "rewrite_proxy",
 )
 
 _crash_file = None

@@ -1,11 +1,11 @@
 """
-BlockProxyClient 设置窗口：节点配置 / 分流规则 / Super DNS 三个面板合一。
+BlockProxyClient 设置窗口：节点配置 / 分流规则 / Super DNS / 重定向 四个面板合一。
 Pure PyObjC implementation (no tkinter dependency).
 Launched as a subprocess from the main status bar app.
 
 窗口顶部是一排大 Tab（图标在上、文字在下），下面承载对应面板。
 面板自身不建窗口、不写盘；「保存」由本窗口统一编排：
-节点配置 + 分流规则两块 config 编辑当一个事务一起落盘再关窗，
+节点配置 + 分流规则 + 重定向三块 config 编辑当一个事务一起落盘再关窗，
 Super DNS 的「保存」仍只写域名文件、不关窗（与合并前一致）。
 """
 
@@ -49,6 +49,7 @@ from config import read_ui_state, write_ui_state, read_proxy_state
 from config_panel import ConfigPanel
 from routing_panel import RoutingPanel
 from super_dns_panel import SuperDnsPanel
+from rewrite_panel import RewritePanel
 
 
 WINDOW_STYLE = (
@@ -57,11 +58,17 @@ WINDOW_STYLE = (
     | NSWindowStyleMaskMiniaturizable
 )
 
-# 三个面板的稳定标识（菜单跳转、--tab、ui_state.json 都用它）
+# 四个面板的稳定标识（菜单跳转、--tab、ui_state.json 都用它）
 PANEL_TAB_CONFIG = "config"
 PANEL_TAB_ROUTING = "routing"
 PANEL_TAB_SUPER_DNS = "super_dns"
-PANEL_TABS = (PANEL_TAB_CONFIG, PANEL_TAB_ROUTING, PANEL_TAB_SUPER_DNS)
+PANEL_TAB_REWRITE = "rewrite"
+PANEL_TABS = (
+    PANEL_TAB_CONFIG,
+    PANEL_TAB_ROUTING,
+    PANEL_TAB_SUPER_DNS,
+    PANEL_TAB_REWRITE,
+)
 DEFAULT_PANEL_TAB = PANEL_TAB_CONFIG
 
 # 主进程投递跳转请求用的 ui_state.json 键
@@ -109,6 +116,12 @@ TAB_SPECS = (
         "title": "Super DNS",
         "icon": "dns.png",
         "window_title": "Super DNS - 防止 DNS 污染的域名列表",
+    },
+    {
+        "tab": PANEL_TAB_REWRITE,
+        "title": "重定向",
+        "icon": "rewrite.png",
+        "window_title": "重定向 - 本地端口透明转发到外部地址",
     },
 )
 
@@ -301,14 +314,18 @@ class SettingsWindowController(NSObject):
         )
         routing_panel.setSaveTarget_(self)
         super_dns_panel = SuperDnsPanel.alloc().init()
+        rewrite_panel = RewritePanel.alloc().initWithConfig_(config)
+        rewrite_panel.setSaveTarget_(self)
 
         self._panels = {
             PANEL_TAB_CONFIG: config_panel,
             PANEL_TAB_ROUTING: routing_panel,
             PANEL_TAB_SUPER_DNS: super_dns_panel,
+            PANEL_TAB_REWRITE: rewrite_panel,
         }
         self._config_panel = config_panel
         self._routing_panel = routing_panel
+        self._rewrite_panel = rewrite_panel
 
         # 开窗即按主进程真实连接状态摆开关（主进程在开窗时会发布一次
         # 当前状态，这里读到的可能是上一轮的，轮询会很快纠正）
@@ -353,8 +370,8 @@ class SettingsWindowController(NSObject):
             view.setHidden_(True)
             content.addSubview_(view)
 
-        # 大 Tab 栏：三个等宽按钮，图标在上文字在下，选中项高亮
-        btn_w = (WINDOW_WIDTH - 2 * TAB_BAR_MARGIN_X - 2 * TAB_BAR_GAP) / 3
+        # 大 Tab 栏：四个等宽按钮，图标在上文字在下，选中项高亮
+        btn_w = (WINDOW_WIDTH - 2 * TAB_BAR_MARGIN_X - 3 * TAB_BAR_GAP) / len(TAB_SPECS)
         for idx, spec in enumerate(TAB_SPECS):
             bx = TAB_BAR_MARGIN_X + idx * (btn_w + TAB_BAR_GAP)
             btn = NSButton.alloc().initWithFrame_(((bx, 0), (btn_w, 1)))
@@ -532,12 +549,14 @@ class SettingsWindowController(NSObject):
     # ------------------------------------------------------------------
 
     def saveAll_(self, sender):
-        """节点配置 + 分流规则一起落盘再关窗（一个事务，不丢另一块的编辑）。"""
+        """节点配置 + 分流规则 + 重定向一起落盘再关窗（一个事务，
+        不丢另一块的编辑）。"""
         with open(self._config_path, "r") as f:
             config = json.load(f)
 
         self._config_panel.apply_to(config)
         self._routing_panel.apply_to(config)
+        self._rewrite_panel.apply_to(config)
 
         with open(self._config_path, "w") as f:
             json.dump(config, f, indent=2)

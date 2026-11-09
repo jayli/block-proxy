@@ -78,6 +78,8 @@ $PYTHON -m nuitka \
     --include-data-files=node_connect.py=node_connect.py \
     --include-data-files=proto_parser.py=proto_parser.py \
     --include-data-files=proxy_core.py=proxy_core.py \
+    --include-data-files=rewrite_panel.py=rewrite_panel.py \
+    --include-data-files=rewrite_proxy.py=rewrite_proxy.py \
     --include-data-files=routing.py=routing.py \
     --include-data-files=routing_panel.py=routing_panel.py \
     --include-data-files=settings_window.py=settings_window.py \

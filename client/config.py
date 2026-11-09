@@ -3,12 +3,16 @@ import os
 import copy
 import ipaddress
 import re
+from urllib.parse import urlsplit
 
 # 节点服务端用自签证书（SAN 只有 localhost/127.0.0.1，见 cert/generator.js），
 # 主机名校验必然失败；且实际身份校验由 certBindEnabled 的证书指纹（TOFU）
 # 承担。因此 allowInsecure 钉死为 True：面板置灰不可改，旧配置里的
 # False 也会在加载时被纠正，避免升级后被一个连不上的开关锁死。
 ALLOW_INSECURE_FORCED = True
+
+# 重定向（透明反向代理）默认本地监听端口
+DEFAULT_REWRITE_LISTEN_PORT = 996
 
 DEFAULT_CONFIG = {
     "server": {
@@ -42,6 +46,13 @@ DEFAULT_CONFIG = {
         "server_port": 8003,
         "ws_path": "/websocket",
         "http_disguise": True,
+    },
+    # 重定向（透明反向代理）：本地明文 HTTP 端口 → 外部目标地址。
+    # 与 server/local 完全无关，主代理没连接时也能独立生效。
+    "rewrite": {
+        "enabled": False,
+        "listen_port": DEFAULT_REWRITE_LISTEN_PORT,
+        "target": "",
     },
 }
 
@@ -220,6 +231,79 @@ def validate_port(value, *, name="端口"):
     port = int(text)
     if not 1 <= port <= 65535:
         return f"{name}必须在 1-65535 之间"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 重定向（透明反向代理）目标地址的解析与校验
+# ---------------------------------------------------------------------------
+
+
+def parse_rewrite_target(value):
+    """解析重定向目标地址，返回 (scheme, host, port)；不合法返回 None。
+
+    接受 `https://host[:port]` / `http://host[:port]`（也容忍不带 scheme
+    的裸 host[:port]，按 https 处理）。缺省端口：https 443 / http 80。
+    只取 scheme + host + port，路径/查询串一律忽略（转发时拼的是请求
+    自己的 path）。
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if "://" not in text:
+        text = "https://" + text
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return None
+    scheme = (parts.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        return None
+    try:
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
+        return None
+    if not host:
+        return None
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    if not 1 <= port <= 65535:
+        return None
+    if not _is_valid_rewrite_host(host):
+        return None
+    return scheme, host, port
+
+
+def _is_valid_rewrite_host(host):
+    """重定向目标的主机名校验。
+
+    与 validate_node_address 不同：这里**允许单标签主机名**（localhost、
+    内网短名）——目标常是本机/内网服务，而节点地址必须是公网可达的
+    完整域名。IP 字面量直接放行，域名按标签规则校验。
+    """
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    if not host or len(host) > 253:
+        return False
+    for label in host.split("."):
+        if not label or len(label) > 63:
+            return False
+        if not _DOMAIN_LABEL_RE.match(label):
+            return False
+    return True
+
+
+def validate_rewrite_target(value):
+    """校验重定向目标地址，返回错误文案；合法返回 None。"""
+    text = str(value or "").strip()
+    if not text:
+        return "目标地址不能为空"
+    if parse_rewrite_target(text) is None:
+        return "格式应为 https://host[:port]（如 https://abc.com:996）"
     return None
 
 
