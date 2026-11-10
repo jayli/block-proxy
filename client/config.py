@@ -1,8 +1,10 @@
 import json
 import os
 import copy
+import errno
 import ipaddress
 import re
+import socket
 from urllib.parse import urlsplit
 
 # 节点服务端用自签证书（SAN 只有 localhost/127.0.0.1，见 cert/generator.js），
@@ -304,6 +306,45 @@ def validate_rewrite_target(value):
         return "目标地址不能为空"
     if parse_rewrite_target(text) is None:
         return "格式应为 https://host[:port]（如 https://abc.com:996）"
+    return None
+
+
+# 重定向本地监听端口的可绑定性探测。设置窗口是独立子进程，真正 bind 的是
+# 主进程的 RewriteProxy，但 bind 能否成功只取决于「端口号 + 运行身份」，两者
+# 同一个用户，所以在面板里试绑一次就能提前得到同样的结论——不必等保存后去
+# 翻主进程的 crash.log（1024 以下的保留端口非 root 必然 EACCES，而运行侧按
+# 设计只记日志不弹窗，用户在界面上看不出任何异常）。
+REWRITE_PORT_RESERVED_HINT = "启动失败，建议换成 1024 及以上的端口号"
+REWRITE_PORT_IN_USE_HINT = "启动失败，端口已被占用，建议换一个端口号"
+
+
+def probe_rewrite_listen_port(port, ignore_in_use=False):
+    """试绑 127.0.0.1:port，返回错误文案；能绑返回 None。
+
+    ignore_in_use=True 时把「已被占用」视为可用：面板打开时主进程的 rewrite
+    监听可能正占着这个端口（已保存配置 enabled 且端口没改），那是正常运行
+    状态，不该当成错误报给用户。
+
+    端口是不是数字、在不在 1-65535 由 validate_port 负责，这里遇到非法值
+    直接返回 None，不重复报错。
+    """
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= port <= 65535:
+        return None
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError as e:
+        if e.errno == errno.EADDRINUSE:
+            return None if ignore_in_use else REWRITE_PORT_IN_USE_HINT
+        if e.errno in (errno.EACCES, errno.EPERM):
+            return REWRITE_PORT_RESERVED_HINT
+        return f"启动失败：{e.strerror or e}"
+    finally:
+        sock.close()
     return None
 
 

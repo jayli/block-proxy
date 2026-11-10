@@ -6,6 +6,7 @@ validate_before_save 的校验分支、开关与主代理解耦的语义。
 """
 
 import os
+import socket
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -53,13 +54,34 @@ class FakeContainer:
         return None
 
 
-def _make_panel(enabled=False, port="996", target="https://abc.com:996"):
+class FakeNotification:
+    """controlTextDidEndEditing_ 收到的通知替身：object() 返回触发的控件。"""
+
+    def __init__(self, obj):
+        self._obj = obj
+
+    def object(self):
+        return self._obj
+
+
+def _free_port():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def _make_panel(enabled=False, port="996", target="https://abc.com:996",
+                saved_rewrite=None):
     panel = RewritePanel.__new__(RewritePanel)
     panel._save_target = None
     panel._container = FakeContainer()
     panel._enabled_switch = FakeSwitch(1 if enabled else 0)
     panel._port_field = FakeField(port)
     panel._target_field = FakeField(target)
+    panel._port_status_label = FakeField("")
+    panel._rewrite = saved_rewrite if saved_rewrite is not None else {}
     return panel
 
 
@@ -290,6 +312,126 @@ def test_cancel_click_forwards_to_host():
     panel.cancelClicked_(None)
     assert host.cancelled == 1
     assert host.saved == 0
+
+
+# ---------------------------------------------------------------------------
+# 端口可绑定性探测：打开开关 / 端口失焦 / 保存前
+# ---------------------------------------------------------------------------
+
+
+def test_switch_on_with_reserved_port_shows_error_next_to_port_field():
+    """用户明确要求：打开开关就检测，失败提示显示在本地监听端口后面。"""
+    panel = _make_panel(enabled=False, port="997")
+    panel._enabled_switch.setState_(1)
+    panel.onEnabledSwitchChanged_(None)
+
+    assert panel._port_status_label.stringValue() == "启动失败，建议换成 1024 及以上的端口号"
+
+
+def test_switch_on_with_valid_port_shows_no_error():
+    panel = _make_panel(enabled=False, port=str(_free_port()))
+    panel._enabled_switch.setState_(1)
+    panel.onEnabledSwitchChanged_(None)
+
+    assert panel._port_status_label.stringValue() == ""
+
+
+def test_switch_off_clears_error():
+    panel = _make_panel(enabled=True, port="997")
+    panel._port_status_label.setStringValue_("启动失败，建议换成 1024 及以上的端口号")
+    panel._enabled_switch.setState_(0)
+    panel.onEnabledSwitchChanged_(None)
+
+    assert panel._port_status_label.stringValue() == ""
+
+
+def test_probe_treats_own_running_listener_as_available():
+    """已保存配置 enabled 且端口未改：主进程 listener 正占着该端口是正常
+    运行状态，不能报「已被占用」。"""
+    port = _free_port()
+    s = socket.socket()
+    s.bind(("127.0.0.1", port))
+    s.listen(1)
+    try:
+        panel = _make_panel(
+            enabled=False, port=str(port),
+            saved_rewrite={"enabled": True, "listen_port": port},
+        )
+        panel._enabled_switch.setState_(1)
+        panel.onEnabledSwitchChanged_(None)
+        assert panel._port_status_label.stringValue() == ""
+    finally:
+        s.close()
+
+
+def test_probe_reports_foreign_process_holding_port():
+    """端口被别的进程占着（且不是已保存的 rewrite 配置）要报错。"""
+    port = _free_port()
+    s = socket.socket()
+    s.bind(("127.0.0.1", port))
+    s.listen(1)
+    try:
+        panel = _make_panel(enabled=False, port=str(port))
+        panel._enabled_switch.setState_(1)
+        panel.onEnabledSwitchChanged_(None)
+        assert "已被占用" in panel._port_status_label.stringValue()
+    finally:
+        s.close()
+
+
+def test_port_field_blur_rechecks_bindability():
+    """改完端口失焦就重新探测，不必等到点保存。"""
+    panel = _make_panel(enabled=True, port="997")
+    panel._port_field.setStringValue_("997")
+    panel.controlTextDidEndEditing_(FakeNotification(panel._port_field))
+    assert panel._port_status_label.stringValue() == "启动失败，建议换成 1024 及以上的端口号"
+
+    panel._port_field.setStringValue_(str(_free_port()))
+    panel.controlTextDidEndEditing_(FakeNotification(panel._port_field))
+    assert panel._port_status_label.stringValue() == ""
+
+
+def test_save_blocked_when_switch_on_and_port_unbindable():
+    """开关打开 + 端口绑不上：保存被拦下，不写盘不关窗。"""
+    panel = _make_panel(enabled=True, port="997", target="https://abc.com:996")
+    host = FakeHost()
+    panel.setSaveTarget_(host)
+
+    errors = panel.validate_before_save()
+    assert len(errors) == 1
+    assert "1024" in errors[0]
+    assert host.saved == 0
+
+
+def test_save_allowed_when_switch_off_even_if_port_unbindable():
+    """开关关着时不探测：保留端口供下次打开，不该拦住保存。"""
+    panel = _make_panel(enabled=False, port="997", target="https://abc.com:996")
+    host = FakeHost()
+    panel.setSaveTarget_(host)
+
+    assert panel.validate_before_save() == []
+    panel.saveClicked_(None)
+    assert host.saved == 1
+
+
+def test_save_allowed_when_switch_on_and_port_valid():
+    panel = _make_panel(enabled=True, port=str(_free_port()),
+                        target="https://abc.com:996")
+    host = FakeHost()
+    panel.setSaveTarget_(host)
+
+    assert panel.validate_before_save() == []
+    panel.saveClicked_(None)
+    assert host.saved == 1
+
+
+def test_invalid_port_syntax_skips_probe():
+    """端口不是数字时只报格式错，不叠加探测错。"""
+    panel = _make_panel(enabled=True, port="abc", target="https://abc.com:996")
+    errors = panel.validate_before_save()
+    assert len(errors) == 1
+    assert "必须是数字" in errors[0]
+    assert panel._port_status_label.stringValue() == ""
 
 
 def test_panel_does_not_write_disk_or_close_window_itself():

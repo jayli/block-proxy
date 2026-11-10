@@ -52,6 +52,10 @@ FOOTER_BTN_GAP = 12
 SWITCH_W = 42
 SWITCH_H = 24
 
+# 端口输入框右侧的红色错误提示：起点在端口框右缘外侧，宽度算到面板右留白
+PORT_STATUS_X = FIELD_X + 90 + 8
+PORT_STATUS_W = PANEL_WIDTH - MARGIN_X - PORT_STATUS_X
+
 # 输入框下方的使用说明（每行一行，HINT_FONT_SIZE 字号）
 HINT_LINES = (
     "访问 http://127.0.0.1:监听端口/任意路径 会被透明转发到目标地址的",
@@ -100,6 +104,8 @@ class RewritePanel(NSObject):
             ((FIELD_X, y), (SWITCH_W, SWITCH_H))
         )
         switch.setState_(NSOnState if rewrite.get("enabled", False) else NSOffState)
+        switch.setTarget_(self)
+        switch.setAction_("onEnabledSwitchChanged:")
         content.addSubview_(switch)
         self._enabled_switch = switch
 
@@ -126,6 +132,17 @@ class RewritePanel(NSObject):
         port_field.setDelegate_(self)
         content.addSubview_(port_field)
         self._port_field = port_field
+
+        # 端口输入框右侧的红色错误提示：端口绑不上（如 < 1024 的保留端口）
+        # 时显示「启动失败…」文案，正常为空不占视觉空间
+        port_status = NSTextField.labelWithString_("")
+        port_status.setFrame_(
+            ((PORT_STATUS_X, y + 2), (PORT_STATUS_W, 20))
+        )
+        port_status.setFont_(NSFont.systemFontOfSize_(HINT_FONT_SIZE))
+        port_status.setTextColor_(NSColor.systemRedColor())
+        content.addSubview_(port_status)
+        self._port_status_label = port_status
 
         # ---- 目标地址 ----
         y -= 36
@@ -209,11 +226,57 @@ class RewritePanel(NSObject):
         )
         field.setToolTip_(error or None)
 
+    # ------------------------------------------------------------------
+    # 端口可绑定性探测（打开开关 / 端口失焦时试绑一次）
+    # ------------------------------------------------------------------
+
+    def onEnabledSwitchChanged_(self, sender):
+        """打开开关时立即探测端口能否绑定；关闭时清空提示。"""
+        if self._enabled_switch.state() == NSOnState:
+            self._check_port_bindability()
+        else:
+            self._set_port_status(None)
+
+    def _saved_listener_may_hold_port(self, port):
+        """主进程的 rewrite listener 可能正占着这个端口：已保存配置处于
+        enabled 且端口没改。这是正常运行状态，探测时要把「已占用」当可用。"""
+        rewrite = getattr(self, "_rewrite", None) or {}
+        try:
+            return (
+                bool(rewrite.get("enabled"))
+                and int(rewrite.get("listen_port")) == int(port)
+            )
+        except (TypeError, ValueError):
+            return False
+
+    def _check_port_bindability(self):
+        """试绑 127.0.0.1:<端口>，把结果显示在端口输入框右侧。
+
+        真正的 bind 发生在主进程的 RewriteProxy，但能否绑定只取决于端口号 +
+        运行身份，面板子进程与主进程同用户，这里探测到的结论与主进程一致
+        （如 < 1024 的保留端口非 root 必然被拒），不必等保存后翻日志。
+        """
+        from config import probe_rewrite_listen_port
+
+        port_text = str(self._port_field.stringValue() or "").strip()
+        error = probe_rewrite_listen_port(
+            port_text,
+            ignore_in_use=self._saved_listener_may_hold_port(port_text),
+        )
+        self._set_port_status(error)
+        return error
+
+    def _set_port_status(self, message):
+        label = getattr(self, "_port_status_label", None)
+        if label is not None:
+            label.setStringValue_(message or "")
+
     def controlTextDidEndEditing_(self, notification):
         """输入框失去编辑焦点时跑一轮校验；输入过程中不做任何校验。"""
         field = notification.object()
         if field is self._port_field:
             self._validate_port_field()
+            self._check_port_bindability()
         elif field is self._target_field:
             self._validate_target_field()
 
@@ -224,6 +287,14 @@ class RewritePanel(NSObject):
         port_error = self._validate_port_field()
         if port_error:
             errors.append(port_error)
+        elif self._enabled_switch.state() == NSOnState:
+            # 开关打开时保存前再试绑一次：绑不上就拦下来，避免保存后主进程
+            # 静默启动失败、用户看着「已启用」实际端口没监听
+            bind_error = self._check_port_bindability()
+            if bind_error:
+                errors.append(
+                    f"本地监听端口 {self._port_field.stringValue()}：{bind_error}"
+                )
         target_error = self._validate_target_field()
         if target_error:
             errors.append(target_error)

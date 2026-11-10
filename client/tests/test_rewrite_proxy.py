@@ -18,7 +18,14 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import rewrite_proxy
-from config import DEFAULT_CONFIG, parse_rewrite_target, validate_rewrite_target
+from config import (
+    DEFAULT_CONFIG,
+    parse_rewrite_target,
+    validate_rewrite_target,
+    probe_rewrite_listen_port,
+    REWRITE_PORT_RESERVED_HINT,
+    REWRITE_PORT_IN_USE_HINT,
+)
 from rewrite_proxy import RewriteProxy
 
 
@@ -97,6 +104,69 @@ def test_default_config_has_rewrite_block():
     assert DEFAULT_CONFIG["rewrite"] == {
         "enabled": False, "listen_port": 996, "target": "",
     }
+
+
+# ---------------------------------------------------------------------------
+# 本地监听端口可绑定性探测（面板打开开关时提前报错，不用等保存后翻日志）
+# ---------------------------------------------------------------------------
+
+
+def test_probe_reserved_port_reports_reserved_hint():
+    """1024 以下是保留端口，非 root bind 必然被拒——探测要给出换端口的建议。"""
+    assert probe_rewrite_listen_port(997) == REWRITE_PORT_RESERVED_HINT
+    assert probe_rewrite_listen_port(80) == REWRITE_PORT_RESERVED_HINT
+
+
+def test_probe_free_port_returns_none():
+    assert probe_rewrite_listen_port(_free_port()) is None
+
+
+def test_probe_occupied_port_reports_in_use():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    s.listen(1)
+    port = s.getsockname()[1]
+    try:
+        assert probe_rewrite_listen_port(port) == REWRITE_PORT_IN_USE_HINT
+    finally:
+        s.close()
+
+
+def test_probe_occupied_port_ignored_when_listener_may_hold_it():
+    """ignore_in_use=True：主进程 listener 正占着该端口是正常状态，不报错。"""
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    s.listen(1)
+    port = s.getsockname()[1]
+    try:
+        assert probe_rewrite_listen_port(port, ignore_in_use=True) is None
+    finally:
+        s.close()
+
+
+def test_probe_releases_port_after_check():
+    """探测完立即释放端口，否则主进程随后真 bind 会撞上自己的探测。"""
+    port = _free_port()
+    assert probe_rewrite_listen_port(port) is None
+    # 再绑一次必须仍然成功
+    s = socket.socket()
+    s.bind(("127.0.0.1", port))
+    s.close()
+
+
+def test_probe_invalid_port_defers_to_validate_port():
+    """非法值交给 validate_port 报错，探测不重复报。"""
+    assert probe_rewrite_listen_port("abc") is None
+    assert probe_rewrite_listen_port("") is None
+    assert probe_rewrite_listen_port(None) is None
+    assert probe_rewrite_listen_port(0) is None
+    assert probe_rewrite_listen_port(70000) is None
+
+
+def test_probe_accepts_port_as_string():
+    """面板输入框给的是字符串。"""
+    assert probe_rewrite_listen_port("997") == REWRITE_PORT_RESERVED_HINT
+    assert probe_rewrite_listen_port(str(_free_port())) is None
 
 
 # ---------------------------------------------------------------------------
