@@ -404,29 +404,27 @@ class _TargetServer:
             self._loop.close()
 
 
+def _send_request(sock, port, path, method="GET", body=None, extra_headers=()):
+    req = f"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+    for h in extra_headers:
+        req += h + "\r\n"
+    if body is not None:
+        req += f"Content-Length: {len(body)}\r\n"
+    req += "\r\n"
+    sock.sendall(req.encode() + (body or b""))
+
+
 def _http_get(port, path="/path", method="GET", body=None, extra_headers=(),
               timeout=10):
-    """用裸 socket 发一个 HTTP 请求，返回 (status_line, headers, body)。"""
+    """用裸 socket 发一个 HTTP 请求，返回 (status_line, headers, body)。
+
+    按响应自身的 framing（chunked / Content-Length）读到边界即停：服务端
+    现在是真 keep-alive，不再靠关连接表示结束。
+    """
     with socket.create_connection(("127.0.0.1", port), timeout=timeout) as s:
-        req = f"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
-        for h in extra_headers:
-            req += h + "\r\n"
-        if body is not None:
-            req += f"Content-Length: {len(body)}\r\n"
-        req += "\r\n"
-        s.sendall(req.encode())
-        if body is not None:
-            s.sendall(body)
-        chunks = []
-        while True:
-            data = s.recv(65536)
-            if not data:
-                break
-            chunks.append(data)
-    raw = b"".join(chunks)
-    head, _, payload = raw.partition(b"\r\n\r\n")
-    lines = head.decode("utf-8", "replace").split("\r\n")
-    return lines[0], lines[1:], payload
+        _send_request(s, port, path, method=method, body=body,
+                      extra_headers=extra_headers)
+        return _read_one_response(s, timeout=timeout)
 
 
 def _start_rewrite(target_url, listen_port=None):
@@ -743,3 +741,501 @@ def test_module_logger_is_registered_for_crash_log():
     import logger as logger_module
 
     assert "rewrite_proxy" in logger_module.MODULE_LOGGERS
+
+
+# ---------------------------------------------------------------------------
+# keep-alive 与 HTTP framing
+#
+# 背景：adapter（996）在 SSE 响应里硬编码 `connection: keep-alive`，即使请求
+# 带了 `Connection: close` 也不真关连接，却把该连接标记为待关闭；Node 在它上面
+# 收到第二个请求就回 `HTTP/1.1 400 Bad Request`（空 body，HPE_CLOSED_CONNECTION）。
+# 旧实现把上游响应的 keep-alive 原样透传给客户端、又把后续客户端字节无条件灌进
+# 同一个上游 socket，于是 Claude Code 复用连接时必踩这个 400。
+#
+# 修法：客户端侧真 keep-alive，每个请求新建一条上游连接、读完响应主动关闭。
+# ---------------------------------------------------------------------------
+
+
+class _KeepAliveTarget:
+    """模仿 996：响应带 `connection: keep-alive`，故意**不**理会请求里的
+    `Connection: close`（不关连接），可以多个请求共用一条连接。
+
+    mode="chunked"     → Transfer-Encoding: chunked
+    mode="length"      → Content-Length
+    mode="close"       → 无 framing 头，靠关连接表示结束
+    """
+
+    def __init__(self, mode="chunked", body=b"TARGET-OK", always_keep_alive=True):
+        self.mode = mode
+        self.body = body
+        self.always_keep_alive = always_keep_alive
+        self.port = _free_port()
+        self.requests = []          # 每条记录含 conn_id
+        self.conn_open_count = 0
+        self.conn_closed_count = 0
+        self._conn_seq = 0
+        self._loop = None
+        self._thread = None
+        self._server = None
+        self._ready = threading.Event()
+
+    async def _handler(self, reader, writer):
+        self._conn_seq += 1
+        conn_id = self._conn_seq
+        self.conn_open_count += 1
+        try:
+            while True:
+                try:
+                    request_line = await asyncio.wait_for(reader.readline(), timeout=5)
+                except asyncio.TimeoutError:
+                    return
+                if not request_line:
+                    return
+                headers = []
+                while True:
+                    line = await asyncio.wait_for(reader.readline(), timeout=5)
+                    if line in (b"\r\n", b"\n", b""):
+                        break
+                    headers.append(line.decode("utf-8", "replace").rstrip("\r\n"))
+                lowered = [h.lower() for h in headers]
+                content_length = 0
+                for h in lowered:
+                    if h.startswith("content-length:"):
+                        try:
+                            content_length = int(h.split(":", 1)[1].strip())
+                        except ValueError:
+                            content_length = 0
+                body = b""
+                if content_length:
+                    body = await asyncio.wait_for(
+                        reader.readexactly(content_length), timeout=5
+                    )
+                elif "transfer-encoding: chunked" in lowered:
+                    # 解析 chunked 请求体（rewrite 会原样转发 chunk 帧）
+                    while True:
+                        size_line = await asyncio.wait_for(
+                            reader.readline(), timeout=5
+                        )
+                        size = int(size_line.split(b";")[0].strip(), 16)
+                        if size == 0:
+                            await asyncio.wait_for(reader.readline(), timeout=5)
+                            break
+                        body += await asyncio.wait_for(
+                            reader.readexactly(size), timeout=5
+                        )
+                        await asyncio.wait_for(reader.readline(), timeout=5)
+                self.requests.append({
+                    "conn_id": conn_id,
+                    "request_line": request_line.decode("utf-8", "replace").strip(),
+                    "headers": headers,
+                    "body": body,
+                })
+                await self._respond(writer)
+                await writer.drain()
+                # 真 996 的行为：无视 Connection: close，连接继续可用
+                if not self.always_keep_alive:
+                    return
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError,
+                ConnectionResetError, OSError):
+            pass
+        finally:
+            self.conn_closed_count += 1
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    async def _respond(self, writer):
+        if self.mode == "chunked":
+            writer.write(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: text/plain\r\n"
+                b"connection: keep-alive\r\n"
+                b"Transfer-Encoding: chunked\r\n\r\n"
+            )
+            writer.write(b"%x\r\n" % len(self.body) + self.body + b"\r\n")
+            writer.write(b"0\r\n\r\n")
+        elif self.mode == "length":
+            writer.write(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: text/plain\r\n"
+                b"connection: keep-alive\r\n"
+                b"Content-Length: " + str(len(self.body)).encode() + b"\r\n\r\n"
+                + self.body
+            )
+        else:  # close-delimited
+            writer.write(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: text/plain\r\n"
+                b"connection: keep-alive\r\n\r\n" + self.body
+            )
+
+    def start(self):
+        async def _serve():
+            self._server = await asyncio.start_server(
+                self._handler, "127.0.0.1", self.port
+            )
+            self._ready.set()
+            await self._server.wait_closed()
+
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self._loop.run_until_complete, args=(_serve(),), daemon=True
+        )
+        self._thread.start()
+        assert self._ready.wait(timeout=5), "目标服务器未能启动"
+        return self
+
+    def stop(self):
+        if self._server is not None:
+            self._loop.call_soon_threadsafe(self._server.close)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        if self._loop is not None and not self._loop.is_closed():
+            self._loop.close()
+
+
+def _read_one_response(sock, timeout=15):
+    sock.settimeout(timeout)
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = sock.recv(65536)
+        if not chunk:
+            raise AssertionError(f"连接在响应头前关闭: {buf!r}")
+        buf += chunk
+    head, rest = buf.split(b"\r\n\r\n", 1)
+    lines = head.decode("utf-8", "replace").split("\r\n")
+    status, headers, body = lines[0], lines[1:], rest
+    lowered = "\r\n".join(headers).lower()
+
+    if "transfer-encoding: chunked" in lowered:
+        data = body
+        decoded = b""
+        while True:
+            while b"\r\n" not in data:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    raise AssertionError("chunked 响应中途断开")
+                data += chunk
+            size_line, data = data.split(b"\r\n", 1)
+            size = int(size_line.split(b";")[0].strip() or b"0", 16)
+            if size == 0:
+                # 吃掉可选的 trailer 直到空行
+                while not data.startswith(b"\r\n"):
+                    if b"\r\n" in data:
+                        data = data.split(b"\r\n", 1)[1]
+                    else:
+                        more = sock.recv(65536)
+                        if not more:
+                            break
+                        data += more
+                break
+            while len(data) < size + 2:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    raise AssertionError("chunked 响应中途断开")
+                data += chunk
+            decoded += data[:size]
+            data = data[size + 2:]
+        return status, headers, decoded
+
+    for h in headers:
+        if h.lower().startswith("content-length:"):
+            length = int(h.split(":", 1)[1].strip())
+            while len(body) < length:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    raise AssertionError("Content-Length 响应中途断开")
+                body += chunk
+            return status, headers, body[:length]
+
+    # close-delimited
+    while True:
+        chunk = sock.recv(65536)
+        if not chunk:
+            break
+        body += chunk
+    return status, headers, body
+
+
+def _send_request(sock, port, path, method="GET", body=None, extra_headers=()):
+    req = f"{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+    for h in extra_headers:
+        req += h + "\r\n"
+    if body is not None:
+        req += f"Content-Length: {len(body)}\r\n"
+    req += "\r\n"
+    sock.sendall(req.encode() + (body or b""))
+
+
+def test_second_request_on_reused_client_connection_succeeds():
+    """本 bug 的回归用例：同一条客户端连接上连发两个请求，都必须 200。
+
+    旧实现在这里必挂：第 2 个请求被原样灌进已被上游标记关闭的连接，
+    996 会回 `400 Bad Request` 空 body（正是 Claude Code 报的那个错）。
+    """
+    target = _KeepAliveTarget(mode="chunked").start()
+    proxy, listen_port = _start_rewrite(f"http://127.0.0.1:{target.port}")
+    try:
+        with socket.create_connection(("127.0.0.1", listen_port), timeout=10) as s:
+            _send_request(s, listen_port, "/v1/messages", method="POST",
+                          body=b'{"n":1}',
+                          extra_headers=["Content-Type: application/json"])
+            status1, _h1, body1 = _read_one_response(s)
+            assert status1.startswith("HTTP/1.1 200"), status1
+            assert body1 == b"TARGET-OK"
+
+            _send_request(s, listen_port, "/v1/messages", method="POST",
+                          body=b'{"n":2}',
+                          extra_headers=["Content-Type: application/json"])
+            status2, _h2, body2 = _read_one_response(s)
+            assert status2.startswith("HTTP/1.1 200"), (
+                f"第二个请求失败：{status2} —— 这正是 Claude Code 看到的 400"
+            )
+            assert body2 == b"TARGET-OK"
+
+        assert len(target.requests) == 2
+        # 每个请求必须用独立的上游连接，且 Host 都要被改写
+        assert len({r["conn_id"] for r in target.requests}) == 2, (
+            "每个请求都应新建上游连接，不能复用已被标记关闭的那条"
+        )
+        for r in target.requests:
+            host = next(h for h in r["headers"] if h.lower().startswith("host:"))
+            assert host.strip().lower() == f"host: 127.0.0.1:{target.port}"
+        assert [r["body"] for r in target.requests] == [b'{"n":1}', b'{"n":2}']
+    finally:
+        proxy.stop()
+        target.stop()
+
+
+def test_many_requests_do_not_leak_upstream_connections():
+    """连发 N 个请求：上游连接数 == N，且每个用完即关（旧实现会挂到 300s）。"""
+    target = _KeepAliveTarget(mode="chunked").start()
+    proxy, listen_port = _start_rewrite(f"http://127.0.0.1:{target.port}")
+    try:
+        n = 5
+        with socket.create_connection(("127.0.0.1", listen_port), timeout=10) as s:
+            for i in range(n):
+                _send_request(s, listen_port, f"/r{i}")
+                status, _h, body = _read_one_response(s)
+                assert status.startswith("HTTP/1.1 200"), f"第 {i} 个请求: {status}"
+                assert body == b"TARGET-OK"
+        # 上游应看到 n 条连接，且都被主动关闭
+        import time
+        deadline = time.monotonic() + 3
+        while (target.conn_closed_count < n and time.monotonic() < deadline):
+            time.sleep(0.02)
+        assert target.conn_open_count == n, (
+            f"每个请求应独立建连，实际开了 {target.conn_open_count} 条"
+        )
+        assert target.conn_closed_count >= n, (
+            f"上游连接没被及时关闭（{target.conn_closed_count}/{n}），会泄漏 fd"
+        )
+    finally:
+        proxy.stop()
+        target.stop()
+
+
+def test_chunked_response_framing_is_preserved():
+    target = _KeepAliveTarget(mode="chunked", body=b"chunky").start()
+    proxy, listen_port = _start_rewrite(f"http://127.0.0.1:{target.port}")
+    try:
+        with socket.create_connection(("127.0.0.1", listen_port), timeout=10) as s:
+            _send_request(s, listen_port, "/chunk")
+            status, headers, body = _read_one_response(s)
+        assert status.startswith("HTTP/1.1 200")
+        assert body == b"chunky"
+        joined = "\r\n".join(headers).lower()
+        assert "transfer-encoding: chunked" in joined
+        assert "content-length" not in joined
+    finally:
+        proxy.stop()
+        target.stop()
+
+
+def test_content_length_response_framing_is_preserved():
+    target = _KeepAliveTarget(mode="length", body=b"measured").start()
+    proxy, listen_port = _start_rewrite(f"http://127.0.0.1:{target.port}")
+    try:
+        with socket.create_connection(("127.0.0.1", listen_port), timeout=10) as s:
+            _send_request(s, listen_port, "/len")
+            status, headers, body = _read_one_response(s)
+        assert status.startswith("HTTP/1.1 200")
+        assert body == b"measured"
+        joined = "\r\n".join(headers).lower()
+        assert "content-length: 8" in joined
+    finally:
+        proxy.stop()
+        target.stop()
+
+
+def test_close_delimited_response_is_reframed_as_chunked():
+    """上游没有 chunked/Content-Length 时靠关连接表示结束。
+
+    必须给客户端重构成 chunked，否则客户端读不到结尾、连接也没法复用。
+    """
+    target = _KeepAliveTarget(mode="close", body=b"no-framing").start()
+    proxy, listen_port = _start_rewrite(f"http://127.0.0.1:{target.port}")
+    try:
+        with socket.create_connection(("127.0.0.1", listen_port), timeout=10) as s:
+            _send_request(s, listen_port, "/close")
+            status, headers, body = _read_one_response(s)
+            assert status.startswith("HTTP/1.1 200")
+            assert body == b"no-framing"
+            joined = "\r\n".join(headers).lower()
+            assert "transfer-encoding: chunked" in joined, (
+                "close-delimited 响应必须重构成 chunked，客户端才有明确的结束"
+            )
+            # 连接应仍可复用
+            _send_request(s, listen_port, "/close2")
+            status2, _h2, body2 = _read_one_response(s)
+            assert status2.startswith("HTTP/1.1 200"), status2
+            assert body2 == b"no-framing"
+    finally:
+        proxy.stop()
+        target.stop()
+
+
+def test_client_connection_close_is_honored():
+    """客户端显式 Connection: close → 本响应发完就关，不擅自保活。"""
+    target = _KeepAliveTarget(mode="chunked").start()
+    proxy, listen_port = _start_rewrite(f"http://127.0.0.1:{target.port}")
+    try:
+        with socket.create_connection(("127.0.0.1", listen_port), timeout=10) as s:
+            _send_request(s, listen_port, "/once",
+                          extra_headers=["Connection: close"])
+            status, headers, body = _read_one_response(s)
+            assert status.startswith("HTTP/1.1 200")
+            assert body == b"TARGET-OK"
+            assert "connection: close" in "\r\n".join(headers).lower()
+            # 之后连接应被服务端关闭
+            s.settimeout(5)
+            assert s.recv(4096) == b"", "客户端要求 close 后服务端必须关闭连接"
+    finally:
+        proxy.stop()
+        target.stop()
+
+
+def test_post_body_forwarded_exactly_once():
+    """请求体精确转发一次：不重复、不错位（旧实现靠 relay 读，边界不清）。"""
+    target = _KeepAliveTarget(mode="length").start()
+    proxy, listen_port = _start_rewrite(f"http://127.0.0.1:{target.port}")
+    try:
+        body = b'{"model":"claude","messages":[{"role":"user","content":"hi"}]}'
+        with socket.create_connection(("127.0.0.1", listen_port), timeout=10) as s:
+            _send_request(s, listen_port, "/v1/messages", method="POST", body=body,
+                          extra_headers=["Content-Type: application/json"])
+            status, _h, _p = _read_one_response(s)
+            assert status.startswith("HTTP/1.1 200")
+            # 同一连接上紧跟第二个请求，验证第一个请求体没有越界吃掉第二个请求
+            _send_request(s, listen_port, "/v1/messages", method="POST",
+                          body=b'{"second":true}',
+                          extra_headers=["Content-Type: application/json"])
+            status2, _h2, _p2 = _read_one_response(s)
+            assert status2.startswith("HTTP/1.1 200"), status2
+
+        assert [r["body"] for r in target.requests] == [
+            body, b'{"second":true}',
+        ]
+        assert [r["request_line"] for r in target.requests] == [
+            "POST /v1/messages HTTP/1.1", "POST /v1/messages HTTP/1.1",
+        ]
+    finally:
+        proxy.stop()
+        target.stop()
+
+
+def test_chunked_request_body_is_forwarded():
+    """客户端用 chunked 发请求体也要能精确转发（读完停在下一个请求边界）。"""
+    target = _KeepAliveTarget(mode="length").start()
+    proxy, listen_port = _start_rewrite(f"http://127.0.0.1:{target.port}")
+    try:
+        with socket.create_connection(("127.0.0.1", listen_port), timeout=10) as s:
+            s.sendall(
+                f"POST /chunked HTTP/1.1\r\nHost: 127.0.0.1:{listen_port}\r\n"
+                f"Content-Type: application/json\r\n"
+                f"Transfer-Encoding: chunked\r\n\r\n".encode()
+                + b"6\r\nabcdef\r\n5\r\nghijk\r\n0\r\n\r\n"
+            )
+            status, _h, _p = _read_one_response(s)
+            assert status.startswith("HTTP/1.1 200"), status
+        # 上游收到的请求体是完整的（无论原样转发还是解 chunk 后重编码）
+        assert b"abcdefghijk" in target.requests[0]["body"] or \
+            target.requests[0]["body"] == b"abcdefghijk"
+    finally:
+        proxy.stop()
+        target.stop()
+
+
+def test_upgrade_request_is_rejected():
+    """透明反代不承接协议升级（WebSocket 等），必须明确回 502 而不是挂住。"""
+    target = _KeepAliveTarget(mode="chunked").start()
+    proxy, listen_port = _start_rewrite(f"http://127.0.0.1:{target.port}")
+    try:
+        with socket.create_connection(("127.0.0.1", listen_port), timeout=10) as s:
+            s.sendall(
+                f"GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{listen_port}\r\n"
+                f"Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                f"Sec-WebSocket-Version: 13\r\n\r\n".encode()
+            )
+            raw = s.recv(4096)
+        assert raw.startswith(b"HTTP/1.1 502"), raw
+        assert target.requests == [], "Upgrade 请求不应被转发到目标"
+    finally:
+        proxy.stop()
+        target.stop()
+
+
+def test_response_hop_by_hop_headers_are_stripped():
+    """上游的逐跳头（Keep-Alive 等）不能透传给客户端。"""
+    target = _KeepAliveTarget(mode="chunked").start()
+    proxy, listen_port = _start_rewrite(f"http://127.0.0.1:{target.port}")
+    try:
+        with socket.create_connection(("127.0.0.1", listen_port), timeout=10) as s:
+            _send_request(s, listen_port, "/hdr")
+            status, headers, _body = _read_one_response(s)
+        assert status.startswith("HTTP/1.1 200")
+        joined = "\r\n".join(headers).lower()
+        assert "keep-alive: timeout" not in joined
+    finally:
+        proxy.stop()
+        target.stop()
+
+
+def test_request_is_logged_to_access_log():
+    """每请求一条 access 日志：出问题时不用再靠人工复现。"""
+    import logging
+
+    records = []
+
+    class _Collect(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    handler = _Collect()
+    target_logger = rewrite_proxy.access_logger
+    old_level = target_logger.level
+    target_logger.addHandler(handler)
+    target_logger.setLevel(logging.INFO)
+    target = _KeepAliveTarget(mode="chunked").start()
+    proxy, listen_port = _start_rewrite(f"http://127.0.0.1:{target.port}")
+    try:
+        with socket.create_connection(("127.0.0.1", listen_port),
+                                      timeout=10) as s:
+            _send_request(s, listen_port, "/logged", method="POST", body=b"{}")
+            status, _h, _b = _read_one_response(s)
+        assert status.startswith("HTTP/1.1 200")
+        # access 日志在服务端 finally 里写，与客户端读到响应的时机有微小竞态
+        import time
+        deadline = time.monotonic() + 3
+        while not any("REWRITE" in m for m in records) \
+                and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert any("REWRITE" in m and "/logged" in m for m in records), records
+        assert any("200" in m for m in records), records
+    finally:
+        target_logger.removeHandler(handler)
+        target_logger.setLevel(old_level)
+        proxy.stop()
+        target.stop()
