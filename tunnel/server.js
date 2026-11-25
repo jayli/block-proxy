@@ -1,6 +1,7 @@
 const http2 = require('http2');
 const { encodeFrame } = require('./protocol');
 const { handleDisguiseRequest } = require('./disguiseResponse');
+const { createPlainProbeFront } = require('../proxy/plain-probe');
 const SseControlHandler = require('./sseControl');
 const XhttpHandler = require('./xhttpHandler');
 
@@ -26,6 +27,7 @@ class TunnelServer {
 
     this._frameHandlers = [];
     this._server = null;
+    this._tlsServer = null;
     this._tunnelManager = null;
     this._drainCheckCallback = null;
 
@@ -58,7 +60,9 @@ class TunnelServer {
 
   start() {
     return new Promise((resolve, reject) => {
-      this._server = http2.createSecureServer({
+      // 真正的 TLS 服务器只负责握手与 HTTP/2 解析；listen 由外层的明文嗅探
+      // 前置监听完成，这样 http:// 明文探测能拿到伪装页而不是空响应。
+      this._tlsServer = http2.createSecureServer({
         key: this.key,
         cert: this.cert,
         minVersion: 'TLSv1.2',
@@ -66,6 +70,11 @@ class TunnelServer {
         allowHTTP1: true,
       }, (req, res) => this._handleHttpRequest(req, res));
 
+      this._tlsServer.on('tlsClientError', (err, socket) => {
+        socket?.destroy();
+      });
+
+      this._server = createPlainProbeFront({ tlsServer: this._tlsServer });
       this._server.once('error', reject);
       this._server.listen(this.port, () => {
         this._server.removeListener('error', reject);
@@ -97,6 +106,11 @@ class TunnelServer {
       : Promise.resolve();
 
     await closeServer;
+
+    if (this._tlsServer) {
+      try { this._tlsServer.close(); } catch (e) {}
+      this._tlsServer = null;
+    }
   }
 
   _handleHttpRequest(req, res) {

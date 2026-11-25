@@ -12,6 +12,8 @@ const attacker = require('../proxy/attacker.js');
 const tempCredentials = require('../proxy/temp-credentials.js');
 const { pipeline, Duplex } = require('stream');
 const fdDiagnostics = require('../proxy/fd-diagnostics');
+const { createPlainProbeFront, writeHttpResponse } = require('../proxy/plain-probe');
+const { buildPageResponse } = require('../tunnel/disguiseResponse');
 
 const { ensureTempCert } = require('../cert/generator');
 // 固定下游 HTTP 代理地址（可改为配置项）
@@ -755,6 +757,13 @@ function createHttpConnectHandler(options) {
     );
   }
 
+  // 非代理请求（浏览器直接打开 https://host:8002/、扫描器的 GET 等）不给空响应，
+  // 而是回与 8003 一致的伪装页，避免这个端口留下「什么都不回」的指纹。
+  function sendDisguisePage(socket, rawUrl) {
+    const page = buildPageResponse(rawUrl);
+    writeHttpResponse(socket, page.statusCode, page.headers, page.body);
+  }
+
   return async (socket, firstChunk) => {
     socket.setKeepAlive(true, 60000);
     socket.on('error', (err) => {
@@ -796,7 +805,8 @@ function createHttpConnectHandler(options) {
     }
     const method = parts[0];
     if (method !== 'CONNECT') {
-      sendError(socket, '501 Not Implemented');
+      // 普通 HTTP 方法：当成直接访问这个端口的浏览器/扫描器，回伪装页
+      sendDisguisePage(socket, parts[1]);
       return;
     }
     const parsedTarget = parseConnectTarget(parts[1]);
@@ -973,6 +983,20 @@ function createHttp2ConnectHandler(options) {
     }
   }
 
+  // HTTP/2 上的非 CONNECT 请求（浏览器 https://host:8002/ 协商出 h2）同样回伪装页，
+  // 与 HTTP/1.1 和 8003 保持一致。
+  function respondDisguisePage(stream, rawUrl) {
+    if (!stream || stream.destroyed || stream.closed) return;
+    const page = buildPageResponse(rawUrl);
+    const payload = Buffer.from(page.body, 'utf8');
+    try {
+      stream.respond({ ':status': page.statusCode, ...page.headers, 'content-length': payload.length });
+      stream.end(payload);
+    } catch (e) {
+      // 对端已 RST_STREAM：忽略
+    }
+  }
+
   const h2Server = http2.createServer({
     settings: { maxConcurrentStreams: maxTcpConnects },
   });
@@ -1001,7 +1025,7 @@ function createHttp2ConnectHandler(options) {
     stream.on('error', () => {});
 
     if (headers[':method'] !== 'CONNECT') {
-      respond(stream, 501);
+      respondDisguisePage(stream, headers[':path']);
       return;
     }
     const target = parseConnectTarget(headers[':authority'] || '');
@@ -1226,17 +1250,21 @@ async function init() {
         ALPNProtocols: ['h2', 'http/1.1'],
         ticketKeys: ticketKeys
       };
-      server = tls.createServer(tlsOptions, dispatcher.handleConnection);
+      const tlsServer = tls.createServer(tlsOptions, dispatcher.handleConnection);
 
-      server.on('clientError', (err, socket) => {
+      tlsServer.on('clientError', (err, socket) => {
         console.warn('TLS client error during handshake:', err);
         socket?.end();
       });
 
-      server.on('tlsClientError', (err, tlsSocket) => {
+      tlsServer.on('tlsClientError', (err, tlsSocket) => {
         console.warn('TLS handshake failed:', err.message);
         tlsSocket?.destroy();
       });
+
+      // 明文（http://）打到这个端口时不再丢连接：前置监听先嗅探首字节，
+      // 非 TLS 流量回伪装页，TLS 流量原样交给上面的 tlsServer。
+      server = createPlainProbeFront({ tlsServer });
     } else {
       server = net.createServer(dispatcher.handleConnection);
     }

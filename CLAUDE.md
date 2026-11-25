@@ -18,7 +18,7 @@ cd client && python3 -m pytest tests/test_proxy_core_unified_port.py::test_defau
 cd android-client && ./gradlew :app:testPhoneDebugUnitTest --tests '*CfIpPoolTest'
 ```
 
-- `npm run test:proxy-core` – proxy-core 连接测试（无需代理服务）；`npm run test:proxy` – 代理连通性/性能/吞吐量测试（即 `node test/run.js`，默认连 127.0.0.1:8001/8002、认证 admin/admin，需先启动代理；加 `-- --auto-start` 自动拉起、`-- --skip-external` 跳过外网站点；参数还有 `--http-port`/`--socks5-port`/`--http-user`/`--http-pass`）；`npm run test:public-proxy` – 8002 公网代理测试（`public-proxy-protocol-tests.js` 首字节分发 / SOCKS5 / HTTP CONNECT，`public-proxy-h2-tests.js` ALPN h2 多路复用与回退）；**这两个测试直接 `readFileSync('cert/socks5_tls.{crt,key}')`**，而这对证书是 gitignore 的运行时产物，全新克隆里必须先启动一次代理（或手动生成）否则 ENOENT
+- `npm run test:proxy-core` – proxy-core 连接测试（无需代理服务）；`npm run test:proxy` – 代理连通性/性能/吞吐量测试（即 `node test/run.js`，默认连 127.0.0.1:8001/8002、认证 admin/admin，需先启动代理；加 `-- --auto-start` 自动拉起、`-- --skip-external` 跳过外网站点；参数还有 `--http-port`/`--socks5-port`/`--http-user`/`--http-pass`）；`npm run test:public-proxy` – 8002 公网代理测试（`public-proxy-protocol-tests.js` 首字节分发 / SOCKS5 / HTTP CONNECT，`public-proxy-h2-tests.js` ALPN h2 多路复用与回退，`plain-probe-tests.js` 明文探测诱饵页 + TLS/明文共存）；**这两个测试直接 `readFileSync('cert/socks5_tls.{crt,key}')`**，而这对证书是 gitignore 的运行时产物，全新克隆里必须先启动一次代理（或手动生成）否则 ENOENT
 - `npm run test:registry` / `npm run test:mitm-runtime` – MITM 规则注册 / 运行时测试
 - `npm run test:access-logger` – 访问日志单元测试 + 与真实代理钩子的集成测试
 - `npm run test:visit-logger` – 访问足迹日志（按 MAC 记录访问过的全部域名）单元测试 + 集成测试
@@ -63,8 +63,8 @@ MITM proxy for parental control & ad blocking. Node.js + React + proxy-core (Any
 | 端口 | 用途 |
 | --- | --- |
 | 8001 | 内网 HTTP proxy (mandatory, proxy-core) |
-| 8002 | 公网代理 SOCKS5 / HTTP CONNECT over TLS (optional；ALPN 协商出 h2 时同连接多路复用 CONNECT 流，否则按首字节分发) |
-| 8003 | Tunnel server (reverse tunnel, HTTP/2 + allowHTTP1) |
+| 8002 | 公网代理 SOCKS5 / HTTP CONNECT over TLS (optional；ALPN 协商出 h2 时同连接多路复用 CONNECT 流，否则按首字节分发)；非代理请求回伪装页，不返回空响应 |
+| 8003 | Tunnel server (reverse tunnel, HTTP/2 + allowHTTP1)；同 8002 有明文探测诱饵页 |
 | 8004 | Express admin API（HTTPS，自签证书） |
 | 3000 | React dev server (dev only) |
 
@@ -83,7 +83,8 @@ Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 / HTTP 
   - 内置通配符证书: `cert-lifecycle.js#BUILTIN_WILDCARDS` 对 CDN 父域一次签出裸域 + `*.parent` 两个 SAN，主机名轮换时先查通配符缓存，避免 rrN---sn-xxx 每个新主机重复签发（通配符只匹配一层标签）
   - ECONNRESET/EPIPE 自动重试一次 (GET/HEAD/OPTIONS)；keep-alive `maxRequestsPerSocket: 50` 防 gRPC RST_STREAM；流式响应阈值 20MB (无 responseRules 时 64KB)
   - 剥离 MITM 响应中的 `Alt-Svc` 头，防止客户端学到 h3/QUIC 入口绕过 TCP 代理
-- **SOCKS5** (`/socks5/`) – 8002 公网代理端口，SOCKS5 over TLS + UDP over TCP(自定义帧) + HTTP CONNECT over TLS + HTTP/2 CONNECT(ALPN h2 多路复用): `server.js`(`createPublicProxyDispatcher` 按 ALPN/首字节分发、`createHttpConnectHandler` HTTP/1.1 隧道、`createHttp2ConnectHandler` 解密的 TLSSocket 交给内置 `http2.createServer()` 处理 CONNECT 流), `start.js`, `test_tls_reuse.js`; 客户端 `client/proxy_core.py` + `client/h2_upstream.py` (asyncio 实现)
+- **SOCKS5** (`/socks5/`) – 8002 公网代理端口，SOCKS5 over TLS + UDP over TCP(自定义帧) + HTTP CONNECT over TLS + HTTP/2 CONNECT(ALPN h2 多路复用): `server.js`(`createPublicProxyDispatcher` 按 ALPN/首字节分发、`createHttpConnectHandler` HTTP/1.1 隧道、`createHttp2ConnectHandler` 解密的 TLSSocket 交给内置 `http2.createServer()` 处理 CONNECT 流), `start.js`, `test_tls_reuse.js`; 客户端 `client/proxy_core.py` + `client/h2_upstream.py` (asyncio 实现)。**TLS 监听挂在 `proxy/plain-probe.js` 的明文中转后面**（见下）
+- **明文探测诱饵** (`proxy/plain-probe.js`) – 8002/8003 的 TLS 服务器不再直接 `listen`，而是由 `net.createServer({pauseOnConnect:true})` 接管：读首 1 字节后 `unshift` 回去，`0x16`（TLS handshake）原样 `emit('connection')` 给内层 TLS/HTTP2 服务器，其他字节当明文 HTTP 处理。这样 `http://host:8002/` 或 `:8003/` 不再在 TLS 层被 OpennSSL 丢弃（浏览器表现为 `ERR_EMPTY_RESPONSE`），而是返回 200；路径 `/` 与 `/index.html` 是 `tunnel/disguiseResponse.js` 的 Northstar Digital 页（`buildPageResponse` 为两条路径共用），其他路径 404，明文 `CONNECT` 返回 403，超长请求头 431，30s 没收到首字节则丢弃连接
 - **Tunnel** (`/tunnel/`) – xhttp 传输协议（HTTP POST 上行 + SSE 下行）: `server.js`(HTTP/2 入口), `xhttpHandler.js`(核心处理器), `uploadQueue.js`(上行帧重排序), `protocol.js`(帧编解码), `manager.js`(连接生命周期), `sseControl.js`(旧 SSE 适配), `disguiseResponse.js`(HTTPS 伪装)
 - **Server** (`/server/`) – Express API (8004, **固定 HTTPS**，自签证书 `cert/express_tls.{crt,key}` 由 `cert/generator.js#ensurePanelCert()` 在启动时校验后按需生成、SAN 含本机内网 IP；不再监听明文，旧 `http://` 链接需改为 `https://`)，托管 React build, token cookie 认证: `start.js`, `express.js`, `timestampConsole.js`, `util.js`
 - **Frontend** (`/src/`) – CRA + CRACO 管理界面, `App.js` 主组件（单文件承载全部 5 个 tab：HTTP/Socks5 端口设置 / 拦截主机列表 / 路由表 / 隧道配置 / 认证豁免白名单）；**`craco.config.js` 只影响 `npm run dev`**（dev server 把 `/api` 以 HTTPS 转发到 8004）；`npm run build` 用的是裸 `react-scripts build`，不走 CRACO 的 webpack 覆盖
@@ -115,7 +116,7 @@ Client → HTTP Proxy (8001) → proxy-core → MITM → Target；SOCKS5 / HTTP 
 
 ### Tunnel 协议要点
 
-服务端**只有 xhttp**（HTTP POST 上行 + SSE 下行），无 WebSocket upgrade：`tunnel/server.js` 用 `http2.createSecureServer({allowHTTP1:true})` 监听，`xhttpHandler.handleRequest()` 命中 `/xhttp/*`，旧的 `/api/v1/events` 由 `sseControl.js` 返回 410（迁移提示），其余路径落到 `disguiseResponse.js` 的伪装页。
+服务端**只有 xhttp**（HTTP POST 上行 + SSE 下行），无 WebSocket upgrade：`tunnel/server.js` 用 `http2.createSecureServer({allowHTTP1:true})` 建 TLS 服务器（`listen` 由 `proxy/plain-probe.js` 的明文前置层代为完成），`xhttpHandler.handleRequest()` 命中 `/xhttp/*`，旧的 `/api/v1/events` 由 `sseControl.js` 返回 410（迁移提示），其余路径落到 `disguiseResponse.js` 的伪装页；明文 `http://` 访问同一条分支也返回同一份伪装页。
 
 - 会话: `POST /xhttp/create`（body 为 AUTH 帧, 含 username/password/capabilities/clientId）→ `{ sessionId, capabilities }`；创建后 15s 未建立 SSE 自动清理；同 token 下**其他 clientId** 占用返回 409（`DEFAULT_TAKEOVER_GRACE_MS` = 60s 宽限），同 clientId 未建 SSE 的僵尸会话直接接管、已建 SSE 的保留共存用于优雅轮换
 - 上行: `POST /xhttp/upload/:sessionId/:seq`（seq 递增）；下行: `GET /xhttp/stream?token=...`（SSE 长连接，帧 base64 编码于 `event: frame`，开头先写一行 `retry: 5000`）；另有 `POST /xhttp/close/:sessionId`。所谓 keepalive **不是注释行**：20~25s 内无写入时会下发一个 PING 帧（也走 `event: frame`），已有未回 PONG 时只重新排程

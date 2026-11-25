@@ -356,16 +356,21 @@ async function testHttpConnectAllowsAnyClientWhenNoCredentialsConfigured() {
   await closeServer(downstream.server);
 }
 
-async function testNonConnectMethodIsRejectedWith501() {
+// 非 CONNECT 方法（浏览器直接打开 https://host:8002/、扫描器的 GET）不再回 501 空响应，
+// 而是与 8003 一致的伪装页，避免这个端口留下「什么都不回」的指纹。
+async function testNonConnectMethodServesDisguisePage() {
   const downstream = await createDownstreamProxy();
   const server = await createPublicProxyServer({ downstreamProxyPort: downstream.port });
   const socket = connect(server.address().port);
   await once(socket, 'connect');
 
   socket.write('GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n');
-  const { head } = await readUntil(socket, '\r\n\r\n');
-  assert.ok(head.toString('latin1').startsWith('HTTP/1.1 501'), '非 CONNECT 方法应返回 501');
-  assert.strictEqual(downstream.received.length, 0);
+  const { head, rest } = await readUntil(socket, '\r\n\r\n');
+  const headText = head.toString('latin1');
+  assert.ok(headText.startsWith('HTTP/1.1 200'), `非 CONNECT 方法应返回 200，实际: ${headText.split('\r\n')[0]}`);
+  assert.ok(/content-type:\s*text\/html/i.test(headText), '伪装页应带 text/html 内容类型');
+  assert.match(rest.toString('utf8'), /Northstar Digital/i, '响应体不是伪装页');
+  assert.strictEqual(downstream.received.length, 0, '非 CONNECT 方法不应连接下游');
 
   await waitForClose(socket);
   await closeServer(server);
@@ -716,7 +721,7 @@ async function testSocks5WithoutCredentialsDoesNotTouchAttacker() {
   await testHttpConnectRejectsWrongCredentialsWith407();
   await testHttpConnectRejectsMissingCredentialsWith407();
   await testHttpConnectAllowsAnyClientWhenNoCredentialsConfigured();
-  await testNonConnectMethodIsRejectedWith501();
+  await testNonConnectMethodServesDisguisePage();
   await testMalformedConnectTargetIsRejectedWith400();
   await testDispatchSurvivesFirstByteArrivingAlone();
   await testPipelinedTunnelBytesAfterConnectHeadAreForwarded();

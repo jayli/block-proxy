@@ -306,7 +306,8 @@ async function testH2RejectsWrongCredentialsWith407() {
   }
 }
 
-async function testH2NonConnectMethodIs501() {
+// 非 CONNECT 方法不再回 501 空响应，而是与 HTTP/1.1 和 8003 一致的伪装页。
+async function testH2NonConnectMethodServesDisguisePage() {
   const downstream = await createDownstreamProxy();
   const ctx = await createTestServer({ downstreamProxyPort: downstream.port });
   const session = await connectH2(ctx.port);
@@ -317,9 +318,17 @@ async function testH2NonConnectMethodIs501() {
       ':scheme': 'https',
       ':authority': 'example.com',
     });
+    let status = null;
+    let body = '';
+    req.setEncoding('utf8');
+    req.on('response', (headers) => { status = headers[':status']; });
+    req.on('data', (chunk) => { body += chunk; });
+    const done = new Promise((resolve) => req.on('end', resolve));
     req.on('error', () => {});
     req.end();
-    assert.strictEqual(await awaitStatus(req), 501);
+    await withTimeout(done, 3000, 'body');
+    assert.strictEqual(status, 200);
+    assert.match(body, /Northstar Digital/i);
   } finally {
     session.close();
     await closeTestServer(ctx);
@@ -608,7 +617,7 @@ async function run() {
     testH2StripsProxyAuthorizationDownstream,
     testH2RejectsMissingCredentialsWith407,
     testH2RejectsWrongCredentialsWith407,
-    testH2NonConnectMethodIs501,
+    testH2NonConnectMethodServesDisguisePage,
     testH2MalformedAuthorityIs400,
     testH2OverLimitIs503,
     testH2DownstreamFailurePassesStatusThrough,

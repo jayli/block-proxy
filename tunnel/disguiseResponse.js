@@ -119,22 +119,33 @@ function indexHtml() {
 </html>`;
 }
 
-function handleDisguiseRequest(req, res) {
-  const url = new URL(req.url || '/', 'https://localhost');
+function buildPageResponse(rawUrl) {
+  const url = new URL(rawUrl || '/', 'https://localhost');
   if (url.pathname === '/' || url.pathname === '/index.html') {
-    send(res, 200, indexHtml(), {
-      'content-type': 'text/html; charset=utf-8',
-      'cache-control': 'no-store',
-    });
-    return true;
+    return {
+      statusCode: 200,
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+      },
+      body: indexHtml(),
+    };
   }
 
-  send(res, 404, 'Not found', {
-    'content-type': 'text/plain; charset=utf-8',
-  });
-  return false;
+  return {
+    statusCode: 404,
+    headers: { 'content-type': 'text/plain; charset=utf-8' },
+    body: 'Not found',
+  };
+}
+
+function handleDisguiseRequest(req, res) {
+  const page = buildPageResponse(req.url);
+  send(res, page.statusCode, page.body, page.headers);
+  return page.statusCode === 200;
 }
 
 module.exports = {
   handleDisguiseRequest,
+  buildPageResponse,
 };
